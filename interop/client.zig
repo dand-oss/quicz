@@ -62,29 +62,46 @@ fn resolveHost(hostname: []const u8) !u32 {
 }
 
 /// Create a UDP socket and bind to 0.0.0.0:0.
+/// Create a UDP socket with IPv6 dual-stack support.
 fn createUdpSocket() !posix.socket_t {
-    const fd = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
-    var addr: posix.sockaddr_in = .{
+    const fd = try posix.socket(posix.AF.INET6, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    // Enable dual-stack: accept both IPv4 and IPv6 traffic
+    const v6only: c_int = 0;
+    posix.setsockopt(fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, &std.mem.toBytes(v6only)) catch {};
+    var addr: posix.sockaddr_in6 = .{
         .port = 0,
-        .addr = 0, // 0.0.0.0
+        .flowinfo = 0,
+        .addr = [_]u8{0} ** 16,
+        .scope_id = 0,
     };
-    posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr_in)) catch |err| {
+    posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr_in6)) catch |err| {
         posix.close(fd);
         return err;
     };
     return fd;
 }
 
-/// Send a UDP datagram to the server.
-fn sendTo(fd: posix.socket_t, server_ip: u32, server_port: u16, data: []const u8) !void {
-    var addr: posix.sockaddr_in = .{
-        .port = std.mem.nativeToBig(u16, server_port),
-        .addr = std.mem.nativeToBig(u32, server_ip),
+/// Convert IPv4 address to IPv4-mapped IPv6 sockaddr.
+fn ipv4ToIpv6Mapped(ip: u32, port: u16) posix.sockaddr_in6 {
+    var mapped: [16]u8 = [_]u8{0} ** 16;
+    mapped[10] = 0xff;
+    mapped[11] = 0xff;
+    std.mem.writeInt(u32, mapped[12..16], ip, .big);
+    return .{
+        .port = std.mem.nativeToBig(u16, port),
+        .flowinfo = 0,
+        .addr = mapped,
+        .scope_id = 0,
     };
-    _ = try posix.sendto(fd, data, 0, @ptrCast(&addr), @sizeOf(posix.sockaddr_in));
 }
 
-/// Receive a UDP datagram with timeout. Returns number of bytes received, or null on timeout.
+/// Send a UDP datagram to the server.
+fn sendTo(fd: posix.socket_t, server_ip: u32, server_port: u16, data: []const u8) !void {
+    var addr = ipv4ToIpv6Mapped(server_ip, server_port);
+    _ = try posix.sendto(fd, data, 0, @ptrCast(&addr), @sizeOf(posix.sockaddr_in6));
+}
+
+/// Receive a UDP datagram with timeout. Returns bytes received, or null on timeout.
 fn recvFromTimeout(fd: posix.socket_t, buf: []u8, timeout_ms: i32) !?usize {
     var fds = [1]posix.pollfd{.{
         .fd = fd,
@@ -92,12 +109,14 @@ fn recvFromTimeout(fd: posix.socket_t, buf: []u8, timeout_ms: i32) !?usize {
         .revents = 0,
     }};
     const ready = posix.poll(&fds, timeout_ms) catch return null;
-    if (ready == 0) return null; // timeout
+    if (ready == 0) return null;
     if (fds[0].revents & posix.POLL.IN == 0) return null;
-
-    var addr: posix.sockaddr_in = undefined;
-    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr_in);
-    const n = posix.recvfrom(fd, buf, 0, @ptrCast(&addr), &addr_len) catch return null;
+    var addr: posix.sockaddr_in6 = undefined;
+    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr_in6);
+    const n = posix.recvfrom(fd, buf, 0, @ptrCast(&addr), &addr_len) catch |err| switch (err) {
+        error.WouldBlock => return null,
+        else => return null,
+    };
     return n;
 }
 
