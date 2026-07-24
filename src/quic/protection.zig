@@ -1904,3 +1904,99 @@ test "CipherSuite enum values" {
     try std.testing.expectEqual(@as(u8, 0), @intFromEnum(CipherSuite.aes_128_gcm));
     try std.testing.expectEqual(@as(u8, 1), @intFromEnum(CipherSuite.chacha20_poly1305));
 }
+
+// ── AES-256-GCM packet protection (RFC 9001 §5.3) ──
+
+const Aes256Gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+
+pub const aes_256_key_len = 32;
+pub const aes_256_tag_len = Aes256Gcm.tag_length;
+
+/// AES-256-GCM packet protection keys.
+pub const Aes256PacketProtectionKeys = struct {
+    key: [aes_256_key_len]u8,
+    iv: [iv_len]u8,
+    hp: [aes_256_key_len]u8,
+};
+
+/// Derive AES-256-GCM packet protection keys from a traffic secret.
+pub fn deriveAes256PacketProtectionKeys(secret: [traffic_secret_len]u8) Aes256PacketProtectionKeys {
+    var keys: Aes256PacketProtectionKeys = undefined;
+    const key_result = hkdfExpandLabel(secret, "quic key", aes_256_key_len);
+    @memcpy(keys.key[0..], key_result[0..aes_256_key_len]);
+    const iv_result = hkdfExpandLabel(secret, "quic iv", iv_len);
+    @memcpy(keys.iv[0..], iv_result[0..iv_len]);
+    const hp_result = hkdfExpandLabel(secret, "quic hp", aes_256_key_len);
+    @memcpy(keys.hp[0..], hp_result[0..aes_256_key_len]);
+    return keys;
+}
+
+/// Protect a QUIC packet payload with AEAD_AES_256_GCM.
+pub fn protectAes256Payload(
+    keys: Aes256PacketProtectionKeys,
+    packet_number: u64,
+    associated_data: []const u8,
+    plaintext: []const u8,
+    ciphertext: []u8,
+    tag: *[aes_256_tag_len]u8,
+) void {
+    const nonce = packetProtectionNonce(keys.iv, packet_number) catch @panic("invalid pn");
+    Aes256Gcm.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key);
+}
+
+/// Remove AEAD_AES_256_GCM protection from a QUIC packet payload.
+pub fn unprotectAes256Payload(
+    keys: Aes256PacketProtectionKeys,
+    packet_number: u64,
+    associated_data: []const u8,
+    ciphertext: []const u8,
+    tag: [aes_256_tag_len]u8,
+    plaintext: []u8,
+) !void {
+    const nonce = packetProtectionNonce(keys.iv, packet_number) catch return error.InvalidPacketNumber;
+    Aes256Gcm.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key) catch
+        return error.AuthenticationFailed;
+}
+
+test "AES-256-GCM packet protection roundtrip" {
+    const secret = [_]u8{0x42} ** 32;
+    const keys = deriveAes256PacketProtectionKeys(secret);
+
+    const plaintext = "Hello AES-256-GCM QUIC!";
+    const aad = "header";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [aes_256_tag_len]u8 = undefined;
+
+    protectAes256Payload(keys, 7, aad, plaintext, &ciphertext, &tag);
+    try std.testing.expect(!std.mem.eql(u8, plaintext, &ciphertext));
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try unprotectAes256Payload(keys, 7, aad, &ciphertext, tag, &decrypted);
+    try std.testing.expectEqualStrings(plaintext, &decrypted);
+}
+
+test "AES-256-GCM wrong packet number fails" {
+    const secret = [_]u8{0x42} ** 32;
+    const keys = deriveAes256PacketProtectionKeys(secret);
+
+    const plaintext = "test";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [aes_256_tag_len]u8 = undefined;
+    protectAes256Payload(keys, 1, "aad", plaintext, &ciphertext, &tag);
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try std.testing.expectError(
+        error.AuthenticationFailed,
+        unprotectAes256Payload(keys, 2, "aad", &ciphertext, tag, &decrypted),
+    );
+}
+
+test "AES-256-GCM keys differ from AES-128-GCM keys" {
+    const secret = [_]u8{0x42} ** 32;
+    const aes128 = deriveAes128PacketProtectionKeys(secret);
+    const aes256 = deriveAes256PacketProtectionKeys(secret);
+    // Different key lengths
+    try std.testing.expect(aes128.key.len != aes256.key.len);
+    // IVs use same label so they match
+    try std.testing.expectEqual(aes128.iv, aes256.iv);
+}

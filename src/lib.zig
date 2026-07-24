@@ -12,6 +12,7 @@ const transport_types = @import("quic/transport_types.zig");
 const crypto_types = @import("quic/crypto_types.zig");
 const tls_backend_module = @import("quic/tls_backend.zig");
 pub const tls13 = @import("tls/tls13.zig");
+pub const pq_kex = @import("tls/pq_kex.zig");
 pub const qlog = @import("qlog/qlog.zig");
 pub const cubic = @import("quic/cubic.zig");
 pub const bbr = @import("quic/bbr.zig");
@@ -43,6 +44,7 @@ pub const tls13_backend = @import("quic/tls13_backend.zig");
 comptime {
     // Keep tls13 reachable so its tests run under `zig build test`.
     _ = tls13;
+    _ = pq_kex;
     _ = qlog;
     _ = cubic;
     _ = bbr;
