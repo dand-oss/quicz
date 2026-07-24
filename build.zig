@@ -84,6 +84,39 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe_tls13_process_echo_client);
 
+    // QUIC echo server/client (practical examples)
+    const exe_quic_echo_server = b.addExecutable(.{
+        .name = "quicz-quic-echo-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_echo_server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_echo_server);
+    const run_quic_echo_server = b.step("run-quic-echo-server", "Run QUIC echo server on 127.0.0.1:4433");
+    const run_quic_echo_server_cmd = b.addRunArtifact(exe_quic_echo_server);
+    run_quic_echo_server.dependOn(&run_quic_echo_server_cmd.step);
+
+    const exe_quic_echo_client = b.addExecutable(.{
+        .name = "quicz-quic-echo-client",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_echo_client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_echo_client);
+    const run_quic_echo_client = b.step("run-quic-echo-client", "Run QUIC echo client (connects to 127.0.0.1:4433)");
+    const run_quic_echo_client_cmd = b.addRunArtifact(exe_quic_echo_client);
+    run_quic_echo_client.dependOn(&run_quic_echo_client_cmd.step);
+
     const exe_interop_external_client = b.addExecutable(.{
         .name = "quicz-interop-external-client",
         .root_module = b.createModule(.{

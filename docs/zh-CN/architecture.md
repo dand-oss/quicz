@@ -8,11 +8,10 @@
 
 quicz 目前聚焦 QUIC transport core：连接状态、包保护、CRYPTO/STREAM frame、
 transport parameters、ACK/loss/PTO、拥塞控制、连接 ID、path validation、Retry、
-stateless reset 和 endpoint lifecycle。TLS 由外部 C TLS 库通过很小的 adapter 接入；
-quicz 不在仓库内自研 TLS。
+stateless reset 和 endpoint lifecycle。TLS 1.3 由纯 Zig 实现（src/tls/tls13.zig，8227 行，213 测试），支持 ECDSA P-256、X25519、X25519Kyber768（后量子）、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖。同时保留 C-ABI TLS adapter 用于 OpenSSL 互通测试。
 
 当前文档中的“核心协议流程”指 transport 内部状态流转，不代表某个上层应用业务。
-HTTP/3、QPACK、DATAGRAM、完整互通矩阵和生产 socket API 仍按任务计划逐步推进。
+HTTP/3（基础）、QPACK 静态表、WebTransport（基础）已实现。互通已验证 quic-go、quiche、s2n-quic 三库。生产级高层 API 见 src/quic/api.zig（Endpoint/Connection/Stream 三层）。
 
 ## 关键名词
 
@@ -118,7 +117,7 @@ installed-key 包收发和 key phase 状态。它接收已经安装好的密钥�
 
 ### TLS integration boundary
 
-TLS 集成边界由 Zig `TlsBackend`/`CryptoBackend` wrapper 与 translate-c 生成的 C 绑定组成。
+TLS 集成边界支持两条路径：(1) 纯 Zig TLS 1.3 实现（src/tls/tls13.zig，8227 行，213 测试），支持 ECDSA P-256、X25519、X25519Kyber768、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖；(2) 遗留 C-ABI TlsBackend/CryptoBackend adapter 用于 OpenSSL 互通测试。
 构建脚本使用 Zig 0.16 推荐的 `addTranslateC` + `@import("c")` 路径，不手写 C ABI 的
 `extern fn`/`extern struct`。
 
@@ -140,7 +139,7 @@ quicz 的职责：
 ### Endpoint lifecycle layer
 
 Endpoint 层拥有 socket-facing lifecycle：按 DCID 和路径查找连接、创建/退休 route、驱动连接
-timer、投递 stateless reset、清理关闭连接。生产 socket API 还在推进中，但 loopback 示例已经
+timer、投递 stateless reset、清理关闭连接。生产级高层 API 已通过 src/quic/api.zig 提供（Endpoint/Connection/Stream 三层），loopback 和互通示例已经
 覆盖了多条关键路径。
 
 ### Examples and verifiers

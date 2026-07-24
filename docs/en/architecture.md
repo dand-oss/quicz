@@ -13,14 +13,14 @@ in pure Zig with a pure Zig TLS 1.3 implementation. The project covers:
 - **QUIC transport core**: connection state, packet protection, frames,
   transport parameters, ACK/loss/PTO, congestion control (NewReno + CUBIC),
   connection IDs, path validation, Retry, stateless reset, endpoint lifecycle.
-- **Pure Zig TLS 1.3** (): handshake state machine, key schedule,
+- **Pure Zig TLS 1.3** (src/tls/tls13.zig, 8227 lines, 213 tests): handshake state machine, key schedule,
   certificate verification, ALPN, QUIC transport parameters extension.
-- **HTTP/3** (): frame codec (RFC 9114), QPACK header compression
+- **HTTP/3** (src/h3/): frame codec (RFC 9114), QPACK header compression
   (RFC 9204), connection/stream management.
 - **Extensions**: RFC 9221 DATAGRAM, DPLPMTUD (RFC 8899), multipath path
   management, connection migration with anti-amplification, 0-RTT session
   cache, GSO/GRO segmentation, qlog observability.
-- **Interop**: verified against quic-go (Go) and quinn (Rust).
+- **Interop**: verified against quic-go (Go), quiche (Rust), and s2n-quic (Rust) — handshake + transfer.
 
 In this document, "core protocol flow" means internal transport state changes.
 It does not refer to an application domain.
@@ -116,6 +116,10 @@ sizing,
 and `src/quic/tls_backend.zig` owns the C-ABI TLS adapter while `lib.zig`
 re-exports the stable public surface.
 
+### High-Level API Layer
+
+`src/quic/api.zig` provides a three-layer embeddable API: `Endpoint` (listen/bind/connect/accept/poll), `Connection` (openStream/acceptStream/sendDatagram/close), and `Stream` (read/write/reset/close). Callers never see packet number spaces, traffic secrets, or CRYPTO frames. The `Address` type supports IPv4 and IPv6 dual-stack. This layer wraps `Tls13ClientEndpoint`, `Tls13ServerEndpoint`, `EndpointConnectionLifecycle`, and `UdpSocket` into a clean facade aligned with the YoMo v3 transport requirements.
+
 When moving implementation code out of `src/lib.zig`, keep the public module
 root stable and add explicit `test` imports for files whose tests must be
 discovered by `zig build test`. This preserves `@import("quicz")` call sites
@@ -156,8 +160,7 @@ keys came from a mock backend or a C TLS backend.
 
 ### TLS Integration Boundary
 
-The TLS boundary is made of the Zig `TlsBackend`/`CryptoBackend` wrappers and
-translate-c generated C bindings. The build uses Zig 0.16's recommended
+The TLS boundary supports two paths: (1) the pure Zig TLS 1.3 implementation in `src/tls/tls13.zig` (8227 lines, 213 tests) with ECDSA P-256, X25519, X25519Kyber768, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, ALPN, SNI, and certificate chain verification — no C dependencies; (2) the legacy C-ABI `TlsBackend`/`CryptoBackend` adapter for OpenSSL interop testing. The build uses Zig 0.16's recommended
 `addTranslateC` + `@import("c")` path, rather than handwritten C ABI
 `extern fn` or `extern struct` declarations.
 
@@ -181,7 +184,7 @@ quicz is responsible for:
 The endpoint layer owns the socket-facing lifecycle: connection lookup by DCID
 and path, route creation and retirement, connection timer service, stateless
 reset delivery, and closed-connection cleanup. The production socket API is
-still in progress, while loopback examples already cover several key paths.
+available through src/quic/api.zig (Endpoint/Connection/Stream three-layer API). Loopback and interop examples cover key paths.
 
 ### Examples and Verifiers
 
