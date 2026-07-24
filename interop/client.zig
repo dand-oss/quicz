@@ -4,56 +4,105 @@
 //! Saves downloaded files to /downloads.
 //! Test case controlled by TESTCASE environment variable.
 //!
-//! HTTP/0.9 protocol: client sends request path on a bidi stream,
-//! server responds with file contents and closes the stream.
+//! Uses POSIX sockets for UDP I/O (reliable in Docker containers).
 
 const std = @import("std");
+const posix = std.posix;
 const quicz = @import("quicz");
 
 const endpoint = quicz.endpoint;
 const Tls13ClientEndpoint = quicz.Tls13ClientEndpoint;
 
 const downloads_dir = "/downloads";
-const certs_dir = "/certs";
 const max_datagram_size: usize = 8192;
-const recv_timeout_ms: u64 = 5000;
-
-fn recvTimeout() std.Io.Timeout {
-    return .{ .duration = .{
-        .clock = .awake,
-        .raw = std.Io.Duration.fromMilliseconds(recv_timeout_ms),
-    } };
-}
+const recv_timeout_ms: i32 = 5000;
 
 /// Parse a URL into host, port, and path.
 fn parseUrl(url: []const u8) !struct { host: []const u8, port: u16, path: []const u8 } {
-    // Expected format: https://host:port/path
     var rest = url;
-
-    // Strip scheme
     if (std.mem.indexOf(u8, rest, "://")) |scheme_end| {
         rest = rest[scheme_end + 3 ..];
     }
-
-    // Split host:port from path
     const path_start = std.mem.indexOf(u8, rest, "/") orelse rest.len;
     const host_port = rest[0..path_start];
     const path = if (path_start < rest.len) rest[path_start..] else "/";
-
-    // Split host and port
     var host = host_port;
     var port: u16 = 443;
     if (std.mem.lastIndexOf(u8, host_port, ":")) |colon| {
         host = host_port[0..colon];
         port = std.fmt.parseInt(u16, host_port[colon + 1 ..], 10) catch 443;
     }
-
     return .{ .host = host, .port = port, .path = path };
 }
 
+/// Resolve hostname to IPv4 address using getaddrinfo.
+fn resolveHost(hostname: []const u8) !u32 {
+    // Try parsing as IP address first
+    if (std.net.Ip4Address.parse(hostname, 0)) |addr| {
+        return std.mem.readInt(u32, &addr.sa.addr, .big);
+    } else |_| {}
+
+    // DNS resolution
+    var hints: posix.addrinfo = .{
+        .family = posix.AF.INET,
+        .socktype = posix.SOCK.DGRAM,
+    };
+    var result: ?*posix.addrinfo = null;
+    const rc = posix.getaddrinfo(hostname, null, &hints, &result);
+    if (rc != 0) return error.DnsResolutionFailed;
+    defer posix.freeaddrinfo(result);
+
+    if (result) |info| {
+        if (info.addr.len >= 8) {
+            // sockaddr_in: family(2) + port(2) + addr(4)
+            return std.mem.readInt(u32, info.addr[4..8], .big);
+        }
+    }
+    return error.DnsResolutionFailed;
+}
+
+/// Create a UDP socket and bind to 0.0.0.0:0.
+fn createUdpSocket() !posix.socket_t {
+    const fd = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
+    var addr: posix.sockaddr_in = .{
+        .port = 0,
+        .addr = 0, // 0.0.0.0
+    };
+    posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr_in)) catch |err| {
+        posix.close(fd);
+        return err;
+    };
+    return fd;
+}
+
+/// Send a UDP datagram to the server.
+fn sendTo(fd: posix.socket_t, server_ip: u32, server_port: u16, data: []const u8) !void {
+    var addr: posix.sockaddr_in = .{
+        .port = std.mem.nativeToBig(u16, server_port),
+        .addr = std.mem.nativeToBig(u32, server_ip),
+    };
+    _ = try posix.sendto(fd, data, 0, @ptrCast(&addr), @sizeOf(posix.sockaddr_in));
+}
+
+/// Receive a UDP datagram with timeout. Returns number of bytes received, or null on timeout.
+fn recvFromTimeout(fd: posix.socket_t, buf: []u8, timeout_ms: i32) !?usize {
+    var fds = [1]posix.pollfd{.{
+        .fd = fd,
+        .events = posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = posix.poll(&fds, timeout_ms) catch return null;
+    if (ready == 0) return null; // timeout
+    if (fds[0].revents & posix.POLL.IN == 0) return null;
+
+    var addr: posix.sockaddr_in = undefined;
+    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr_in);
+    const n = posix.recvfrom(fd, buf, 0, @ptrCast(&addr), &addr_len) catch return null;
+    return n;
+}
+
 /// Save downloaded data to a file in the downloads directory.
-fn saveFile(io: std.Io, path: []const u8, data: []const u8) !void {
-    // Extract filename from path
+fn saveFile(path: []const u8, data: []const u8) !void {
     const filename = if (std.mem.lastIndexOf(u8, path, "/")) |slash|
         path[slash + 1 ..]
     else
@@ -62,21 +111,22 @@ fn saveFile(io: std.Io, path: []const u8, data: []const u8) !void {
     var buf: [512]u8 = undefined;
     const full_path = std.fmt.bufPrint(&buf, "{s}/{s}", .{ downloads_dir, filename }) catch return;
 
-    const file = std.Io.Dir.createFileAbsolute(io, full_path, .{}) catch return;
-    defer file.close(io);
-    file.writeStreamingAll(io, data) catch return;
+    const file = std.fs.createFileAbsolute(full_path, .{}) catch return;
+    defer file.close();
+    file.writeAll(data) catch return;
 }
 
-pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
-    const io = init.io;
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    const testcase = init.environ_map.get("TESTCASE") orelse "handshake";
-    const requests_env = init.environ_map.get("REQUESTS") orelse "";
+    // Read environment variables
+    const testcase = std.posix.getenv("TESTCASE") orelse "handshake";
+    const requests_env = std.posix.getenv("REQUESTS") orelse "";
     std.debug.print("quicz interop client: testcase={s}\n", .{testcase});
 
     if (requests_env.len == 0) {
-        // For handshake testcase, still connect to default server
         std.debug.print("quicz interop client: no REQUESTS, attempting handshake only\n", .{});
     }
 
@@ -92,31 +142,43 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Default server for handshake-only mode
-    const default_host = "server";
-    const default_port: u16 = 4433;
+    const default_host = "server4";
+    const default_port: u16 = 443;
 
-    // Parse first URL to get server address, or use default
     const server_host: []const u8 = if (url_count > 0) (try parseUrl(urls[0])).host else default_host;
     const server_port: u16 = if (url_count > 0) (try parseUrl(urls[0])).port else default_port;
     std.debug.print("quicz interop client: connecting to {s}:{d}\n", .{ server_host, server_port });
 
-    // Parse first URL to get server address
-
-    // Initialize I/O
-
-    // Bind client UDP socket
-    var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 0, 0, 0, 0 }, .port = 0 } };
-    var socket = address.bind(io, .{ .mode = .dgram, .protocol = .udp }) catch {
-        std.debug.print("failed to bind client socket\n", .{});
-        return error.BindFailed;
+    // Resolve server address
+    const server_ip = resolveHost(server_host) catch blk: {
+        std.debug.print("failed to resolve {s}, using Docker default\n", .{server_host});
+        break :blk @as(u32, 193) << 24 | @as(u32, 167) << 16 | @as(u32, 100) << 8 | @as(u32, 100);
     };
-    defer socket.close(io);
+
+    // Create UDP socket
+    const fd = createUdpSocket() catch {
+        std.debug.print("failed to create UDP socket\n", .{});
+        return error.SocketFailed;
+    };
+    defer posix.close(fd);
+
+    // Get local address
+    var local_addr: posix.sockaddr_in = undefined;
+    var local_len: posix.socklen_t = @sizeOf(posix.sockaddr_in);
+    _ = posix.getsockname(fd, @ptrCast(&local_addr), &local_len) catch {};
+    const local_ip = std.mem.bigToNative(u32, local_addr.addr);
+    const local_port = std.mem.bigToNative(u16, local_addr.port);
 
     // Create client endpoint
     const client_handle: u64 = 1;
+    var local_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &local_bytes, local_ip, .big);
+    var remote_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &remote_bytes, server_ip, .big);
+
     const client_path = endpoint.Udp4Tuple{
-        .local = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port),
-        .remote = endpoint.Udp4Address.init(.{ 193, 167, 100, 100 }, server_port),
+        .local = endpoint.Udp4Address.init(local_bytes, local_port),
+        .remote = endpoint.Udp4Address.init(remote_bytes, server_port),
     };
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
@@ -155,14 +217,12 @@ pub fn main(init: std.process.Init) !void {
     };
 
     // Send Initial to server
-    var server_addr = std.Io.net.IpAddress{
-        .ip4 = .{ .bytes = .{ 193, 167, 100, 100 }, .port = server_port },
-    };
-    socket.send(io, &server_addr, begin_result.datagram) catch {
+    sendTo(fd, server_ip, server_port, begin_result.datagram) catch {
         std.debug.print("failed to send Initial\n", .{});
         return error.SendFailed;
     };
     allocator.free(begin_result.datagram);
+    std.debug.print("quicz interop client: Initial sent\n", .{});
 
     // Handshake loop
     var recv_buf: [max_datagram_size]u8 = undefined;
@@ -170,23 +230,22 @@ pub fn main(init: std.process.Init) !void {
     var attempts: usize = 0;
 
     while (!handshake_done and attempts < 20) : (attempts += 1) {
-        const received = socket.receiveTimeout(io, &recv_buf, recvTimeout()) catch {
+        const n = recvFromTimeout(fd, &recv_buf, recv_timeout_ms) orelse {
             std.debug.print("receive timeout during handshake\n", .{});
             continue;
         };
 
-        const result = client.receiveWithRoutePath(0, &scratch, received.data) catch {
+        const result = client.receiveWithRoutePath(0, &scratch, recv_buf[0..n]) catch {
             std.debug.print("failed to process server datagram\n", .{});
             continue;
         };
 
-        // Send any response datagrams
         if (result.outbound_initial) |o| {
-            socket.send(io, &server_addr, o.datagram) catch {};
+            sendTo(fd, server_ip, server_port, o.datagram) catch {};
             allocator.free(o.datagram);
         }
         if (result.outbound_handshake) |o| {
-            socket.send(io, &server_addr, o.datagram) catch {};
+            sendTo(fd, server_ip, server_port, o.datagram) catch {};
             allocator.free(o.datagram);
         }
 
@@ -206,11 +265,8 @@ pub fn main(init: std.process.Init) !void {
         const parsed = parseUrl(url) catch continue;
         std.debug.print("quicz interop client: downloading {s}\n", .{parsed.path});
 
-        // Open stream and send request
         const stream_id = client.openStream() catch continue;
-        client.sendStream(stream_id, parsed.path, true) catch continue;
 
-        // Drain and send request datagrams
         var send_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
         const send_result = client.sendStreamWithRoutePathAndDrainDatagrams(
             stream_id,
@@ -221,7 +277,7 @@ pub fn main(init: std.process.Init) !void {
         ) catch continue;
 
         for (send_out[0..send_result.drain.datagrams_written]) |o| {
-            socket.send(io, &server_addr, o.datagram) catch {};
+            sendTo(fd, server_ip, server_port, o.datagram) catch {};
             allocator.free(o.datagram);
         }
 
@@ -231,42 +287,36 @@ pub fn main(init: std.process.Init) !void {
         var recv_attempts: usize = 0;
 
         while (recv_attempts < 50) : (recv_attempts += 1) {
-            const received = socket.receiveTimeout(io, &recv_buf, recvTimeout()) catch break;
+            const n = recvFromTimeout(fd, &recv_buf, recv_timeout_ms) orelse break;
 
             var recv_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
             var due_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
             _ = client.receiveDatagramStepWithRoutePath(
                 0,
                 &scratch,
-                received.data,
+                recv_buf[0..n],
                 &recv_out,
                 &due_out,
             ) catch continue;
 
-            // Send ACKs
             for (recv_out[0..0]) |o| {
-                socket.send(io, &server_addr, o.datagram) catch {};
+                sendTo(fd, server_ip, server_port, o.datagram) catch {};
                 allocator.free(o.datagram);
             }
 
-            // Try to read stream data
             var read_buf: [65536]u8 = undefined;
-            if (client.recvStream(stream_id, &read_buf) catch null) |n| {
-                if (n > 0 and response_len + n <= response_buf.len) {
-                    @memcpy(response_buf[response_len .. response_len + n], read_buf[0..n]);
-                    response_len += n;
+            if (client.recvStream(stream_id, &read_buf) catch null) |bytes_read| {
+                if (bytes_read > 0 and response_len + bytes_read <= response_buf.len) {
+                    @memcpy(response_buf[response_len .. response_len + bytes_read], read_buf[0..bytes_read]);
+                    response_len += bytes_read;
                 }
             }
 
-            // Check if stream is finished
-            if (client.streamFinished(stream_id) catch false) {
-                break;
-            }
+            if (client.streamFinished(stream_id) catch false) break;
         }
 
-        // Save file
         if (response_len > 0) {
-            saveFile(io, parsed.path, response_buf[0..response_len]) catch {
+            saveFile(parsed.path, response_buf[0..response_len]) catch {
                 std.debug.print("failed to save {s}\n", .{parsed.path});
             };
             std.debug.print("quicz interop client: saved {s} ({d} bytes)\n", .{ parsed.path, response_len });
@@ -278,7 +328,7 @@ pub fn main(init: std.process.Init) !void {
     const close_result = client.closeApplicationWithRoutePathAndDrainDatagrams(0, "done", 0, &close_out) catch null;
     if (close_result) |result| {
         for (close_out[0..result.drain.datagrams_written]) |o| {
-            socket.send(io, &server_addr, o.datagram) catch {};
+            sendTo(fd, server_ip, server_port, o.datagram) catch {};
             allocator.free(o.datagram);
         }
     }
