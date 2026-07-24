@@ -1,5 +1,4 @@
 //! quiche QUIC echo server for interop testing.
-//! Usage: cargo run --release -- 127.0.0.1:4433
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
@@ -34,7 +33,7 @@ fn main() {
         .expect("load cert");
     config.load_priv_key_from_pem_file(&key).expect("load key");
 
-    let mut conns: HashMap<quiche::ConnectionId<'static>, quiche::Connection> = HashMap::new();
+    let mut conns: HashMap<Vec<u8>, quiche::Connection> = HashMap::new();
     let mut buf = [0u8; 65535];
 
     loop {
@@ -43,35 +42,66 @@ fn main() {
             Err(_) => continue,
         };
 
-        let (conn_id, _) = match quiche::ConnectionId::from_ref(&buf[6..14]) {
-            id => (id, ()),
+        let recv_info = quiche::RecvInfo {
+            from: peer,
+            to: addr,
         };
 
-        let conn = conns.entry(conn_id.to_owned()).or_insert_with(|| {
-            quiche::accept(&conn_id, None, peer, &mut config).expect("accept")
-        });
+        // Extract connection ID from packet header
+        let conn_id = buf[6..14].to_vec();
 
-        if conn.recv(&mut buf[..n]).is_err() {
+        // Get or create connection
+        if !conns.contains_key(&conn_id) {
+            let scid = quiche::ConnectionId::from_ref(&conn_id);
+            match quiche::accept(&scid, None, addr, peer, &mut config) {
+                Ok(conn) => {
+                    conns.insert(conn_id.clone(), conn);
+                }
+                Err(_) => continue,
+            }
+        }
+
+        let conn = match conns.get_mut(&conn_id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Process incoming packet
+        if conn.recv(&mut buf[..n], recv_info).is_err() {
             continue;
         }
 
-        for sid in conn.readable() {
+        // Collect readable stream IDs first to avoid borrow conflict
+        let readable: Vec<u64> = conn.readable().collect();
+        for sid in readable {
             let mut sbuf = [0u8; 65535];
-            while let Ok((read, fin)) = conn.stream_recv(sid, &mut sbuf) {
-                if read > 0 {
-                    println!("request: {:?}", String::from_utf8_lossy(&sbuf[..read]));
-                    let _ = conn.stream_send(sid, b"Hello from quiche!", true);
-                }
-                if fin {
-                    break;
+            loop {
+                match conn.stream_recv(sid, &mut sbuf) {
+                    Ok((read, fin)) => {
+                        if read > 0 {
+                            println!("request: {:?}", String::from_utf8_lossy(&sbuf[..read]));
+                            let _ = conn.stream_send(sid, b"Hello from quiche!", true);
+                        }
+                        if fin {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
         }
 
+        // Flush outgoing packets
         let mut out = [0u8; 65535];
-        while let Ok((write, _)) = conn.send(&mut out) {
-            if write > 0 {
-                let _ = socket.send_to(&out[..write], peer);
+        loop {
+            match conn.send(&mut out) {
+                Ok((write, _send_info)) => {
+                    if write > 0 {
+                        let _ = socket.send_to(&out[..write], peer);
+                    }
+                }
+                Err(quiche::Error::Done) => break,
+                Err(_) => break,
             }
         }
 
