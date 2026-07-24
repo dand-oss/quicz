@@ -24,6 +24,7 @@ pub const h3_request = @import("h3/request.zig");
 pub const h3_server = @import("h3/server.zig");
 pub const h3_client = @import("h3/client.zig");
 pub const webtransport = @import("h3/webtransport.zig");
+pub const api = @import("quic/api.zig");
 const h3_integration_test = @import("h3/h3_integration_test.zig");
 const quic_v2_test = @import("quic/quic_v2_test.zig");
 const interop_coverage_test = @import("quic/interop_coverage_test.zig");
