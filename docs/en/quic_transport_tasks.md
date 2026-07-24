@@ -7130,48 +7130,80 @@ zig build run-udp-stateless-reset-loopback
 
 ## Feature comparison with other QUIC implementations
 
+Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compliance tracking.
+
 | Feature | RFC | quic-go | quiche | s2n-quic | quicz | Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | QUIC v1 transport | 9000 | ✅ | ✅ | ✅ | ✅ | — |
-| QUIC v2 | 9369 | ✅ | ✅ | ❌ | ✅ | — |
-| TLS 1.3 | 9001 | ✅ | ✅(BoringSSL) | ✅(s2n-tls) | ✅(pure Zig) | — |
-| Loss recovery | 9002 | ✅ | ✅ | ✅ | ✅ | — |
-| HTTP/3 | 9114 | ✅ | ✅ | ❌ | ⚠️ basic | H3 connection mgmt |
-| QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
-| QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ❌ | **Missing** |
-| 0-RTT | 9001 | ✅ | ✅ | ✅ | ✅ | — |
-| DATAGRAM | 9221 | ✅ | ✅ | ✅ | ✅ | — |
-| Multipath | draft | ✅ | ❌ | ❌ | ✅ | — |
-| NewReno | 9002 | ✅ | ✅ | ✅ | ✅ | — |
-| CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
-| BBR | — | ✅ | ✅ | ❌ | ✅ | — |
-| ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
-| AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
-| Post-quantum KX | — | ✅ | ✅ | ✅ | ✅ | — |
+| QUIC v2 | 9369 | ✅ | ❌ | ❌ | ✅ | quiche/s2n-quic only V1 |
+| TLS 1.3 | 9001 | ✅(Go crypto/tls) | ✅(BoringSSL) | ✅(s2n-tls/rustls) | ✅(pure Zig) | — |
+| 0-RTT (early data) | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| Loss detection & recovery | 9002 | ✅ | ✅ | ✅ | ✅ | — |
 | Connection migration | 9000 | ✅ | ✅ | ✅ | ✅ | — |
 | Path validation | 9000 | ✅ | ✅ | ✅ | ✅ | — |
-| Retry | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| Retry + address validation | 9000 | ✅ | ✅ | ✅ | ✅ | — |
 | Stateless reset | 9000 | ✅ | ✅ | ✅ | ✅ | — |
 | Key update | 9001 | ✅ | ✅ | ✅ | ✅ | — |
-| ECN | 9000 | ✅ | ✅ | ❌ | ✅ | — |
-| PMTU discovery | 9000 | ✅ | ✅ | ✅ | ✅ | — |
-| GSO/GRO | — | ✅ | ✅ | ❌ | ✅ | — |
-| qlog | — | ✅ | ✅ | ❌ | ✅ | — |
-| Version negotiation | 9368 | ✅ | ✅ | ❌ | ✅ | — |
-| WebTransport | — | ✅ | ❌ | ❌ | ⚠️ basic | Full WT session |
-| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | **Missing** |
+| Version negotiation | 9368 | ✅ | ✅ | ✅ | ✅ | — |
+| DATAGRAM extension | 9221 | ✅ | ✅ | ✅(unstable) | ✅ | — |
+| Multipath | draft | ✅ | ❌ | ❌ | ✅ | — |
+| ECN | 9000 | ✅ | ⚠️ rx only | ✅ | ✅ | quiche 不发送 ECN |
+| PMTU discovery | 8899 | ✅ | ✅ | ✅ | ✅ | — |
+| GSO/GRO | — | ✅ | ❌ | ✅ | ✅ | quiche 委托应用层 I/O |
 | Connection pool | — | ✅ | ❌ | ❌ | ✅ | — |
-| Fuzz targets | — | ✅ | ✅ | ✅ | ✅ | — |
-| External interop | — | ✅ | ✅ | ✅ | ✅(all three) | — |
+| qlog | draft | ✅ | ✅(feature-gated) | ❌(event subscriber) | ✅ | — |
+| Fuzz targets | — | ✅(OSS-Fuzz) | ✅ | ✅ | ✅ | — |
+| NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
+| CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
+| BBR | — | ✅ | ✅ | ✅ | ✅ | — |
+| Packet pacing | 9002 | ✅ | ✅ | ✅ | ✅ | — |
+| AES-128-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| X25519 ECDH | 8446 | ✅ | ✅ | ✅ | ✅ | — |
+| X25519Kyber768 (PQ) | draft | ✅ | ✅ | ✅ | ✅ | — |
+| HTTP/3 | 9114 | ✅ | ✅ | ❌ | ⚠️ basic | 需完善连接管理 |
+| QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
+| QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ❌ | **2/3 建议实现** |
+| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | 1/3 可选 |
+| WebTransport | draft | ✅ | ❌ | ❌ | ⚠️ basic | 需完善会话管理 |
+| Stream reset partial delivery | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
+| External interop | — | — | — | — | ✅ all three | — |
+| Pure-language TLS (no C) | — | ✅ | ❌ | ❌ | ✅ | — |
+| FIPS 140-3 | — | ✅(Go 1.26+) | ❌ | ❌ | ❌ | 仅 quic-go |
+| XDP zero-copy I/O | — | ❌ | ❌ | ✅(unstable) | ❌ | 仅 s2n-quic |
 
-### Mandatory gaps — all three implementations have these, quicz must implement
+### Coverage summary
 
-1. ~~AES-256-GCM cipher suite~~ — DONE (675e7ca)
-2. ~~Post-quantum key exchange (X25519Kyber768)~~ — DONE (675e7ca)
-3. **QPACK dynamic table** — quic-go and quiche implement it (2/3, recommended)
-4. **HTTP Datagrams (RFC 9297)** — quic-go only (1/3, optional)
-5. **Complete HTTP/3 connection management** — GOAWAY, SETTINGS, stream lifecycle over real transport
-6. **Complete WebTransport session** — CONNECT, bidi/uni streams, datagrams over H3
+| Metric | quic-go | quiche | s2n-quic | quicz |
+| --- | --- | --- | --- | --- |
+| Transport (19 items) | 19/19 | 14/19 | 14/19 | 19/19 |
+| Congestion (4 items) | 4/4 | 4/4 | 3/4 | 4/4 |
+| Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
+| Application layer (6 items) | 6/6 | 3/6 | 0/6 | 2/6 |
+| Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
+| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **31/37** |
+
+### Gap analysis
+
+**Mandatory gaps (all three have) — ALL CLOSED:**
+
+1. ~~AES-256-GCM~~ — DONE (675e7ca)
+2. ~~X25519Kyber768~~ — DONE (675e7ca)
+
+**Recommended (2/3 have):**
+
+3. **QPACK dynamic table** — quic-go + quiche
+4. **Complete HTTP/3 connection management** — GOAWAY, SETTINGS, stream lifecycle
+
+**Optional (1/3 or fewer):**
+
+5. HTTP Datagrams (RFC 9297) — quic-go only
+6. Complete WebTransport session — quic-go only
+7. Stream reset partial delivery — quic-go only (draft)
+8. FIPS 140-3 — quic-go only
+9. XDP zero-copy I/O — s2n-quic only
+
 ## Milestones
 
 1. Standard matrix and documentation are current.
