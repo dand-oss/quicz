@@ -1,7 +1,0 @@
-{
-    "quicz": {
-        "image": "quicz-interop:latest",
-        "url": "https://github.com/venjiang/quicz",
-        "role": "both"
-    }
-}
