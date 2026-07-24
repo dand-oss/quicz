@@ -1,7 +1,6 @@
-//! s2n-quic QUIC echo server for interop testing.
-//! Usage: cargo run --release -- 127.0.0.1:4433
-
+use bytes::Bytes;
 use s2n_quic::Server;
+use s2n_quic::provider::tls::s2n_tls;
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -11,11 +10,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "127.0.0.1:4433".into())
         .parse()?;
 
-    let cert = std::env::var("CERT").unwrap_or_else(|_| "cert.pem".into());
-    let key = std::env::var("KEY").unwrap_or_else(|_| "key.pem".into());
+    let cert_path = std::env::var("CERT").unwrap_or_else(|_| "cert.pem".into());
+    let key_path = std::env::var("KEY").unwrap_or_else(|_| "key.pem".into());
+    let cert_pem = std::fs::read_to_string(&cert_path)?;
+    let key_pem = std::fs::read_to_string(&key_path)?;
+
+    let tls = s2n_tls::Server::builder()
+        .with_application_protocols([b"hq-interop".as_ref()])?
+        .with_certificate(&cert_pem, &key_pem)?
+        .build()?;
 
     let mut server = Server::builder()
-        .with_tls((cert, key))?
+        .with_tls(tls)?
         .with_io(addr)?
         .start()?;
 
@@ -26,18 +32,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("new connection from {:?}", conn.remote_addr());
             while let Ok(Some(mut stream)) = conn.accept_bidirectional_stream().await {
                 tokio::spawn(async move {
-                    let mut buf = vec![0u8; 65535];
-                    while let Ok(Some(n)) = stream.receive(&mut buf).await {
-                        if n > 0 {
-                            println!("request: {:?}", String::from_utf8_lossy(&buf[..n]));
-                            let _ = stream.send(b"Hello from s2n-quic!").await;
-                            let _ = stream.finish().await;
-                        }
+                    if let Ok(Some(data)) = stream.receive().await {
+                        println!("request: {:?}", String::from_utf8_lossy(&data));
+                        let response = Bytes::from_static(b"Hello from s2n-quic!");
+                        let _ = stream.send(response).await;
+                        let _ = stream.finish();
                     }
                 });
             }
         });
     }
-
     Ok(())
 }
