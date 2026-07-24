@@ -2,18 +2,22 @@
 //!
 //! Provides a non-blocking UDP socket event loop using Zig std.Io,
 //! supporting multi-connection concurrent send/receive with
-//! timer-driven PTO/idle/close handling.
+//! timer-driven PTO/idle/close handling. Supports IPv4-only and
+//! IPv6 dual-stack (AF_INET6 with IPV6_V6ONLY disabled) sockets.
 
 const std = @import("std");
 const endpoint = @import("endpoint.zig");
+const api = @import("api.zig");
 
 /// UDP socket wrapper for QUIC datagram I/O.
 pub const UdpSocket = struct {
     socket: std.Io.net.Socket,
     io: std.Io,
     local_addr: endpoint.Udp4Address,
+    /// True when the socket is an IPv6 dual-stack socket.
+    is_ipv6: bool = false,
 
-    /// Bind a UDP socket to the given address and port.
+    /// Bind a UDP socket to the given address and port (IPv4).
     pub fn bind(io: std.Io, addr: []const u8, port: u16) !UdpSocket {
         var ip_bytes: [4]u8 = undefined;
         if (std.mem.eql(u8, addr, "0.0.0.0") or std.mem.eql(u8, addr, "127.0.0.1")) {
@@ -35,7 +39,27 @@ pub const UdpSocket = struct {
         return .{ .socket = socket, .io = io, .local_addr = local };
     }
 
-    /// Send a datagram to the given address.
+    /// Bind an IPv6 dual-stack UDP socket (accepts both IPv4 and IPv6 traffic).
+    ///
+    /// The socket is created with AF_INET6 and IPV6_V6ONLY disabled so that
+    /// IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) work transparently.
+    pub fn bindIpv6DualStack(io: std.Io, port: u16) !UdpSocket {
+        const in6_any: [16]u8 = .{0} ** 16; // ::
+        var address = std.Io.net.IpAddress{ .ip6 = .{ .bytes = in6_any, .port = port } };
+        const socket = try address.bind(io, .{
+            .mode = .dgram,
+            .protocol = .udp,
+        });
+        const bound_port = socket.address.ip6.port;
+        return .{
+            .socket = socket,
+            .io = io,
+            .local_addr = endpoint.Udp4Address.init(.{ 0, 0, 0, 0 }, bound_port),
+            .is_ipv6 = true,
+        };
+    }
+
+    /// Send a datagram to the given IPv4 address.
     pub fn sendTo(self: *UdpSocket, remote: endpoint.Udp4Address, data: []const u8) !void {
         var ip_addr = std.Io.net.IpAddress{
             .ip4 = .{ .bytes = remote.octets, .port = remote.port },
@@ -43,7 +67,25 @@ pub const UdpSocket = struct {
         try self.socket.send(self.io, &ip_addr, data);
     }
 
-    /// Receive a datagram with timeout. Returns data and sender address.
+    /// Send a datagram to a dual-stack Address (IPv4 or IPv6).
+    pub fn sendToAddress(self: *UdpSocket, remote: api.Address, data: []const u8) !void {
+        switch (remote.tag) {
+            .ipv4 => {
+                var ip_addr = std.Io.net.IpAddress{
+                    .ip4 = .{ .bytes = remote.v4, .port = remote.port },
+                };
+                try self.socket.send(self.io, &ip_addr, data);
+            },
+            .ipv6 => {
+                var ip_addr = std.Io.net.IpAddress{
+                    .ip6 = .{ .bytes = remote.v6, .port = remote.port },
+                };
+                try self.socket.send(self.io, &ip_addr, data);
+            },
+        }
+    }
+
+    /// Receive a datagram with timeout. Returns data and sender address (IPv4).
     pub fn receiveFrom(self: *UdpSocket, buf: []u8, timeout_ms: u64) !struct { data: []const u8, from: endpoint.Udp4Address } {
         const timeout = std.Io.Timeout{
             .duration = .{
@@ -56,6 +98,22 @@ pub const UdpSocket = struct {
             received.from.ip4.bytes,
             received.from.ip4.port,
         );
+        return .{ .data = received.data, .from = from };
+    }
+
+    /// Receive a datagram with timeout, returning a dual-stack Address.
+    pub fn receiveFromAddress(self: *UdpSocket, buf: []u8, timeout_ms: u64) !struct { data: []const u8, from: api.Address } {
+        const timeout = std.Io.Timeout{
+            .duration = .{
+                .clock = .awake,
+                .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
+            },
+        };
+        const received = try self.socket.receiveTimeout(self.io, buf, timeout);
+        const from: api.Address = switch (received.from) {
+            .ip4 => |v4| api.Address.ipv4(v4.bytes, v4.port),
+            .ip6 => |v6| api.Address.ipv6(v6.bytes, v6.port),
+        };
         return .{ .data = received.data, .from = from };
     }
 
