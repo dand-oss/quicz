@@ -139,13 +139,13 @@ zig fmt --check build.zig src examples       # 格式检查
 
 ## 添加依赖
 
-```zig
-// build.zig.zon
-.dependencies = .{
-    .quicz = .{ .path = "../quicz" },
-},
+```bash
+zig fetch --save git+https://github.com/venjiang/quicz
+```
 
-// build.zig
+然后在 `build.zig` 中：
+
+```zig
 const quicz_dep = b.dependency("quicz", .{ .target = target, .optimize = optimize });
 exe.root_module.addImport("quicz", quicz_dep.module("quicz"));
 ```

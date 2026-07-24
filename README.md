@@ -29,10 +29,8 @@ A QUIC / HTTP/3 implementation in pure Zig.
 
 Add to your `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .quicz = .{ .path = "../quicz" },
-},
+```bash
+zig fetch --save git+https://github.com/venjiang/quicz
 ```
 
 Then in your `build.zig`:
