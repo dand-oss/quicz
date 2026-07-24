@@ -76,8 +76,8 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("quicz interop client: testcase={s}\n", .{testcase});
 
     if (requests_env.len == 0) {
-        std.debug.print("quicz interop client: no REQUESTS, nothing to download\n", .{});
-        return;
+        // For handshake testcase, still connect to default server
+        std.debug.print("quicz interop client: no REQUESTS, attempting handshake only\n", .{});
     }
 
     // Parse REQUESTS (space-separated URLs)
@@ -91,14 +91,16 @@ pub fn main(init: std.process.Init) !void {
         url_count += 1;
     }
 
-    if (url_count == 0) {
-        std.debug.print("quicz interop client: no valid URLs\n", .{});
-        return;
-    }
+    // Default server for handshake-only mode
+    const default_host = "server";
+    const default_port: u16 = 4433;
+
+    // Parse first URL to get server address, or use default
+    const server_host: []const u8 = if (url_count > 0) (try parseUrl(urls[0])).host else default_host;
+    const server_port: u16 = if (url_count > 0) (try parseUrl(urls[0])).port else default_port;
+    std.debug.print("quicz interop client: connecting to {s}:{d}\n", .{ server_host, server_port });
 
     // Parse first URL to get server address
-    const first_url = try parseUrl(urls[0]);
-    std.debug.print("quicz interop client: connecting to {s}:{d}\n", .{ first_url.host, first_url.port });
 
     // Initialize I/O
 
@@ -114,7 +116,7 @@ pub fn main(init: std.process.Init) !void {
     const client_handle: u64 = 1;
     const client_path = endpoint.Udp4Tuple{
         .local = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port),
-        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, first_url.port),
+        .remote = endpoint.Udp4Address.init(.{ 193, 167, 100, 100 }, server_port),
     };
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
@@ -134,7 +136,7 @@ pub fn main(init: std.process.Init) !void {
         },
         .{
             .alpn = &alpn,
-            .server_name = first_url.host,
+            .server_name = server_host,
             .skip_cert_verify = true,
         },
         original_dcid,
@@ -154,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Send Initial to server
     var server_addr = std.Io.net.IpAddress{
-        .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = first_url.port },
+        .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = server_port },
     };
     socket.send(io, &server_addr, begin_result.datagram) catch {
         std.debug.print("failed to send Initial\n", .{});
