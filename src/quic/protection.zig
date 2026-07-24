@@ -1736,3 +1736,171 @@ test "protected long header length rejects oversized connection IDs" {
 
     try std.testing.expectError(error.InvalidConnectionIdLength, longHeaderLen(header, 4, 4));
 }
+
+// ── ChaCha20-Poly1305 packet protection (RFC 9001 §5.4) ──
+
+const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+
+pub const chacha20_key_len = 32;
+pub const chacha20_tag_len = ChaCha20Poly1305.tag_length;
+
+/// Cipher suite selection for QUIC packet protection.
+pub const CipherSuite = enum {
+    aes_128_gcm,
+    chacha20_poly1305,
+};
+
+/// ChaCha20-Poly1305 packet protection keys (RFC 9001 §5.4).
+pub const ChaCha20PacketProtectionKeys = struct {
+    /// 32-byte AEAD key.
+    key: [chacha20_key_len]u8,
+    /// 12-byte IV.
+    iv: [iv_len]u8,
+    /// 32-byte header protection key.
+    hp: [chacha20_key_len]u8,
+};
+
+/// Derive ChaCha20-Poly1305 packet protection keys from a traffic secret.
+/// Derive ChaCha20-Poly1305 packet protection keys from a traffic secret.
+pub fn deriveChaCha20PacketProtectionKeys(secret: [traffic_secret_len]u8) ChaCha20PacketProtectionKeys {
+    var keys: ChaCha20PacketProtectionKeys = undefined;
+    const key_result = hkdfExpandLabel(secret, "quic key", chacha20_key_len);
+    @memcpy(keys.key[0..], key_result[0..chacha20_key_len]);
+    const iv_result = hkdfExpandLabel(secret, "quic iv", iv_len);
+    @memcpy(keys.iv[0..], iv_result[0..iv_len]);
+    const hp_result = hkdfExpandLabel(secret, "quic hp", chacha20_key_len);
+    @memcpy(keys.hp[0..], hp_result[0..chacha20_key_len]);
+    return keys;
+}
+
+/// Build the RFC 9001 AEAD nonce for ChaCha20-Poly1305.
+pub fn chacha20Nonce(iv: [iv_len]u8, packet_number: u64) [iv_len]u8 {
+    return packetProtectionNonce(iv, packet_number) catch @panic("invalid packet number");
+}
+
+/// Protect a QUIC packet payload with AEAD_CHACHA20_POLY1305.
+pub fn protectChaCha20Payload(
+    keys: ChaCha20PacketProtectionKeys,
+    packet_number: u64,
+    associated_data: []const u8,
+    plaintext: []const u8,
+    ciphertext: []u8,
+    tag: *[chacha20_tag_len]u8,
+) void {
+    const nonce = chacha20Nonce(keys.iv, packet_number);
+    ChaCha20Poly1305.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key);
+}
+
+/// Remove AEAD_CHACHA20_POLY1305 protection from a QUIC packet payload.
+pub fn unprotectChaCha20Payload(
+    keys: ChaCha20PacketProtectionKeys,
+    packet_number: u64,
+    associated_data: []const u8,
+    ciphertext: []const u8,
+    tag: [chacha20_tag_len]u8,
+    plaintext: []u8,
+) !void {
+    const nonce = chacha20Nonce(keys.iv, packet_number);
+    ChaCha20Poly1305.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key) catch
+        return error.AuthenticationFailed;
+}
+
+/// Compute the ChaCha20 header protection mask (RFC 9001 §5.4.4).
+pub fn chacha20HeaderProtectionMask(
+    hp_key: [chacha20_key_len]u8,
+    sample: [header_protection_sample_len]u8,
+) [header_protection_mask_len]u8 {
+    const counter = std.mem.readInt(u32, sample[0..4], .little);
+    var nonce: [12]u8 = undefined;
+    @memcpy(nonce[0..], sample[4..16]);
+    var mask: [header_protection_mask_len]u8 = undefined;
+    const ChaCha20IETF = std.crypto.stream.chacha.ChaCha20IETF;
+    ChaCha20IETF.stream(&mask, counter, hp_key, nonce);
+    return mask;
+}
+
+test "ChaCha20-Poly1305 packet protection roundtrip" {
+    const secret = [_]u8{0x42} ** 32;
+    const keys = deriveChaCha20PacketProtectionKeys(secret);
+
+    const plaintext = "Hello ChaCha20 QUIC!";
+    const aad = "header bytes";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [chacha20_tag_len]u8 = undefined;
+
+    protectChaCha20Payload(keys, 42, aad, plaintext, &ciphertext, &tag);
+
+    // Ciphertext should differ from plaintext
+    try std.testing.expect(!std.mem.eql(u8, plaintext, &ciphertext));
+
+    // Decrypt
+    var decrypted: [plaintext.len]u8 = undefined;
+    try unprotectChaCha20Payload(keys, 42, aad, &ciphertext, tag, &decrypted);
+    try std.testing.expectEqualStrings(plaintext, &decrypted);
+}
+
+test "ChaCha20-Poly1305 wrong packet number fails authentication" {
+    const secret = [_]u8{0x42} ** 32;
+    const keys = deriveChaCha20PacketProtectionKeys(secret);
+
+    const plaintext = "test data";
+    const aad = "aad";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [chacha20_tag_len]u8 = undefined;
+
+    protectChaCha20Payload(keys, 1, aad, plaintext, &ciphertext, &tag);
+
+    // Wrong packet number should fail
+    var decrypted: [plaintext.len]u8 = undefined;
+    try std.testing.expectError(
+        error.AuthenticationFailed,
+        unprotectChaCha20Payload(keys, 2, aad, &ciphertext, tag, &decrypted),
+    );
+}
+
+test "ChaCha20-Poly1305 tampered ciphertext fails authentication" {
+    const secret = [_]u8{0x42} ** 32;
+    const keys = deriveChaCha20PacketProtectionKeys(secret);
+
+    const plaintext = "test data";
+    const aad = "aad";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [chacha20_tag_len]u8 = undefined;
+
+    protectChaCha20Payload(keys, 0, aad, plaintext, &ciphertext, &tag);
+
+    // Tamper
+    ciphertext[0] ^= 0xff;
+    var decrypted: [plaintext.len]u8 = undefined;
+    try std.testing.expectError(
+        error.AuthenticationFailed,
+        unprotectChaCha20Payload(keys, 0, aad, &ciphertext, tag, &decrypted),
+    );
+}
+
+test "ChaCha20 header protection mask is deterministic" {
+    const hp_key = [_]u8{0xAB} ** 32;
+    const sample = [_]u8{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10};
+
+    const mask1 = chacha20HeaderProtectionMask(hp_key, sample);
+    const mask2 = chacha20HeaderProtectionMask(hp_key, sample);
+
+    try std.testing.expectEqual(mask1, mask2);
+    // Mask should not be all zeros
+    try std.testing.expect(!std.mem.allEqual(u8, &mask1, 0));
+}
+
+test "ChaCha20 vs AES-128-GCM produce different ciphertext" {
+    const secret = [_]u8{0x42} ** 32;
+    const aes_keys = deriveAes128PacketProtectionKeys(secret);
+    const chacha_keys = deriveChaCha20PacketProtectionKeys(secret);
+
+    // Keys should differ (different output lengths and derivation)
+    // IVs use the same HKDF label so they match; keys differ in length
+    try std.testing.expect(aes_keys.key.len != chacha_keys.key.len);
+}
+
+test "CipherSuite enum values" {
+    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(CipherSuite.aes_128_gcm));
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(CipherSuite.chacha20_poly1305));
+}

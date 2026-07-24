@@ -33,6 +33,7 @@ pub const session_cache = @import("quic/session_cache.zig");
 pub const gso = @import("quic/gso.zig");
 pub const connection_pool = @import("quic/connection_pool.zig");
 pub const metrics = @import("quic/metrics.zig");
+const fuzz_targets = @import("quic/fuzz_targets.zig");
 pub const migration = @import("quic/migration.zig");
 const integration_tests = @import("quic/integration_tests.zig");
 pub const udp_event_loop = @import("quic/udp_event_loop.zig");
@@ -63,6 +64,7 @@ comptime {
     _ = gso;
     _ = connection_pool;
     _ = metrics;
+    _ = fuzz_targets;
     _ = migration;
     _ = integration_tests;
     _ = udp_event_loop;
