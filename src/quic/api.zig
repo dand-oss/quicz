@@ -2,9 +2,9 @@
 //!
 //! Provides a three-layer embeddable API for applications:
 //!
-//!   Endpoint  — owns the UDP socket, connection registry, timers, and I/O loop.
-//!   QuicConn  — a single QUIC connection with stream and datagram operations.
-//!   QuicStream — a single bidirectional or unidirectional stream.
+//!   Endpoint   — owns the UDP socket, connection registry, timers, and I/O loop.
+//!   Connection  — a single QUIC connection with stream and datagram operations.
+//!   Stream — a single bidirectional or unidirectional stream.
 //!
 //! Design goals (aligned with YoMo v3 requirements):
 //!   - Callers never see packet number spaces, traffic secrets, or CRYPTO frames.
@@ -182,23 +182,23 @@ pub const ConnectConfig = struct {
 // StreamWriteOptions
 // ---------------------------------------------------------------------------
 
-/// Options for QuicStream.write().
+/// Options for Stream.write().
 pub const StreamWriteOptions = struct {
     /// Set the FIN bit — no more data will be sent on this stream.
     fin: bool = false,
 };
 
 // ---------------------------------------------------------------------------
-// QuicStream
+// Stream
 // ---------------------------------------------------------------------------
 
 /// A single QUIC stream (bidirectional or unidirectional).
 ///
-/// Obtained from QuicConn.openStream(), QuicConn.openUniStream(),
-/// or QuicConn.acceptStream(). The caller owns the stream and must
+/// Obtained from Connection.openStream(), Connection.openUniStream(),
+/// or Connection.acceptStream(). The caller owns the stream and must
 /// call close() when done.
-pub const QuicStream = struct {
-    conn: *QuicConn,
+pub const Stream = struct {
+    conn: *Connection,
     id: u64,
     closed: bool = false,
 
@@ -207,7 +207,7 @@ pub const QuicStream = struct {
     /// Returns the number of bytes copied into `buf`, or 0 when the
     /// peer has sent FIN and all data has been consumed.
     /// Returns error.StreamReset if the peer reset the stream.
-    pub fn read(self: *QuicStream, buf: []u8) !usize {
+    pub fn read(self: *Stream, buf: []u8) !usize {
         if (self.closed) return error.StreamClosed;
         const inner = self.conn.inner orelse return error.ConnectionClosed;
         const result = inner.recvOnStream(self.id, buf) catch |err| switch (err) {
@@ -222,34 +222,34 @@ pub const QuicStream = struct {
     /// Data is buffered internally and flushed when the connection
     /// produces outgoing datagrams. Set `options.fin = true` to signal
     /// end-of-stream.
-    pub fn write(self: *QuicStream, data: []const u8, options: StreamWriteOptions) !void {
+    pub fn write(self: *Stream, data: []const u8, options: StreamWriteOptions) !void {
         if (self.closed) return error.StreamClosed;
         const inner = self.conn.inner orelse return error.ConnectionClosed;
         try inner.sendOnStream(self.id, data, options.fin);
     }
 
     /// Reset the send side of the stream with an application error code.
-    pub fn reset(self: *QuicStream, error_code: u64) !void {
+    pub fn reset(self: *Stream, error_code: u64) !void {
         if (self.closed) return;
         const inner = self.conn.inner orelse return;
         inner.resetStream(self.id, error_code) catch {};
     }
 
     /// Request the peer stop sending on this stream.
-    pub fn stopSending(self: *QuicStream, error_code: u64) !void {
+    pub fn stopSending(self: *Stream, error_code: u64) !void {
         if (self.closed) return;
         const inner = self.conn.inner orelse return;
         inner.stopSending(self.id, error_code) catch {};
     }
 
     /// Check whether the peer has sent FIN and all data has been received.
-    pub fn isFinished(self: *const QuicStream) bool {
+    pub fn isFinished(self: *const Stream) bool {
         const inner = self.conn.inner orelse return true;
         return inner.recvStreamFinished(self.id) catch true;
     }
 
     /// Return the final size advertised by the peer, if known.
-    pub fn finalSize(self: *const QuicStream) ?u64 {
+    pub fn finalSize(self: *const Stream) ?u64 {
         const inner = self.conn.inner orelse return null;
         return inner.recvStreamFinalSize(self.id) catch null;
     }
@@ -258,7 +258,7 @@ pub const QuicStream = struct {
     ///
     /// This releases the local handle. If the send side has not been
     /// finished, a RESET_STREAM is implied with error code 0.
-    pub fn close(self: *QuicStream) void {
+    pub fn close(self: *Stream) void {
         if (self.closed) return;
         self.closed = true;
         if (self.conn.inner) |inner| {
@@ -268,14 +268,14 @@ pub const QuicStream = struct {
 };
 
 // ---------------------------------------------------------------------------
-// QuicConn
+// Connection
 // ---------------------------------------------------------------------------
 
 /// A single QUIC connection.
 ///
 /// Obtained from Endpoint.connect() (client) or Endpoint.accept() (server).
 /// The caller owns the connection and must call close() when done.
-pub const QuicConn = struct {
+pub const Connection = struct {
     inner: ?*connection_mod.Connection,
     allocator: std.mem.Allocator,
     remote_addr: Address,
@@ -285,14 +285,14 @@ pub const QuicConn = struct {
     // -- Stream operations --
 
     /// Open a new client-initiated bidirectional stream.
-    pub fn openStream(self: *QuicConn) !QuicStream {
+    pub fn openStream(self: *Connection) !Stream {
         const inner = self.inner orelse return error.ConnectionClosed;
         const stream_id = try inner.openStream();
         return .{ .conn = self, .id = stream_id };
     }
 
     /// Open a new client-initiated unidirectional stream.
-    pub fn openUniStream(self: *QuicConn) !QuicStream {
+    pub fn openUniStream(self: *Connection) !Stream {
         const inner = self.inner orelse return error.ConnectionClosed;
         const stream_id = try inner.openUniStream();
         return .{ .conn = self, .id = stream_id };
@@ -303,7 +303,7 @@ pub const QuicConn = struct {
     /// Returns null when no stream is currently available (non-blocking).
     /// In an event-driven loop, call this after Endpoint.poll() signals
     /// new stream activity.
-    pub fn acceptStream(self: *QuicConn) !?QuicStream {
+    pub fn acceptStream(self: *Connection) !?Stream {
         const inner = self.inner orelse return error.ConnectionClosed;
         // Scan for the lowest-numbered peer-initiated bidi stream that
         // has received data but has not yet been accepted by the application.
@@ -320,13 +320,13 @@ pub const QuicConn = struct {
     // -- Datagram operations (RFC 9221) --
 
     /// Send an unreliable DATAGRAM frame.
-    pub fn sendDatagram(self: *QuicConn, data: []const u8) !void {
+    pub fn sendDatagram(self: *Connection, data: []const u8) !void {
         const inner = self.inner orelse return error.ConnectionClosed;
         try inner.sendDatagram(data);
     }
 
     /// Receive the next queued DATAGRAM payload.
-    pub fn recvDatagram(self: *QuicConn, buf: []u8) !?usize {
+    pub fn recvDatagram(self: *Connection, buf: []u8) !?usize {
         const inner = self.inner orelse return error.ConnectionClosed;
         return try inner.recvDatagram(buf);
     }
@@ -334,20 +334,20 @@ pub const QuicConn = struct {
     // -- Connection state --
 
     /// True once the TLS handshake is confirmed (1-RTT keys available).
-    pub fn isHandshakeConfirmed(self: *const QuicConn) bool {
+    pub fn isHandshakeConfirmed(self: *const Connection) bool {
         const inner = self.inner orelse return false;
         return inner.handshakeConfirmed();
     }
 
     /// True if the connection is closing or closed.
-    pub fn isClosed(self: *const QuicConn) bool {
+    pub fn isClosed(self: *const Connection) bool {
         if (self.closed) return true;
         const inner = self.inner orelse return true;
         return inner.pendingCloseErrorCode() != null;
     }
 
     /// Return the negotiated QUIC version.
-    pub fn version(self: *const QuicConn) u32 {
+    pub fn version(self: *const Connection) u32 {
         const inner = self.inner orelse return 0;
         return @intFromEnum(inner.chosenVersion());
     }
@@ -356,7 +356,7 @@ pub const QuicConn = struct {
 
     /// Close the connection with an application error code and reason.
     /// Idempotent — subsequent calls are no-ops.
-    pub fn close(self: *QuicConn, error_code: u64, reason: []const u8) void {
+    pub fn close(self: *Connection, error_code: u64, reason: []const u8) void {
         if (self.closed) return;
         self.closed = true;
         if (self.inner) |inner| {
@@ -365,7 +365,7 @@ pub const QuicConn = struct {
     }
 
     /// Close with a transport error code.
-    pub fn closeWithTransportError(self: *QuicConn, error_code: u64, frame_type: u64, reason: []const u8) void {
+    pub fn closeWithTransportError(self: *Connection, error_code: u64, frame_type: u64, reason: []const u8) void {
         if (self.closed) return;
         self.closed = true;
         if (self.inner) |inner| {
@@ -374,7 +374,7 @@ pub const QuicConn = struct {
     }
 
     /// Release the connection and all associated resources.
-    pub fn deinit(self: *QuicConn) void {
+    pub fn deinit(self: *Connection) void {
         if (self.inner) |inner| {
             inner.deinit();
             self.allocator.destroy(inner);
@@ -397,9 +397,9 @@ pub const Endpoint = struct {
     config: EndpointConfig,
     local_addr: Address,
     /// Pending accepted connections waiting for the application.
-    pending_accepts: std.ArrayList(QuicConn),
+    pending_accepts: std.ArrayList(Connection),
     /// All live connections owned by this endpoint.
-    connections: std.ArrayList(QuicConn),
+    connections: std.ArrayList(Connection),
     is_server: bool,
     closed: bool = false,
 
@@ -448,7 +448,7 @@ pub const Endpoint = struct {
     ///
     /// Returns null when no connection is pending. Call poll() first to
     /// drive I/O and populate the accept queue.
-    pub fn accept(self: *Endpoint) !?QuicConn {
+    pub fn accept(self: *Endpoint) !?Connection {
         if (self.pending_accepts.items.len == 0) return null;
         return self.pending_accepts.orderedRemove(0);
     }
@@ -458,8 +458,8 @@ pub const Endpoint = struct {
     /// Initiate a new outgoing connection.
     ///
     /// The handshake is driven by subsequent poll() calls. Check
-    /// QuicConn.isHandshakeConfirmed() to know when the connection is ready.
-    pub fn connect(self: *Endpoint, config: ConnectConfig) !QuicConn {
+    /// Connection.isHandshakeConfirmed() to know when the connection is ready.
+    pub fn connect(self: *Endpoint, config: ConnectConfig) !Connection {
         const remote = Address.parseIpv4(config.address, config.port) orelse
             return error.InvalidAddress;
 
@@ -480,7 +480,7 @@ pub const Endpoint = struct {
             conn_config,
         );
 
-        const conn = QuicConn{
+        const conn = Connection{
             .inner = inner,
             .allocator = self.allocator,
             .remote_addr = remote,
@@ -598,7 +598,7 @@ test "Endpoint: listen requires cert" {
     try std.testing.expectError(error.MissingCertificate, result);
 }
 
-test "QuicStream: write options default" {
+test "Stream: write options default" {
     const opts = StreamWriteOptions{};
     try std.testing.expect(!opts.fin);
 }

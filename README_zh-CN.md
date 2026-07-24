@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img alt="quicz" src="assets/logo-light.svg" width="200">
+</picture>
+
 # quicz
 
 [English](README.md) | 简体中文
@@ -67,13 +72,13 @@ pub fn main() !void {
 
 ### API 设计
 
-三层 `Endpoint` → `QuicConn` → `QuicStream` API 与主流 QUIC 实现采用相同模式：
+三层 `Endpoint` → `Connection` → `Stream` API 与主流 QUIC 实现采用相同模式：
 
 | 层级 | quicz | quic-go (Go) | s2n-quic (Rust) | endel/quic-zig (Zig) |
 | --- | --- | --- | --- | --- |
 | 端点 | `Endpoint.listen/bind/connect/accept/poll` | `Transport.Listen/Dial` | `Server::builder().start()` | `Server(Handler).run()` |
-| 连接 | `QuicConn.openStream/acceptStream/close` | `Conn.OpenStream/AcceptStream` | `connection.open_bidirectional_stream` | `Connection.openStream` |
-| 流 | `QuicStream.read/write/reset/close` | `Stream.Read/Write/Close` | `stream.send/receive` | `ReceiveStream.read / SendStream.write` |
+| 连接 | `Connection.openStream/acceptStream/close` | `Conn.OpenStream/AcceptStream` | `connection.open_bidirectional_stream` | `Connection.openStream` |
+| 流 | `Stream.read/write/reset/close` | `Stream.Read/Write/Close` | `stream.send/receive` | `ReceiveStream.read / SendStream.write` |
 
 调用方不接触 packet number space、traffic secret 或 CRYPTO frame。
 allocator 显式传入；close 幂等；所有资源有确定性 deinit 路径。
@@ -149,7 +154,7 @@ exe.root_module.addImport("quicz", quicz_dep.module("quicz"));
 
 | 路径 | 说明 |
 | --- | --- |
-| `src/quic/api.zig` | **高层 API** — Endpoint / QuicConn / QuicStream |
+| `src/quic/api.zig` | **高层 API** — Endpoint / Connection / Stream |
 | `src/quic/connection.zig` | 连接状态机（76K 行） |
 | `src/quic/endpoint.zig` | 端点路由、CID 注册、ECN 策略 |
 | `src/quic/endpoint_lifecycle.zig` | 连接生命周期管理 |
