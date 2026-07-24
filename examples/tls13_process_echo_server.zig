@@ -279,7 +279,7 @@ fn serveConcurrent(
                 )) orelse continue;
                 for (due_datagrams[0..due.drain.datagrams_written]) |output| {
                     defer allocator.free(output.datagram);
-                    const managed = connections.get(output.connection_id) orelse return error.UnknownConnectionId;
+                    const managed = connections.get(output.connection_id) orelse continue;
                     try sendToCurrentRoute(io, socket, &server_endpoint, managed, output.datagram);
                 }
                 if (due.drain.first_error) |drain_error| return drain_error;
@@ -287,19 +287,23 @@ fn serveConcurrent(
                     std.debug.print("zig_process_server: connection={d} concurrent=true pto_serviced=true\n", .{due.deadline.connection_id});
                 }
                 if (due.pending_work.idle_retired != null or due.pending_work.close_retired != null) {
-                    const managed = connections.get(due.deadline.connection_id) orelse return error.UnknownConnectionId;
-                    const completed_connection = !retry_enabled or managed.retry_accepted;
-                    const retired_after_close_timeout = due.pending_work.close_retired != null;
-                    try destroyManagedConnection(&server_endpoint, due.deadline.connection_id);
-                    if (completed_connection) {
-                        completed += 1;
-                        if (retired_after_close_timeout) {
-                            std.debug.print("zig_process_server: connection={d} concurrent=true close_cleanup=true\n", .{completed});
+                    if (connections.get(due.deadline.connection_id)) |managed| {
+                        const completed_connection = !retry_enabled or managed.retry_accepted;
+                        const retired_after_close_timeout = due.pending_work.close_retired != null;
+                        try destroyManagedConnection(&server_endpoint, due.deadline.connection_id);
+                        if (completed_connection) {
+                            completed += 1;
+                            if (retired_after_close_timeout) {
+                                std.debug.print("zig_process_server: connection={d} concurrent=true close_cleanup=true\n", .{completed});
+                            } else {
+                                std.debug.print("zig_process_server: connection={d} concurrent=true idle_cleanup=true\n", .{completed});
+                            }
                         } else {
-                            std.debug.print("zig_process_server: connection={d} concurrent=true idle_cleanup=true\n", .{completed});
+                            std.debug.print("zig_process_server: connection={d} concurrent=true retry_expired=true\n", .{due.deadline.connection_id});
                         }
                     } else {
-                        std.debug.print("zig_process_server: connection={d} concurrent=true retry_expired=true\n", .{due.deadline.connection_id});
+                        completed += 1;
+                        std.debug.print("zig_process_server: connection={d} concurrent=true already_cleaned=true\n", .{completed});
                     }
                 }
                 continue;
