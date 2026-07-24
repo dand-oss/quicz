@@ -7162,7 +7162,7 @@ zig build run-udp-stateless-reset-loopback
 | HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | **Missing** |
 | Connection pool | — | ✅ | ❌ | ❌ | ✅ | — |
 | Fuzz targets | — | ✅ | ✅ | ✅ | ✅ | — |
-| External interop | — | ✅ | ✅ | ✅ | ✅(quic-go) | quiche/s2n-quic pending |
+| External interop | — | ✅ | ✅ | ✅ | ✅(quic-go+quiche) | s2n-quic pending |
 
 ### Mandatory gaps — all three implementations have these, quicz must implement
 
