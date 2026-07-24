@@ -7146,8 +7146,8 @@ zig build run-udp-stateless-reset-loopback
 | CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
 | BBR | — | ✅ | ✅ | ❌ | ✅ | — |
 | ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
-| AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ❌ | **Missing** |
-| Post-quantum KX | — | ✅ | ✅ | ✅ | ❌ | **Missing** |
+| AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| Post-quantum KX | — | ✅ | ✅ | ✅ | ✅ | — |
 | Connection migration | 9000 | ✅ | ✅ | ✅ | ✅ | — |
 | Path validation | 9000 | ✅ | ✅ | ✅ | ✅ | — |
 | Retry | 9000 | ✅ | ✅ | ✅ | ✅ | — |
@@ -7166,8 +7166,8 @@ zig build run-udp-stateless-reset-loopback
 
 ### Mandatory gaps — all three implementations have these, quicz must implement
 
-1. **AES-256-GCM cipher suite** — MANDATORY: all three implementations support it
-2. **Post-quantum key exchange (X25519Kyber768)** — MANDATORY: all three implementations support it
+1. ~~AES-256-GCM cipher suite~~ — DONE (675e7ca)
+2. ~~Post-quantum key exchange (X25519Kyber768)~~ — DONE (675e7ca)
 3. **QPACK dynamic table** — quic-go and quiche implement it (2/3, recommended)
 4. **HTTP Datagrams (RFC 9297)** — quic-go only (1/3, optional)
 5. **Complete HTTP/3 connection management** — GOAWAY, SETTINGS, stream lifecycle over real transport
