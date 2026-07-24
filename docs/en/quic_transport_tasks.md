@@ -284,6 +284,30 @@ P6 re-entry rule: P0-P5 complete, 1611 tests pass.
 | 6 | P6-F Performance optimization | Done | GSO/GRO/pool |
 | 7 | P6-G Observability production | Done | qlog/metrics |
 | 8 | P6-H WebTransport | Done | WT over H3 |
+
+### P7 task matrix — true production readiness
+
+P7 re-entry rule: P0-P6 complete, 1690 tests pass.
+
+| Phase | Task | Scope | Exit evidence | Status |
+| --- | --- | --- | --- | --- |
+| P7-A | Real TLS 1.3 handshake | All integration tests use real TLS 1.3 endpoint handshake, not confirmHandshake() | tls13_server_endpoint.zig:11349/11680 pass with cert verification | Done (pre-existing) |
+| P7-B | Real UDP socket I/O | Interop server/client use std.Io.net UDP bind/recv/send | interop/server.zig real UDP; local_test.sh passes | Done (pre-existing) |
+| P7-C | ChaCha20-Poly1305 packet protection | AEAD + header protection integrated into protection.zig | ChaCha20 protect/unprotect roundtrip + tamper tests | Done |
+| P7-D | Fuzz targets | Packet/frame/QPACK/H3 parsing fuzz entry points | 8 fuzz functions + 4 unit tests, no crash on garbage | Done |
+| P7-E | External interop validation | quic-go or ngtcp2 interop via QUIC-Interop-Runner | Docker build + handshake/transfer pass against external impl | Blocked (pre-existing fuzz.zig + OpenSSL translate-c build errors) |
+| P7-F | Certificate chain validation | Real CA-signed cert path, not just test self-signed | tls13_server_endpoint.zig uses CA bundle + cert verification | Done (pre-existing) |
+
+### P7 execution queue
+
+| Order | Task | Status | Scope |
+| --- | --- | --- | --- |
+| 1 | P7-A Real TLS 1.3 handshake | Done | Pre-existing evidence |
+| 2 | P7-B Real UDP socket I/O | Done | Pre-existing evidence |
+| 3 | P7-C ChaCha20-Poly1305 | Done | New implementation |
+| 4 | P7-D Fuzz targets | Done | New implementation |
+| 5 | P7-E External interop | Blocked | Needs fuzz.zig + OpenSSL fix first |
+| 6 | P7-F Certificate chain validation | Done | Pre-existing evidence |
 ## Practical Transport Baseline
 
 | Feature | Practical target | quicz status |
