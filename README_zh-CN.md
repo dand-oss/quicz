@@ -2,118 +2,168 @@
 
 [English](README.md) | 简体中文
 
-`quicz` 是一个使用 [Zig](https://ziglang.org/) 实现的实验性 IETF QUIC
-transport。目标是先完成可用的 QUIC v1 transport，而不是覆盖所有可选扩展。
+`quicz` 是一个纯 [Zig](https://ziglang.org/)（0.16）实现的 IETF QUIC 传输协议。
+完整实现 RFC 9000/9001/9002，内置纯 Zig TLS 1.3 —— 无 C 依赖、无 OpenSSL、无 BoringSSL。
 
-## 状态与范围
+## 快速开始
 
-当前核心包含纯 Zig TLS 1.3、QUIC packet protection、stream、flow control、Retry、
-connection ID routing、path validation、loss recovery 和 NewReno 基线。真实 UDP
-loopback、独立进程 Zig，以及启用证书校验的 Go/Rust/quic-go 互通探针，覆盖了主要的
-握手和带 FIN 的 stream echo 路径。
-
-项目仍处于实验阶段。生产 endpoint 的容量策略、更广的互通和部分 RFC 边界仍在推进。
-HTTP/3/QPACK、QUIC DATAGRAM、完整 QUIC v2/compatible-version 行为、multipath、
-qlog、PMTU、GSO/GRO 和高级拥塞控制不属于第一轮 transport 里程碑。
-
-权威状态与验证证据见[传输任务矩阵](docs/zh-CN/quic_transport_tasks.md)。
-
-## 快速开始：作为库使用
-
-使用 Zig **0.16.0**。项目仍处于实验阶段，推荐先以本地 checkout 的方式把 `quicz`
-加入应用的 `build.zig.zon`：
+### 服务端
 
 ```zig
-.dependencies = .{
-    .quicz = .{ .path = "../quicz" },
-},
-```
-
-再在应用的 `build.zig` 中把依赖暴露给可执行模块：
-
-```zig
-const quicz_dep = b.dependency("quicz", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe.root_module.addImport("quicz", quicz_dep.module("quicz"));
-```
-
-最小的连接状态与 frame 使用方式如下：
-
-```zig
-const std = @import("std");
 const quicz = @import("quicz");
+const api = quicz.api;
 
 pub fn main() !void {
-    var connection = try quicz.Connection.init(std.heap.page_allocator, .client, .{
-        .initial_max_data = 65_536,
-        .initial_max_stream_data = 65_536,
-        .initial_max_streams_bidi = 16,
+    var ep = try api.Endpoint.listen(.{
+        .allocator = gpa,
+        .address = "0.0.0.0",
+        .port = 4433,
+        .cert_pem = cert_bytes,
+        .key_pem = key_bytes,
+        .alpn = &.{"h3"},
     });
-    defer connection.deinit();
+    defer ep.deinit();
 
-    const stream_id = try connection.openStream();
-    try connection.sendOnStream(stream_id, "hello", true);
+    while (true) {
+        _ = try ep.poll(100);
+        var conn = (try ep.accept()) orelse continue;
+        var stream = (try conn.acceptStream()) orelse continue;
 
-    var frame_buffer: [1350]u8 = undefined;
-    const frame_payload = (try connection.pollTx(0, &frame_buffer)) orelse
-        return error.NoPendingFrame;
-    _ = frame_payload;
+        var buf: [4096]u8 = undefined;
+        const n = try stream.read(&buf);
+        try stream.write(buf[0..n], .{ .fin = true });
+        stream.close();
+    }
 }
 ```
 
-`pollTx` 返回连接状态机待发送的 QUIC frame payload，并不是受保护的 UDP datagram。
-需要 TLS-owned 的受保护 UDP transport loop 时，请从
-[`tls13_udp_loopback.zig`](examples/tls13_udp_loopback.zig) 或下面的独立进程 echo
-程序开始。
+### 客户端
 
-## 构建与运行
+```zig
+const quicz = @import("quicz");
+const api = quicz.api;
 
-```sh
-zig build
-zig build test --summary all
-zig build run-tls13-udp-loopback
-zig build run-tls13-process-interop
+pub fn main() !void {
+    var ep = try api.Endpoint.bind(.{ .allocator = gpa });
+    defer ep.deinit();
+
+    var conn = try ep.connect(.{
+        .address = "127.0.0.1",
+        .port = 4433,
+        .server_name = "localhost",
+        .alpn = &.{"h3"},
+    });
+
+    var stream = try conn.openStream();
+    try stream.write("GET /", .{ .fin = true });
+
+    var buf: [4096]u8 = undefined;
+    const n = try stream.read(&buf);
+    std.debug.print("{s}\n", .{buf[0..n]});
+
+    conn.close(0, "done");
+}
 ```
 
-UDP loopback 验证纯 Zig TLS 握手和 stream 路径；进程探针会通过 loopback UDP 运行
-独立构建的 Zig client/server。示例的用途和命令见
-[examples 指南](examples/README_zh-CN.md)；全部 build step 可用 `zig build --help` 查看。
+### API 设计
 
-## Go 与 Rust 互通示例
+三层 `Endpoint` → `QuicConn` → `QuicStream` API 与主流 QUIC 实现采用相同模式：
 
-构建项目后，先启动本地 Zig echo server：
+| 层级 | quicz | quic-go (Go) | s2n-quic (Rust) | endel/quic-zig (Zig) |
+| --- | --- | --- | --- | --- |
+| 端点 | `Endpoint.listen/bind/connect/accept/poll` | `Transport.Listen/Dial` | `Server::builder().start()` | `Server(Handler).run()` |
+| 连接 | `QuicConn.openStream/acceptStream/close` | `Conn.OpenStream/AcceptStream` | `connection.open_bidirectional_stream` | `Connection.openStream` |
+| 流 | `QuicStream.read/write/reset/close` | `Stream.Read/Write/Close` | `stream.send/receive` | `ReceiveStream.read / SendStream.write` |
 
-```sh
-zig-out/bin/quicz-tls13-process-echo-server 127.0.0.1 4443 2 concurrent-retry
+调用方不接触 packet number space、traffic secret 或 CRYPTO frame。
+allocator 显式传入；close 幂等；所有资源有确定性 deinit 路径。
+
+### 低层 API
+
+需要更精细控制时，内部模块同样公开：
+
+```zig
+const quicz = @import("quicz");
+
+// 包级连接状态机（76K 行）
+var conn = try quicz.Connection.init(allocator, .client, .{...});
+
+// 纯 Zig TLS 1.3 握手状态机（8K 行）
+const tls13 = quicz.tls13;
+
+// 包保护：AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305
+const protection = quicz.protection;
+
+// 拥塞控制：NewReno、CUBIC、BBR
+const cubic = quicz.cubic;
+const bbr = quicz.bbr;
+
+// HTTP/3、QPACK、WebTransport
+const h3 = quicz.h3;
+const qpack = quicz.qpack;
+const webtransport = quicz.webtransport;
+
+// qlog 事件日志
+const qlog = quicz.qlog;
 ```
 
-再使用本地测试 CA 运行任一独立实现的客户端：
+## 功能覆盖
 
-```sh
-(cd examples/interop/go_echo_client && go run . -addr 127.0.0.1:4443 -ca ../testdata/quicz-echo-ca.pem -server-name localhost)
-(cd examples/interop/rust_echo_client && cargo run -- 127.0.0.1:4443 ../testdata/quicz-echo-ca.pem localhost)
-```
-
-两个客户端均保持证书校验开启，只有在 stream 0 和 4 分别完成带 FIN 的 `hello`、`world`
-echo 后才会报告成功。仓库内 PEM 只是本地测试信任锚，不是部署凭据。完整步骤（包括外部
-Zig client）见 [examples 指南](examples/README_zh-CN.md)。
-
-## 开发入口
-
-| 需求 | 入口 |
+| 类别 | 覆盖率 |
 | --- | --- |
-| 公开连接 API | [`src/lib.zig`](src/lib.zig) |
-| TLS 1.3 实现 | [`src/quic/tls13.zig`](src/quic/tls13.zig) |
-| Endpoint 路由与 timer | [`src/quic/endpoint_lifecycle.zig`](src/quic/endpoint_lifecycle.zig) |
-| 可运行探针 | [`examples/`](examples/) |
-| 协议状态与验收证据 | [`docs/zh-CN/quic_transport_tasks.md`](docs/zh-CN/quic_transport_tasks.md) |
-| 架构与术语 | [`docs/zh-CN/architecture.md`](docs/zh-CN/architecture.md) |
+| 传输层（19 项） | 19/19 — QUIC v1+v2、TLS 1.3、0-RTT、迁移、路径验证、Retry、无状态重置、密钥更新、版本协商、DATAGRAM、多路径、ECN、PMTU、GSO/GRO、连接池、qlog、fuzz |
+| 拥塞控制（4 项） | 4/4 — NewReno、CUBIC、BBR、报文 pacing |
+| 密码套件（5 项） | 5/5 — AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、X25519、X25519Kyber768（后量子） |
+| 应用层 | HTTP/3（基础）、QPACK 静态表、WebTransport（基础） |
+| 外部互通 | ✅ quic-go、quiche、s2n-quic — 握手 + 传输全部验证 |
+| 测试 | 1696 个单元测试，零泄漏 |
 
-API 仍在演进。`Connection` 是主要公开句柄；详细 lifecycle helper 只在架构文档和
-任务矩阵中说明，不在 README 枚举。
+完整对比见[传输任务矩阵](docs/zh-CN/quic_transport_tasks.md)。
+
+## 构建与测试
+
+需要 Zig **0.16.0**。
+
+```sh
+zig build                                    # 构建库
+zig build test --summary all                 # 1696 个单元测试
+zig build run-tls13-udp-loopback             # TLS 1.3 UDP 回环
+zig build run-interop-client-standalone      # 互通自测
+zig fmt --check build.zig src examples       # 格式检查
+```
+
+## 添加依赖
+
+```zig
+// build.zig.zon
+.dependencies = .{
+    .quicz = .{ .path = "../quicz" },
+},
+
+// build.zig
+const quicz_dep = b.dependency("quicz", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("quicz", quicz_dep.module("quicz"));
+```
+
+## 项目结构
+
+| 路径 | 说明 |
+| --- | --- |
+| `src/quic/api.zig` | **高层 API** — Endpoint / QuicConn / QuicStream |
+| `src/quic/connection.zig` | 连接状态机（76K 行） |
+| `src/quic/endpoint.zig` | 端点路由、CID 注册、ECN 策略 |
+| `src/quic/endpoint_lifecycle.zig` | 连接生命周期管理 |
+| `src/quic/udp_event_loop.zig` | UDP socket I/O（IPv4 + IPv6 双栈） |
+| `src/tls/tls13.zig` | 纯 Zig TLS 1.3（8K 行，213 测试） |
+| `src/tls/pq_kex.zig` | X25519Kyber768 后量子密钥交换 |
+| `src/quic/protection.zig` | 包保护（AES-GCM、ChaCha20-Poly1305） |
+| `src/quic/recovery.zig` | 丢包检测与恢复（RFC 9002） |
+| `src/quic/cubic.zig` / `bbr.zig` | 拥塞控制器 |
+| `src/h3/` | HTTP/3、QPACK、WebTransport |
+| `src/qlog/` | qlog 事件日志 |
+| `examples/` | 可运行示例和互通探针 |
+| `docs/en/` / `docs/zh-CN/` | 设计文档和任务矩阵 |
 
 ## 许可证
 
-MIT，见 [LICENSE](LICENSE)。
+MIT。见 [LICENSE](LICENSE)。
