@@ -36,6 +36,59 @@ then pass its generated CA PEM to the Zig client in another:
 zig build run-interop-external-client -- 127.0.0.1 4433 /absolute/path/to/go-echo-ca.pem localhost
 ```
 
+## Practical examples (real UDP / network)
+
+| Command | Source | What it demonstrates |
+| --- | --- | --- |
+| `run-quic-echo-server` | `quic_echo_server.zig` | Multi-connection QUIC echo server with TLS 1.3 handshake on real UDP. |
+| `run-quic-echo-client` | `quic_echo_client.zig` | QUIC echo client: handshake, stream write/read, close. |
+| `run-h3-server` | `h3_server.zig` | HTTP/3 static response server (SETTINGS + HEADERS + DATA frames). |
+| `run-datagram-echo -- --server` | `datagram_echo.zig` | QUIC DATAGRAM (RFC 9221) echo server — unreliable datagrams. |
+| `run-datagram-echo -- --client` | `datagram_echo.zig` | QUIC DATAGRAM echo client. |
+| `run-post-quantum-echo -- --server` | `post_quantum_echo.zig` | X25519Kyber768 post-quantum KEX demo + QUIC echo server. |
+| `run-post-quantum-echo -- --client` | `post_quantum_echo.zig` | Post-quantum KEX demo + QUIC echo client. |
+| `run-zero-rtt-echo` | `zero_rtt_echo.zig` | 0-RTT session resumption state machine (PSK, early data, replay protection). |
+| `run-congestion-bench` | `congestion_bench.zig` | Congestion control comparison: NewReno vs CUBIC vs BBR under simulated loss. |
+| `run-connection-migration` | `connection_migration.zig` | PATH_CHALLENGE/PATH_RESPONSE round-trip and route path update. |
+
+### Quick start: echo server + client
+
+```sh
+# Terminal 1
+zig build run-quic-echo-server
+
+# Terminal 2
+zig build run-quic-echo-client
+```
+
+### Quick start: DATAGRAM echo (RFC 9221)
+
+```sh
+# Terminal 1
+zig build run-datagram-echo -- --server
+
+# Terminal 2
+zig build run-datagram-echo -- --client
+```
+
+### Quick start: post-quantum echo
+
+```sh
+# Terminal 1
+zig build run-post-quantum-echo -- --server
+
+# Terminal 2
+zig build run-post-quantum-echo -- --client
+```
+
+### Standalone demos (no network)
+
+```sh
+zig build run-zero-rtt-echo        # 0-RTT state machine walkthrough
+zig build run-congestion-bench     # NewReno/CUBIC/BBR cwnd comparison
+zig build run-connection-migration # PATH_CHALLENGE/RESPONSE demo
+```
+
 ## Core transport state
 
 | Command | Source | What it demonstrates |

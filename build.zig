@@ -117,6 +117,110 @@ pub fn build(b: *std.Build) void {
     const run_quic_echo_client_cmd = b.addRunArtifact(exe_quic_echo_client);
     run_quic_echo_client.dependOn(&run_quic_echo_client_cmd.step);
 
+    // Connection migration demo
+    const exe_connection_migration = b.addExecutable(.{
+        .name = "quicz-connection-migration",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/connection_migration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_connection_migration);
+    const run_connection_migration = b.step("run-connection-migration", "Run QUIC connection migration demo (PATH_CHALLENGE/RESPONSE)");
+    const run_connection_migration_cmd = b.addRunArtifact(exe_connection_migration);
+    run_connection_migration.dependOn(&run_connection_migration_cmd.step);
+
+    // H3 server
+    const exe_h3_server = b.addExecutable(.{
+        .name = "quicz-h3-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/h3_server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_h3_server);
+    const run_h3_server = b.step("run-h3-server", "Run HTTP/3 static file server on 127.0.0.1:4433");
+    const run_h3_server_cmd = b.addRunArtifact(exe_h3_server);
+    run_h3_server.dependOn(&run_h3_server_cmd.step);
+
+    // DATAGRAM echo (RFC 9221)
+    const exe_datagram_echo = b.addExecutable(.{
+        .name = "quicz-datagram-echo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/datagram_echo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_datagram_echo);
+    const run_datagram_echo = b.step("run-datagram-echo", "Run QUIC DATAGRAM echo (--server or --client)");
+    const run_datagram_echo_cmd = b.addRunArtifact(exe_datagram_echo);
+    run_datagram_echo.dependOn(&run_datagram_echo_cmd.step);
+
+    // Post-quantum echo
+    const exe_post_quantum_echo = b.addExecutable(.{
+        .name = "quicz-post-quantum-echo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/post_quantum_echo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_post_quantum_echo);
+    const run_post_quantum_echo = b.step("run-post-quantum-echo", "Run X25519Kyber768 post-quantum echo (--server or --client)");
+    const run_post_quantum_echo_cmd = b.addRunArtifact(exe_post_quantum_echo);
+    run_post_quantum_echo.dependOn(&run_post_quantum_echo_cmd.step);
+
+    // 0-RTT echo
+    const exe_zero_rtt_echo = b.addExecutable(.{
+        .name = "quicz-zero-rtt-echo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/zero_rtt_echo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_zero_rtt_echo);
+    const run_zero_rtt_echo = b.step("run-zero-rtt-echo", "Run 0-RTT session resumption echo demo");
+    const run_zero_rtt_echo_cmd = b.addRunArtifact(exe_zero_rtt_echo);
+    run_zero_rtt_echo.dependOn(&run_zero_rtt_echo_cmd.step);
+
+    // Congestion control benchmark
+    const exe_congestion_bench = b.addExecutable(.{
+        .name = "quicz-congestion-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/congestion_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_congestion_bench);
+    const run_congestion_bench = b.step("run-congestion-bench", "Run congestion control comparison benchmark (NewReno/CUBIC/BBR)");
+    const run_congestion_bench_cmd = b.addRunArtifact(exe_congestion_bench);
+    run_congestion_bench.dependOn(&run_congestion_bench_cmd.step);
+
+
+
     const exe_interop_external_client = b.addExecutable(.{
         .name = "quicz-interop-external-client",
         .root_module = b.createModule(.{
