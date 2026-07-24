@@ -1,9 +1,10 @@
 #!/bin/bash
+# quicz interop endpoint runner for quic-interop-runner
+# Env: ROLE=server|client, TESTCASE, REQUESTS, SSLKEYLOGFILE, QLOGDIR
 
-# quicz interop endpoint runner
-# Usage: run_endpoint.sh [server|client]
+set -e
 
-ROLE=${1:-server}
+ROLE=${ROLE:-server}
 TESTCASE=${TESTCASE:-handshake}
 
 echo "quicz interop: role=$ROLE testcase=$TESTCASE"
