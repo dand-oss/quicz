@@ -9,3 +9,6 @@ task_plan.md
 quicz.md
 CLAUDE.md
 .claude
+
+Cargo.lock
+fuzz/
