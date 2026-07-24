@@ -105,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
     // Initialize I/O
 
     // Bind client UDP socket
-    var address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
+    var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 0, 0, 0, 0 }, .port = 0 } };
     var socket = address.bind(io, .{ .mode = .dgram, .protocol = .udp }) catch {
         std.debug.print("failed to bind client socket\n", .{});
         return error.BindFailed;
@@ -156,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Send Initial to server
     var server_addr = std.Io.net.IpAddress{
-        .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = server_port },
+        .ip4 = .{ .bytes = .{ 193, 167, 100, 100 }, .port = server_port },
     };
     socket.send(io, &server_addr, begin_result.datagram) catch {
         std.debug.print("failed to send Initial\n", .{});
