@@ -295,7 +295,7 @@ P7 re-entry rule: P0-P6 complete, 1690 tests pass.
 | P7-B | Real UDP socket I/O | Interop server/client use std.Io.net UDP bind/recv/send | interop/server.zig real UDP; local_test.sh passes | Done (pre-existing) |
 | P7-C | ChaCha20-Poly1305 packet protection | AEAD + header protection integrated into protection.zig | ChaCha20 protect/unprotect roundtrip + tamper tests | Done |
 | P7-D | Fuzz targets | Packet/frame/QPACK/H3 parsing fuzz entry points | 8 fuzz functions + 4 unit tests, no crash on garbage | Done |
-| P7-E | External interop validation | quic-go or ngtcp2 interop via QUIC-Interop-Runner | Docker build + handshake/transfer pass against external impl | Blocked (pre-existing fuzz.zig + OpenSSL translate-c build errors) |
+| P7-E | External interop validation | quic-go or ngtcp2 interop via QUIC-Interop-Runner; internal process interop with real TLS 1.3 + UDP | Internal: handshake+echo pass over real UDP (server cleanup bug pending); External: needs Docker + quic-go | Partial |
 | P7-F | Certificate chain validation | Real CA-signed cert path, not just test self-signed | tls13_server_endpoint.zig uses CA bundle + cert verification | Done (pre-existing) |
 
 ### P7 execution queue
@@ -306,7 +306,7 @@ P7 re-entry rule: P0-P6 complete, 1690 tests pass.
 | 2 | P7-B Real UDP socket I/O | Done | Pre-existing evidence |
 | 3 | P7-C ChaCha20-Poly1305 | Done | New implementation |
 | 4 | P7-D Fuzz targets | Done | New implementation |
-| 5 | P7-E External interop | Blocked | Needs fuzz.zig + OpenSSL fix first |
+| 5 | P7-E External interop | Partial | Internal pass, external pending |
 | 6 | P7-F Certificate chain validation | Done | Pre-existing evidence |
 ## Practical Transport Baseline
 
