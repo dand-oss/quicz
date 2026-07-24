@@ -7,6 +7,7 @@ const std = @import("std");
 const quicz = @import("quicz");
 const frame = quicz.frame;
 const packet = quicz.packet;
+const buffer = quicz.buffer;
 
 /// Fuzz target: decode arbitrary bytes as a QUIC frame.
 pub fn fuzzFrameDecode(data: []const u8) void {
@@ -18,19 +19,20 @@ pub fn fuzzFrameDecode(data: []const u8) void {
 /// Fuzz target: parse arbitrary bytes as a QUIC long header.
 pub fn fuzzLongHeaderParse(data: []const u8) void {
     if (data.len == 0) return;
-    _ = packet.parseLongHeader(data) catch return;
+    var reader = buffer.fixedReader(data);
+    _ = packet.parseLongHeader(reader.reader(), std.heap.page_allocator) catch return;
 }
 
 /// Fuzz target: parse arbitrary bytes as a QUIC varint.
 pub fn fuzzVarintDecode(data: []const u8) void {
     if (data.len == 0) return;
-    var reader = std.io.fixedBufferStream(data).reader();
-    _ = packet.decodeVarInt(reader) catch return;
+    var reader = buffer.fixedReader(data);
+    _ = packet.decodeVarInt(reader.reader()) catch return;
 }
 
 /// Simple coverage-guided fuzz loop for testing.
 pub fn main() !void {
-    const prng = std.Random.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     var buf: [4096]u8 = undefined;
