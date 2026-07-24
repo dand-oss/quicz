@@ -7127,6 +7127,51 @@ zig build run-udp-stateless-reset-loopback
   UDP client/server path exists, but failures must record peer implementation,
   peer version, and the smallest reproducible trace.
 
+
+## Feature comparison with other QUIC implementations
+
+| Feature | RFC | quic-go | quiche | s2n-quic | quicz | Gap |
+| --- | --- | --- | --- | --- | --- | --- |
+| QUIC v1 transport | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| QUIC v2 | 9369 | ✅ | ✅ | ❌ | ✅ | — |
+| TLS 1.3 | 9001 | ✅ | ✅(BoringSSL) | ✅(s2n-tls) | ✅(pure Zig) | — |
+| Loss recovery | 9002 | ✅ | ✅ | ✅ | ✅ | — |
+| HTTP/3 | 9114 | ✅ | ✅ | ❌ | ⚠️ basic | H3 connection mgmt |
+| QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
+| QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ❌ | **Missing** |
+| 0-RTT | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| DATAGRAM | 9221 | ✅ | ✅ | ✅ | ✅ | — |
+| Multipath | draft | ✅ | ❌ | ❌ | ✅ | — |
+| NewReno | 9002 | ✅ | ✅ | ✅ | ✅ | — |
+| CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
+| BBR | — | ✅ | ✅ | ❌ | ✅ | — |
+| ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ❌ | **Missing** |
+| Post-quantum KX | — | ✅ | ✅ | ✅ | ❌ | **Missing** |
+| Connection migration | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| Path validation | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| Retry | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| Stateless reset | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| Key update | 9001 | ✅ | ✅ | ✅ | ✅ | — |
+| ECN | 9000 | ✅ | ✅ | ❌ | ✅ | — |
+| PMTU discovery | 9000 | ✅ | ✅ | ✅ | ✅ | — |
+| GSO/GRO | — | ✅ | ✅ | ❌ | ✅ | — |
+| qlog | — | ✅ | ✅ | ❌ | ✅ | — |
+| Version negotiation | 9368 | ✅ | ✅ | ❌ | ✅ | — |
+| WebTransport | — | ✅ | ❌ | ❌ | ⚠️ basic | Full WT session |
+| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | **Missing** |
+| Connection pool | — | ✅ | ❌ | ❌ | ✅ | — |
+| Fuzz targets | — | ✅ | ✅ | ✅ | ✅ | — |
+| External interop | — | ✅ | ✅ | ✅ | ✅(quic-go) | quiche/s2n-quic pending |
+
+### Mandatory gaps — all three implementations have these, quicz must implement
+
+1. **AES-256-GCM cipher suite** — MANDATORY: all three implementations support it
+2. **Post-quantum key exchange (X25519Kyber768)** — MANDATORY: all three implementations support it
+3. **QPACK dynamic table** — quic-go and quiche implement it (2/3, recommended)
+4. **HTTP Datagrams (RFC 9297)** — quic-go only (1/3, optional)
+5. **Complete HTTP/3 connection management** — GOAWAY, SETTINGS, stream lifecycle over real transport
+6. **Complete WebTransport session** — CONNECT, bidi/uni streams, datagrams over H3
 ## Milestones
 
 1. Standard matrix and documentation are current.
