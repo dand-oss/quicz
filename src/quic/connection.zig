@@ -894,6 +894,7 @@ pub const Connection = struct {
                 .max_datagram_size = config.max_datagram_size,
                 .initial_rtt_ms = config.initial_rtt_ms,
                 .max_ack_delay_ms = config.max_ack_delay_ms,
+                .congestion_algorithm = config.congestion_algorithm,
             }),
             .sent_packets = .empty,
             .largest_acknowledged = null,

@@ -77,7 +77,7 @@ zig build-exe -OReleaseFast --dep quicz \
 - quicz 丢包恢复偏保守（CUBIC + 50% 利用率阈值）。
 - msquic 的 BBR2 通过带宽建模在丢包下维持更高吞吐。
 - quic-go 的 CUBIC 实现恢复更激进（更高利用率阈值）。
-- quicz 可通过调优 CUBIC 参数或添加 BBR 支持改善丢包恢复。
+- quicz 可通过调优 CUBIC 参数（恢复间隔、利用率阈值）改善丢包恢复。
 
 说明：
 - 直接对比困难，因测量方法、平台、配置不同。
@@ -103,7 +103,6 @@ zig build-exe -OReleaseFast --dep quicz \
 - [ ] 丢包恢复（tc netem 1%/5% 丢包）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
-- [ ] 完整 BBR2 实现（msquic 级丢包恢复）
 
 ## 后续工作：BBR2 拥塞控制
 

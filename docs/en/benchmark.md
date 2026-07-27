@@ -77,7 +77,7 @@ Notes on loss recovery:
 - quicz loss recovery is conservative (CUBIC with 50% utilization threshold).
 - msquic's BBR2 maintains higher throughput under loss by modeling bandwidth.
 - quic-go's CUBIC implementation has more aggressive recovery (higher utilization threshold).
-- quicz loss recovery can be improved by tuning CUBIC parameters or adding BBR support.
+- quicz loss recovery can be improved by tuning CUBIC parameters by tuning CUBIC parameters (recovery interval, utilization threshold).
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
@@ -103,7 +103,6 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] Loss recovery (tc netem 1%/5% packet loss)
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
-- [ ] Full BBR2 implementation (msquic-level loss recovery)
 
 ## Future Work: BBR2 Congestion Control
 
