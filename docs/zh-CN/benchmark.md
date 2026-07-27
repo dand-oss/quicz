@@ -46,9 +46,19 @@ zig build-exe -OReleaseFast --dep quicz \
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
 - quicz 的 160 MB/s 对于纯 Zig 实现（无平台特定 I/O 优化）具有竞争力。
 
+## Echo 延迟
+
+| 百分位 | 延迟 | 说明 |
+|---|---|---|
+| P50 | **20.2 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
+| P99 | **62.1 μs** | |
+| P99.9 | **85.3 μs** | |
+
+测试：5000 次迭代，macOS loopback，ReleaseFast。
+
 ## 计划中的基准
 
-- [ ] Echo 延迟（P50/P99，需隔离 socket 对）
+- [x] Echo 延迟（P50/P99）
 - [ ] 多流并发（1/2/4/8/16 流）
 - [ ] DATAGRAM 吞吐（RFC 9221）
 - [ ] 丢包恢复（tc netem 1%/5% 丢包）

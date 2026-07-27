@@ -46,9 +46,19 @@ Notes:
 - Go/Rust implementations benefit from zero-copy sendmsg and GSO on Linux.
 - quicz's 160 MB/s is competitive for a pure-Zig implementation without platform-specific I/O optimization.
 
+## Echo Latency
+
+| Percentile | Latency | Notes |
+|---|---|---|
+| P50 | **20.2 μs** | 1 KB full QUIC roundtrip (encrypt+send+recv+decrypt+echo) |
+| P99 | **62.1 μs** | |
+| P99.9 | **85.3 μs** | |
+
+Test: 5000 iterations, macOS loopback, ReleaseFast.
+
 ## Planned Benchmarks
 
-- [ ] Echo latency (P50/P99, requires isolated socket pairs)
+- [x] Echo latency (P50/P99)
 - [ ] Multi-stream concurrency (1/2/4/8/16 streams)
 - [ ] DATAGRAM throughput (RFC 9221)
 - [ ] Loss recovery (tc netem 1%/5% packet loss)
