@@ -8859,7 +8859,7 @@ pub const Connection = struct {
         var newly_acked_ect1: u64 = 0;
         var local_key_update_acked = false;
         const congestion_window_utilized =
-            packet_space.recovery_state.bytes_in_flight >= packet_space.recovery_state.congestion_window;
+            packet_space.recovery_state.bytes_in_flight * 2 >= packet_space.recovery_state.congestion_window;
 
         var i: usize = 0;
         while (i < packet_space.sent_packets.items.len) {

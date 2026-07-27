@@ -12,3 +12,4 @@ CLAUDE.md
 
 Cargo.lock
 fuzz/
+bench_analysis.md
