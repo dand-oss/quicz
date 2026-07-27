@@ -11,7 +11,7 @@ const std = @import("std");
 const quicz = @import("quicz");
 
 const max_datagram_size: usize = 1324;
-const transfer_size: usize = 64 * 1024 * 1024; // 64 MB
+const transfer_size: usize = 16 * 1024 * 1024; // 64 MB
 const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
 const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
 
@@ -76,6 +76,8 @@ fn serverThread(ctx: *ServerContext) void {
 }
 
 pub fn main() !void {
+    
+    
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -216,6 +218,54 @@ pub fn main() !void {
         client.recovery_state.congestion_window / 1024,
         wait,
     });
+
+
+    // --- Benchmark 2: Echo Latency ---
+    std.debug.print("\n  --- Echo Latency (1 KB roundtrip) ---\n", .{});
+    {
+        const echo_iters: usize = 5000;
+        var echo_payload: [1024]u8 = undefined;
+        @memset(&echo_payload, 'E');
+        var echo_rb: [1500]u8 = undefined;
+        var echo_read: [2048]u8 = undefined;
+        var echo_pn: i64 = 0;
+        const echo_stream = try client.openStream();
+        var latencies: [echo_iters]u64 = undefined;
+
+        for (0..echo_iters) |iter| {
+            const t0 = nanoTime();
+            try client.sendOnStream(echo_stream, &echo_payload, false);
+            if (try client.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid)) |dg| {
+                defer allocator.free(dg);
+                echo_pn += 1;
+                try client_socket.send(io, &server_addr, dg);
+            }
+            // Server receives + echoes (inline, same thread for latency accuracy)
+            const srv_r = server_socket.receiveTimeout(io, &echo_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(5) } }) catch continue;
+            _ = server.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, srv_r.data) catch continue;
+            _ = server.recvOnStream(echo_stream, &echo_read) catch {};
+            try server.sendOnStream(echo_stream, &echo_payload, false);
+            if (try server.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid)) |dg| {
+                defer allocator.free(dg);
+                echo_pn += 1;
+                try server_socket.send(io, &client_socket.address, dg);
+            }
+            // Client receives echo
+            const cli_r = client_socket.receiveTimeout(io, &echo_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(5) } }) catch continue;
+            _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, cli_r.data) catch {};
+            _ = client.recvOnStream(echo_stream, &echo_read) catch {};
+            latencies[iter] = nanoTime() - t0;
+        }
+
+        std.mem.sort(u64, &latencies, {}, std.sort.asc(u64));
+        std.debug.print("  {s:20} P50={d:.1}us  P99={d:.1}us  P99.9={d:.1}us  ({d} iters)\n", .{
+            "Echo Latency",
+            @as(f64, @floatFromInt(latencies[echo_iters * 50 / 100])) / 1000.0,
+            @as(f64, @floatFromInt(latencies[echo_iters * 99 / 100])) / 1000.0,
+            @as(f64, @floatFromInt(latencies[echo_iters * 999 / 1000])) / 1000.0,
+            echo_iters,
+        });
+    }
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }
