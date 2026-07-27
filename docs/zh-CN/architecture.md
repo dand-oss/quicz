@@ -203,3 +203,10 @@ timer、投递 stateless reset、清理关闭连接。生产级高层 API 已通
 - 包保护异常：优先检查 Initial/Handshake/1-RTT key 是否安装到正确 packet number space。
 - Endpoint 路由异常：优先检查 DCID、route retirement、path identity 和 stateless reset token。
 - Recovery 异常：优先检查 ACK 生成、in-flight bytes、PTO timer 和 congestion window。
+
+## 性能
+
+quicz 在 macOS loopback 上达到 ~1.4 GB/s 单流吞吐（线程化 std.Io，CUBIC），
+接近 msquic（C，Linux XDP）。Echo 延迟 P50=19μs。
+完整多维度对比见 [benchmark.md](benchmark.md)。
+

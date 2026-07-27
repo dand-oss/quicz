@@ -187,6 +187,32 @@ The interop server (`interop/server.zig`) and client (`interop/client.zig`)
 demonstrate the full low-level wiring: `Tls13ServerEndpoint` for multi-connection
 server routing, `Tls13ClientEndpoint` for client handshake and stream I/O.
 
+## Performance
+
+Benchmark results (Apple M-series, macOS loopback, ReleaseFast):
+
+| Metric | Result |
+|---|---|
+| Stream Upload (threaded) | **~1.4 GB/s** |
+| Echo Latency (1 KB RTT) | **P50=19μs, P99=55μs** |
+| Multi-Stream (4x) | **~800 MB/s** |
+| Loss Recovery (1% loss) | **~117 MB/s** |
+| Loss Recovery (5% loss) | **~67 MB/s** |
+
+Comparison with other QUIC implementations:
+
+| Implementation | Language | Throughput | Latency P50 |
+|---|---|---|---|
+| msquic | C | 1.5-2.5 GB/s (Linux XDP) | ~5-15μs |
+| **quicz** | **Zig** | **~1.4 GB/s (macOS)** | **~19μs** |
+| s2n-quic | Rust | ~800 MB/s (Linux GSO) | ~20-40μs |
+| quic-go | Go | 400-600 MB/s (Linux GSO) | ~50-100μs |
+| quiche | Rust | 300-500 MB/s | ~30-80μs |
+
+Run benchmarks: `zig build run-quic-bench`
+
+Full details: [docs/en/benchmark.md](docs/en/benchmark.md)
+
 ## Building
 
 Requires **Zig 0.16.0**.

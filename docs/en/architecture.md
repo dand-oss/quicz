@@ -268,3 +268,10 @@ behavior runs end to end.
   stateless reset token state.
 - Recovery failures: check ACK generation, in-flight bytes, PTO timer, and the
   congestion window.
+
+## Performance
+
+quicz achieves ~1.4 GB/s single-stream throughput on macOS loopback (threaded std.Io, CUBIC),
+approaching msquic (C, Linux XDP). Echo latency P50=19μs. See [benchmark.md](benchmark.md) for
+full multi-dimension comparison with quic-go, quiche, s2n-quic, quinn, and msquic.
+
