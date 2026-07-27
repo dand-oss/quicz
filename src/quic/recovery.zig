@@ -173,6 +173,14 @@ pub const Recovery = struct {
     /// a congestion signal without treating that packet as lost.
     pub fn onCongestionEvent(self: *Recovery, sent_time_millis: i64, now_millis: i64) void {
         if (self.inCongestionRecovery(sent_time_millis)) return;
+        // Enforce minimum recovery interval (PTO-based) between congestion
+        // events to prevent exponential cwnd collapse when many losses are
+        // detected in rapid succession (e.g., low-RTT loopback paths).
+        // RFC 9002 §7.3.2: recovery period should last at least one PTO.
+        if (self.congestion_recovery_start_time_millis) |prev| {
+            const min_interval: i64 = @intCast(self.smoothed_rtt_ms + 4 * self.rttvar_ms + self.max_ack_delay_ms);
+            if (now_millis - prev < @max(min_interval, 1) and now_millis >= prev) return;
+        }
         self.congestion_recovery_start_time_millis = now_millis;
         self.congestion_avoidance_bytes_acked = 0;
         switch (self.congestion_algorithm) {
