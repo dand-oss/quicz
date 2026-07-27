@@ -335,6 +335,7 @@ const LossDetectionResult = struct {
     pc_last_sent_time_millis: i64 = 0,
     pc_contiguous_packet_numbers: bool = true,
     largest_lost_sent_time_millis: ?i64 = null,
+    largest_lost_packet_number: ?u64 = null,
 
     fn recordLostPacket(self: *LossDetectionResult, sent_packet: SentPacket, first_rtt_sample_sent_time_millis: ?i64) void {
         self.lost_bytes = std.math.add(usize, self.lost_bytes, sent_packet.bytes) catch std.math.maxInt(usize);
@@ -342,6 +343,10 @@ const LossDetectionResult = struct {
             @max(current, sent_packet.sent_time_millis)
         else
             sent_packet.sent_time_millis;
+        self.largest_lost_packet_number = if (self.largest_lost_packet_number) |current|
+            @max(current, sent_packet.packet_number)
+        else
+            sent_packet.packet_number;
 
         const first_rtt_sent_time = first_rtt_sample_sent_time_millis orelse return;
         if (sent_packet.sent_time_millis <= first_rtt_sent_time) return;
@@ -810,7 +815,7 @@ pub const Connection = struct {
         }
         try connection_version.validateLocalVersionInformation(side, config);
 
-        return Connection{
+        var conn = Connection{
             .allocator = allocator,
             .config = config,
             .side = side,
@@ -931,6 +936,10 @@ pub const Connection = struct {
             .close_deadline_millis = null,
             .closed = false,
         };
+        if (config.initial_congestion_window_packets) |pkts| {
+            conn.recovery_state.congestion_window = pkts * @as(usize, config.max_datagram_size);
+        }
+        return conn;
     }
 
     /// Release all buffers owned by this connection.
@@ -3450,6 +3459,7 @@ pub const Connection = struct {
 
     fn recordAckElicitingSendInSpace(self: *Connection, space: PacketNumberSpace, bytes: usize) void {
         const packet_space = self.packetNumberSpace(space);
+        packet_space.recovery_state.largest_sent_packet_number = self.next_packet_number;
         packet_space.recovery_state.onPacketSent(bytes);
         self.anti_deadlock_pto_start_millis = null;
         if (packet_space.pto_probe_count.* != 0) {
@@ -8938,10 +8948,11 @@ pub const Connection = struct {
         if (loss_result.lost_bytes != 0) {
             congestion_probe_needed = congestion_probe_needed or
                 packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_millis.?);
-            packet_space.recovery_state.onPacketLost(
+            packet_space.recovery_state.onPacketLostWithNumber(
                 loss_result.lost_bytes,
                 loss_result.largest_lost_sent_time_millis.?,
                 now_millis,
+                loss_result.largest_lost_packet_number,
             );
         }
         if (congestion_probe_needed) {
@@ -9172,10 +9183,11 @@ pub const Connection = struct {
         if (loss_result.lost_bytes != 0) {
             const congestion_probe_needed =
                 packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_millis.?);
-            packet_space.recovery_state.onPacketLost(
+            packet_space.recovery_state.onPacketLostWithNumber(
                 loss_result.lost_bytes,
                 loss_result.largest_lost_sent_time_millis.?,
                 now_millis,
+                loss_result.largest_lost_packet_number,
             );
             if (congestion_probe_needed) {
                 self.armCongestionProbeIfPendingData(space);
@@ -16690,6 +16702,7 @@ test "ACK-driven packet loss reduces congestion window under controlled clock" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
+        .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16729,6 +16742,7 @@ test "persistent congestion resets congestion window to minimum under controlled
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
+        .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16788,6 +16802,7 @@ test "Application persistent congestion duration includes max_ack_delay" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
+        .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -59606,6 +59621,7 @@ test "ACK growth follows NewReno slow start then congestion avoidance" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
+        .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
 
@@ -70481,6 +70497,7 @@ test "congestion admission accounts bytes in flight across packet spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
+        .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();

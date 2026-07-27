@@ -54,6 +54,10 @@ pub const Recovery = struct {
     /// into a full max-datagram-sized congestion-window increase.
     congestion_avoidance_bytes_acked: usize = 0,
     congestion_recovery_start_time_millis: ?i64 = null,
+    /// Largest packet number sent (updated by Connection on each send).
+    largest_sent_packet_number: u64 = 0,
+    /// Largest sent PN at the last cwnd cutback (quic-go style recovery).
+    largest_sent_at_last_cutback: ?u64 = null,
     ssthresh: usize = std.math.maxInt(usize),
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
@@ -162,8 +166,12 @@ pub const Recovery = struct {
 
     /// Record packet loss and start a congestion recovery period if needed.
     pub fn onPacketLost(self: *Recovery, bytes: usize, lost_packet_sent_time_millis: i64, now_millis: i64) void {
+        self.onPacketLostWithNumber(bytes, lost_packet_sent_time_millis, now_millis, null);
+    }
+
+    pub fn onPacketLostWithNumber(self: *Recovery, bytes: usize, lost_packet_sent_time_millis: i64, now_millis: i64, lost_pn: ?u64) void {
         self.removeBytesInFlight(bytes);
-        self.onCongestionEvent(lost_packet_sent_time_millis, now_millis);
+        self.onCongestionEventWithPacketNumber(lost_packet_sent_time_millis, now_millis, lost_pn);
     }
 
     /// Enter NewReno congestion recovery for a loss or ECN-CE congestion event.
@@ -172,16 +180,23 @@ pub const Recovery = struct {
     /// packet bytes before calling this; ECN-CE marks an acknowledged packet as
     /// a congestion signal without treating that packet as lost.
     pub fn onCongestionEvent(self: *Recovery, sent_time_millis: i64, now_millis: i64) void {
-        if (self.inCongestionRecovery(sent_time_millis)) return;
-        // Enforce minimum recovery interval (PTO-based) between congestion
-        // events to prevent exponential cwnd collapse when many losses are
-        // detected in rapid succession (e.g., low-RTT loopback paths).
-        // RFC 9002 §7.3.2: recovery period should last at least one PTO.
-        if (self.congestion_recovery_start_time_millis) |prev| {
-            const min_interval: i64 = @intCast(self.smoothed_rtt_ms + 4 * self.rttvar_ms + self.max_ack_delay_ms);
-            if (now_millis - prev < @max(min_interval, 1) and now_millis >= prev) return;
+        self.onCongestionEventWithPacketNumber(sent_time_millis, now_millis, null);
+    }
+
+    /// Packet-number-based congestion event (quic-go style).
+    /// Losses for packets sent before the last cutback are a single event (RFC 6582).
+    pub fn onCongestionEventWithPacketNumber(self: *Recovery, sent_time_millis: i64, now_millis: i64, lost_packet_number: ?u64) void {
+        // quic-go: if packetNumber <= largestSentAtLastCutback, skip (single loss event)
+        if (lost_packet_number) |pn| {
+            if (self.largest_sent_at_last_cutback) |last_cut| {
+                if (pn <= last_cut) return;
+            }
+        } else {
+            // Fallback: time-based check for callers without packet numbers
+            if (self.inCongestionRecovery(sent_time_millis)) return;
         }
         self.congestion_recovery_start_time_millis = now_millis;
+        self.largest_sent_at_last_cutback = self.largest_sent_packet_number;
         self.congestion_avoidance_bytes_acked = 0;
         switch (self.congestion_algorithm) {
             .new_reno => {
