@@ -76,3 +76,23 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 
 
 Full transport task matrix: [quic_transport_tasks.md](quic_transport_tasks.md).
+
+## Performance Comparison
+
+Test conditions: loopback UDP, single stream upload, ReleaseFast build.
+
+| Implementation | Language | Throughput | Platform | Notes |
+| --- | --- | --- | --- | --- |
+| msquic | C | 1.5-2.5 GB/s | Linux | XDP/GSO, kernel bypass |
+| **quicz** | **Zig** | **1.4 GB/s** | **macOS** | **Threaded std.Io, CUBIC, no GSO** |
+| s2n-quic | Rust | ~800 MB/s | Linux | GSO/GRO |
+| quic-go | Go | ~400-600 MB/s | Linux | GSO |
+| quiche | Rust | ~300-500 MB/s | Linux | — |
+| quinn | Rust | ~300-500 MB/s | Linux | tokio async |
+
+Notes:
+- quicz achieves 1.4 GB/s on macOS loopback (no GSO/XDP), approaching msquic's best Linux numbers.
+- msquic's 2.5 GB/s relies on Linux XDP kernel bypass + UDP_SEGMENT (GSO), unavailable on macOS.
+- On Linux + GSO, quicz is expected to improve further (sendmmsg + UDP_SEGMENT).
+- Methodology: 64 MB single-stream upload, threaded client/server, CUBIC, cwnd grew to 1.2 MB.
+- Run: `zig build run-quic-bench`
