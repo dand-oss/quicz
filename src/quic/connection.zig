@@ -4218,7 +4218,10 @@ pub const Connection = struct {
 
         // Pacer gate: block ack-eliciting packets when budget is exhausted.
         // Control packets (ACK, CLOSE, PATH_RESPONSE) bypass the pacer.
-        if (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0) {
+        // Before the first RTT sample, pacing is disabled (no rate estimate).
+        if (self.recovery_state.min_rtt_ms != null and
+            (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0))
+        {
             const cwnd = self.recovery_state.congestion_window;
             const srtt = self.recovery_state.smoothed_rtt_ms;
             if (!self.tx_pacer.canSend(now_millis, self.maxTxDatagramSize(), cwnd, srtt)) {
