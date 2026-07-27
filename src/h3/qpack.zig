@@ -791,3 +791,427 @@ test "DynamicTable entry size calculation" {
     // "x-custom" (8) + "value" (5) + 32 = 45
     try std.testing.expectEqual(@as(usize, 45), entry2.size());
 }
+
+// ---------------------------------------------------------------------------
+// Encoder stream instructions (RFC 9204 §4.3)
+// ---------------------------------------------------------------------------
+
+/// Encoder instruction types (RFC 9204 §4.3).
+pub const EncoderInstruction = union(enum) {
+    /// §4.3.1: Insert with Name Reference.
+    insert_name_ref: struct {
+        /// true = static table reference, false = dynamic table reference.
+        is_static: bool,
+        /// Name index (static or dynamic relative index).
+        name_index: u64,
+        /// Value string to insert.
+        value: []const u8,
+    },
+    /// §4.3.2: Insert with Literal Name.
+    insert_literal: struct {
+        name: []const u8,
+        value: []const u8,
+    },
+    /// §4.3.3: Set Dynamic Table Capacity.
+    set_capacity: u64,
+    /// §4.3.4: Duplicate.
+    duplicate: u64,
+};
+
+/// Encode an encoder stream instruction into a buffer.
+/// Returns the number of bytes written.
+pub fn encodeEncoderInstruction(out: []u8, instruction: EncoderInstruction) !usize {
+    var pos: usize = 0;
+    switch (instruction) {
+        .insert_name_ref => |ref| {
+            // 1TNNNNNN: 1-bit prefix=1, T bit, 6-bit name index prefix
+            const t_bit: u8 = if (ref.is_static) 0x40 else 0x00;
+            if (ref.name_index < 63) {
+                out[pos] = 0x80 | t_bit | @as(u8, @intCast(ref.name_index));
+                pos += 1;
+            } else {
+                out[pos] = 0x80 | t_bit | 0x3f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, ref.name_index - 63);
+            }
+            // Value string (H=0, length prefix)
+            pos = try encodeStringToBuf(out, pos, ref.value);
+        },
+        .insert_literal => |lit| {
+            // 01NNNNNN: 2-bit prefix=01, H bit + 5-bit name length prefix
+            // We encode H=0 (no Huffman)
+            if (lit.name.len < 31) {
+                out[pos] = 0x40 | @as(u8, @intCast(lit.name.len));
+                pos += 1;
+            } else {
+                out[pos] = 0x40 | 0x1f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, lit.name.len - 31);
+            }
+            @memcpy(out[pos .. pos + lit.name.len], lit.name);
+            pos += lit.name.len;
+            // Value string
+            pos = try encodeStringToBuf(out, pos, lit.value);
+        },
+        .set_capacity => |capacity| {
+            // 001NNNNN: 3-bit prefix=001, 5-bit capacity prefix
+            if (capacity < 31) {
+                out[pos] = 0x20 | @as(u8, @intCast(capacity));
+                pos += 1;
+            } else {
+                out[pos] = 0x20 | 0x1f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, capacity - 31);
+            }
+        },
+        .duplicate => |index| {
+            // 000NNNNN: 3-bit prefix=000, 5-bit index prefix
+            if (index < 31) {
+                out[pos] = @intCast(index);
+                pos += 1;
+            } else {
+                out[pos] = 0x1f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, index - 31);
+            }
+        },
+    }
+    return pos;
+}
+
+/// Decode an encoder stream instruction from a buffer.
+/// Returns the instruction and number of bytes consumed.
+pub fn decodeEncoderInstruction(data: []const u8) !struct { instruction: EncoderInstruction, consumed: usize } {
+    if (data.len == 0) return error.IncompleteString;
+    const first = data[0];
+
+    if (first & 0x80 != 0) {
+        // Insert with Name Reference: 1TNNNNNN
+        const is_static = (first & 0x40) != 0;
+        var name_index: u64 = first & 0x3f;
+        var pos: usize = 1;
+        if (name_index == 63) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            name_index = 63 + varint.value;
+            pos = varint.end;
+        }
+        const value_result = try decodeString(data, pos);
+        return .{
+            .instruction = .{ .insert_name_ref = .{
+                .is_static = is_static,
+                .name_index = name_index,
+                .value = value_result.value,
+            } },
+            .consumed = value_result.end,
+        };
+    } else if (first & 0x40 != 0) {
+        // Insert with Literal Name: 01HNNNNN
+        const h_bit = (first & 0x20) != 0;
+        if (h_bit) return error.HuffmanNotSupported;
+        var name_len: u64 = first & 0x1f;
+        var pos: usize = 1;
+        if (name_len == 31) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            name_len = 31 + varint.value;
+            pos = varint.end;
+        }
+        const name_len_usize: usize = @intCast(name_len);
+        if (pos + name_len_usize > data.len) return error.IncompleteString;
+        const name = data[pos .. pos + name_len_usize];
+        pos += name_len_usize;
+        const value_result = try decodeString(data, pos);
+        return .{
+            .instruction = .{ .insert_literal = .{
+                .name = name,
+                .value = value_result.value,
+            } },
+            .consumed = value_result.end,
+        };
+    } else if (first & 0x20 != 0) {
+        // Set Dynamic Table Capacity: 001NNNNN
+        var capacity: u64 = first & 0x1f;
+        var pos: usize = 1;
+        if (capacity == 31) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            capacity = 31 + varint.value;
+            pos = varint.end;
+        }
+        return .{
+            .instruction = .{ .set_capacity = capacity },
+            .consumed = pos,
+        };
+    } else {
+        // Duplicate: 000NNNNN
+        var index: u64 = first & 0x1f;
+        var pos: usize = 1;
+        if (index == 31) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            index = 31 + varint.value;
+            pos = varint.end;
+        }
+        return .{
+            .instruction = .{ .duplicate = index },
+            .consumed = pos,
+        };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decoder stream instructions (RFC 9204 §4.4)
+// ---------------------------------------------------------------------------
+
+/// Decoder instruction types (RFC 9204 §4.4).
+pub const DecoderInstruction = union(enum) {
+    /// §4.4.1: Section Acknowledgment.
+    section_ack: u64,
+    /// §4.4.2: Stream Cancellation.
+    stream_cancellation: u64,
+    /// §4.4.3: Insert Count Increment.
+    insert_count_increment: u64,
+};
+
+/// Encode a decoder stream instruction into a buffer.
+/// Returns the number of bytes written.
+pub fn encodeDecoderInstruction(out: []u8, instruction: DecoderInstruction) !usize {
+    var pos: usize = 0;
+    switch (instruction) {
+        .section_ack => |stream_id| {
+            // 1NNNNNNN: 1-bit prefix=1, 7-bit stream ID prefix
+            if (stream_id < 127) {
+                out[pos] = 0x80 | @as(u8, @intCast(stream_id));
+                pos += 1;
+            } else {
+                out[pos] = 0xff;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, stream_id - 127);
+            }
+        },
+        .stream_cancellation => |stream_id| {
+            // 01NNNNNN: 2-bit prefix=01, 6-bit stream ID prefix
+            if (stream_id < 63) {
+                out[pos] = 0x40 | @as(u8, @intCast(stream_id));
+                pos += 1;
+            } else {
+                out[pos] = 0x7f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, stream_id - 63);
+            }
+        },
+        .insert_count_increment => |increment| {
+            // 00NNNNNN: 2-bit prefix=00, 6-bit increment prefix
+            if (increment < 63) {
+                out[pos] = @intCast(increment);
+                pos += 1;
+            } else {
+                out[pos] = 0x3f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, increment - 63);
+            }
+        },
+    }
+    return pos;
+}
+
+/// Decode a decoder stream instruction from a buffer.
+/// Returns the instruction and number of bytes consumed.
+pub fn decodeDecoderInstruction(data: []const u8) !struct { instruction: DecoderInstruction, consumed: usize } {
+    if (data.len == 0) return error.IncompleteString;
+    const first = data[0];
+
+    if (first & 0x80 != 0) {
+        // Section Acknowledgment: 1NNNNNNN
+        var stream_id: u64 = first & 0x7f;
+        var pos: usize = 1;
+        if (stream_id == 127) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            stream_id = 127 + varint.value;
+            pos = varint.end;
+        }
+        return .{
+            .instruction = .{ .section_ack = stream_id },
+            .consumed = pos,
+        };
+    } else if (first & 0x40 != 0) {
+        // Stream Cancellation: 01NNNNNN
+        var stream_id: u64 = first & 0x3f;
+        var pos: usize = 1;
+        if (stream_id == 63) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            stream_id = 63 + varint.value;
+            pos = varint.end;
+        }
+        return .{
+            .instruction = .{ .stream_cancellation = stream_id },
+            .consumed = pos,
+        };
+    } else {
+        // Insert Count Increment: 00NNNNNN
+        var increment: u64 = first & 0x3f;
+        var pos: usize = 1;
+        if (increment == 63) {
+            const varint = try decodeVarintFromBuf(data, pos);
+            increment = 63 + varint.value;
+            pos = varint.end;
+        }
+        return .{
+            .instruction = .{ .insert_count_increment = increment },
+            .consumed = pos,
+        };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Encoder/Decoder instruction tests
+// ---------------------------------------------------------------------------
+
+test "Encoder instruction: insert with static name reference" {
+    var buf: [64]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
+        .is_static = true,
+        .name_index = 8, // :method
+        .value = "PATCH",
+    }});
+
+    // Decode and verify
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .insert_name_ref => |ref| {
+            try std.testing.expect(ref.is_static);
+            try std.testing.expectEqual(@as(u64, 8), ref.name_index);
+            try std.testing.expectEqualStrings("PATCH", ref.value);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: insert with dynamic name reference" {
+    var buf: [64]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
+        .is_static = false,
+        .name_index = 2, // dynamic relative index 2
+        .value = "custom-value",
+    }});
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .insert_name_ref => |ref| {
+            try std.testing.expect(!ref.is_static);
+            try std.testing.expectEqual(@as(u64, 2), ref.name_index);
+            try std.testing.expectEqualStrings("custom-value", ref.value);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: insert with literal name" {
+    var buf: [128]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .insert_literal = .{
+        .name = "x-custom-header",
+        .value = "custom-value",
+    }});
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .insert_literal => |lit| {
+            try std.testing.expectEqualStrings("x-custom-header", lit.name);
+            try std.testing.expectEqualStrings("custom-value", lit.value);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: set capacity" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .set_capacity = 4096 });
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .set_capacity => |cap| {
+            try std.testing.expectEqual(@as(u64, 4096), cap);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: duplicate" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .duplicate = 5 });
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .duplicate => |idx| {
+            try std.testing.expectEqual(@as(u64, 5), idx);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Decoder instruction: section acknowledgment" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .section_ack = 4 });
+
+    const result = try decodeDecoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .section_ack => |stream_id| {
+            try std.testing.expectEqual(@as(u64, 4), stream_id);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Decoder instruction: stream cancellation" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .stream_cancellation = 8 });
+
+    const result = try decodeDecoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .stream_cancellation => |stream_id| {
+            try std.testing.expectEqual(@as(u64, 8), stream_id);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Decoder instruction: insert count increment" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .insert_count_increment = 3 });
+
+    const result = try decodeDecoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .insert_count_increment => |inc| {
+            try std.testing.expectEqual(@as(u64, 3), inc);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: large name index (>= 63)" {
+    var buf: [64]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
+        .is_static = true,
+        .name_index = 72, // :status 204
+        .value = "",
+    }});
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .insert_name_ref => |ref| {
+            try std.testing.expect(ref.is_static);
+            try std.testing.expectEqual(@as(u64, 72), ref.name_index);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
+
+test "Encoder instruction: large capacity (>= 31)" {
+    var buf: [16]u8 = undefined;
+    const len = try encodeEncoderInstruction(&buf, .{ .set_capacity = 65536 });
+
+    const result = try decodeEncoderInstruction(buf[0..len]);
+    switch (result.instruction) {
+        .set_capacity => |cap| {
+            try std.testing.expectEqual(@as(u64, 65536), cap);
+        },
+        else => return error.UnexpectedInstruction,
+    }
+}
