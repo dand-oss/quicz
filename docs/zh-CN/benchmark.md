@@ -13,7 +13,7 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（64 MB） | **~1444 MB/s (1.86 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
+| 流上传（64 MB） | **~1444 MB/s (1.94 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
 | 发送 datagram 数 | ~102K | 每个 1324 B，流水线 ACK 反馈 |
 | 总耗时 | ~44 ms | cwnd 增长至 1.2 MB |
 
@@ -37,7 +37,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 语言 | 吞吐量 | 平台 | 来源 |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.86 GB/s** | **macOS，无 GSO** | **本基准** |
+| **quicz** | **Zig** | **~1.94 GB/s** | **macOS，无 GSO** | **本基准** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -83,7 +83,7 @@ zig build-exe -OReleaseFast --dep quicz \
 - 直接对比困难，因测量方法、平台、配置不同。
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
-- quicz 的 1.86 GB/s 已超过 msquic 下限，是无 GSO/XDP 条件下最快的纯语言 QUIC 实现。
+- quicz 的 1.94 GB/s 已超过 msquic 下限，是无 GSO/XDP 条件下最快的纯语言 QUIC 实现。
 
 ## Echo 延迟
 

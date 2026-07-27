@@ -13,7 +13,7 @@ secnetperf-style micro-benchmark measuring raw QUIC transport performance over l
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream Upload (64 MB) | **~1444 MB/s (1.86 GB/s)** | Threaded client/server, CUBIC, std.Io async |
+| Stream Upload (64 MB) | **~1444 MB/s (1.94 GB/s)** | Threaded client/server, CUBIC, std.Io async |
 | Datagrams sent | ~102K | 1324 B each, pipelined with ACK feedback |
 | Total time | ~44 ms | cwnd grew to 1.2 MB |
 
@@ -37,7 +37,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | Language | Throughput | Platform | Source |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.86 GB/s** | **macOS, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~1.94 GB/s** | **macOS, no GSO** | **This benchmark** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -83,7 +83,7 @@ Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
 - quicz uses an in-memory connection model (no kernel bypass), so loopback UDP overhead applies.
 - Go/Rust implementations benefit from zero-copy sendmsg and GSO on Linux.
-- quicz's 1.86 GB/s exceeds msquic's lower bound, making it the fastest pure-language QUIC implementation without GSO/XDP.
+- quicz's 1.94 GB/s exceeds msquic's lower bound, making it the fastest pure-language QUIC implementation without GSO/XDP.
 
 ## Echo Latency
 
