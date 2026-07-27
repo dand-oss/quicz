@@ -3,6 +3,7 @@ const std = @import("std");
 pub const packet = @import("quic/packet.zig");
 pub const frame = @import("quic/frame.zig");
 pub const recovery = @import("quic/recovery.zig");
+pub const pacer = @import("quic/pacer.zig");
 pub const protection = @import("quic/protection.zig");
 pub const address_validation_token = @import("quic/address_validation_token.zig");
 pub const endpoint = @import("quic/endpoint.zig");
@@ -52,6 +53,7 @@ comptime {
     _ = qlog;
     _ = cubic;
     _ = bbr;
+    _ = pacer;
     _ = pmtu;
     _ = h3;
     _ = qpack;
