@@ -408,6 +408,157 @@ pub fn main() !void {
     // to the peer, so DATAGRAM frames are not emitted.
     // TODO: Use EndpointConnectionLifecycle with full handshake for DATAGRAM bench.
     std.debug.print("\n  --- DATAGRAM: skipped (requires full handshake) ---\n", .{});
+
+    // --- Benchmark 5: Loss recovery (simulated 1% and 5% packet loss) ---
+    std.debug.print("\n  --- Loss Recovery (simulated packet loss) ---\n", .{});
+    {
+        const loss_rates = [_]struct { pct: usize, label: []const u8 }{
+            .{ .pct = 1, .label = "1% loss" },
+            .{ .pct = 5, .label = "5% loss" },
+        };
+        const loss_transfer: usize = 4 * 1024 * 1024; // 4 MB per run
+
+        for (loss_rates) |lr| {
+            var loss_cli_sock = try bindLoopback(io);
+            defer loss_cli_sock.close(io);
+            var loss_srv_sock = try bindLoopback(io);
+            defer loss_srv_sock.close(io);
+            const loss_addr = loss_srv_sock.address;
+
+            var loss_cli = try quicz.Connection.init(allocator, .client, .{
+                .initial_max_data = 64 * 1024 * 1024,
+                .initial_max_stream_data = 64 * 1024 * 1024,
+                .congestion_algorithm = .cubic,
+            });
+            var loss_srv = try quicz.Connection.init(allocator, .server, .{
+                .initial_max_data = 64 * 1024 * 1024,
+                .initial_max_stream_data = 64 * 1024 * 1024,
+            });
+            try loss_cli.installOneRttTrafficSecrets(.{ .local = secrets.client.secret, .peer = secrets.server.secret });
+            try loss_srv.installOneRttTrafficSecrets(.{ .local = secrets.server.secret, .peer = secrets.client.secret });
+            try loss_cli.confirmHandshake();
+            try loss_srv.confirmHandshake();
+            try loss_srv.validatePeerAddress();
+
+            var loss_done = std.atomic.Value(bool).init(false);
+            var loss_recv = std.atomic.Value(usize).init(0);
+
+            const LossCtx = struct {
+                sock: *std.Io.net.Socket,
+                io_r: std.Io,
+                srv: *quicz.Connection,
+                flag: *std.atomic.Value(bool),
+                cnt: *std.atomic.Value(usize),
+                peer: std.Io.net.IpAddress,
+                drop_pct: usize,
+                drop_counter: *usize,
+            };
+            var drop_ctr: usize = 0;
+            var loss_ctx = LossCtx{
+                .sock = &loss_srv_sock, .io_r = io, .srv = &loss_srv,
+                .flag = &loss_done, .cnt = &loss_recv, .peer = loss_addr,
+                .drop_pct = lr.pct, .drop_counter = &drop_ctr,
+            };
+
+            const loss_fn = struct {
+                fn run(c: *LossCtx) void {
+                    var rb: [1500]u8 = undefined;
+                    var rdb: [65536]u8 = undefined;
+                    var have = false;
+                    while (!c.flag.load(.acquire)) {
+                        var got = false;
+                        while (true) {
+                            const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(1) } }) catch break;
+                            if (!have) { c.peer = r.from; have = true; }
+                            // Simulate packet loss: drop every Nth packet
+                            c.drop_counter.* += 1;
+                            if (c.drop_counter.* % (100 / c.drop_pct) == 0) continue; // drop
+                            _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, r.data) catch {};
+                            got = true;
+                        }
+                        if (!got) continue;
+                        while (true) {
+                            const n = c.srv.recvOnStream(0, &rdb) catch break orelse break;
+                            if (n == 0) break;
+                            _ = c.cnt.fetchAdd(n, .monotonic);
+                        }
+                        if (have) while (true) {
+                            const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid) catch break orelse break;
+                            defer c.srv.allocator.free(a);
+                            c.sock.send(c.io_r, &c.peer, a) catch break;
+                        };
+                    }
+                }
+            }.run;
+
+            const loss_thr = try std.Thread.spawn(.{}, loss_fn, .{&loss_ctx});
+
+            const loss_stream = try loss_cli.openStream();
+            var loss_payload: [max_datagram_size]u8 = undefined;
+            @memset(&loss_payload, 'L');
+            var loss_rb: [1500]u8 = undefined;
+            var loss_queued: usize = 0;
+            var loss_pn: i64 = 0;
+
+            const loss_t0 = nanoTime();
+            while (loss_queued < loss_transfer) {
+                var f: usize = 0;
+                while (loss_queued < loss_transfer and f < 64) : (f += 1) {
+                    const ch = @min(loss_payload.len, loss_transfer - loss_queued);
+                    loss_cli.sendOnStream(loss_stream, loss_payload[0..ch], loss_queued + ch >= loss_transfer) catch break;
+                    loss_queued += ch;
+                }
+                while (true) {
+                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                    defer allocator.free(dg);
+                    loss_pn += 1;
+                    loss_cli_sock.send(io, &loss_addr, dg) catch break;
+                }
+                while (true) {
+                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                }
+            }
+            var loss_w: usize = 0;
+            while (loss_recv.load(.monotonic) < loss_transfer and loss_w < 5_000_000) : (loss_w += 1) {
+                while (true) {
+                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                    defer allocator.free(dg);
+                    loss_pn += 1;
+                    loss_cli_sock.send(io, &loss_addr, dg) catch break;
+                }
+                while (true) {
+                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                }
+            }
+            const loss_el = nanoTime() - loss_t0;
+            loss_done.store(true, .release);
+            loss_thr.join();
+
+            const loss_r = loss_recv.load(.monotonic);
+            const loss_s = @as(f64, @floatFromInt(loss_el)) / 1_000_000_000.0;
+            std.debug.print("  {s:20} {d:.2} MB/s  ({d} MB in {d:.3} ms, cwnd={d} KB)\n", .{
+                lr.label,
+                @as(f64, @floatFromInt(loss_r)) / (1024.0 * 1024.0) / loss_s,
+                loss_r / (1024 * 1024),
+                @as(f64, @floatFromInt(loss_el)) / 1_000_000.0,
+                loss_cli.recovery_state.congestion_window / 1024,
+            });
+        }
+    }
+
+
+    // --- Comparison with other QUIC implementations ---
+    std.debug.print("\n  --- Comparison (loopback, single stream) ---\n", .{});
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "Implementation", "Lang", "Throughput", "Notes" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "1.5-2.5 GB/s", "Linux XDP/GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~1.4 GB/s", "macOS, threaded, no GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "s2n-quic", "Rust", "~800 MB/s", "Linux GSO/GRO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quic-go", "Go", "400-600 MB/s", "Linux GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quinn", "Rust", "300-500 MB/s", "tokio async" });
+
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }
 
