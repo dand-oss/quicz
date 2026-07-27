@@ -192,8 +192,14 @@ pub const Recovery = struct {
                 if (pn <= last_cut) return;
             }
         } else {
-            // Fallback: time-based check for callers without packet numbers
             if (self.inCongestionRecovery(sent_time_millis)) return;
+        }
+        // Minimum time between congestion events: at least one PTO.
+        // Prevents rapid-fire cwnd reductions on very low RTT paths (loopback)
+        // where many losses are detected within microseconds.
+        if (self.congestion_recovery_start_time_millis) |prev_start| {
+            const pto: i64 = @intCast(self.smoothed_rtt_ms + 4 * self.rttvar_ms + self.max_ack_delay_ms);
+            if (now_millis - prev_start < @max(pto, 1)) return;
         }
         self.congestion_recovery_start_time_millis = now_millis;
         self.largest_sent_at_last_cutback = self.largest_sent_packet_number;

@@ -77,7 +77,7 @@ Notes on loss recovery:
 - quicz loss recovery is conservative (CUBIC with 50% utilization threshold).
 - msquic's BBR2 maintains higher throughput under loss by modeling bandwidth.
 - quic-go's CUBIC implementation has more aggressive recovery (higher utilization threshold).
-- quicz loss recovery can be improved by tuning CUBIC parameters by tuning CUBIC parameters (recovery interval, utilization threshold).
+- quicz loss recovery can be improved by tuning CUBIC parameters (recovery interval, utilization threshold).
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
@@ -104,46 +104,18 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
 
-## Future Work: BBR2 Congestion Control
 
-### Goal
-Achieve msquic-level loss recovery (70-80% throughput retained at 1% loss) while maintaining
-CUBIC-level no-loss throughput (~1.86 GB/s).
+## Decision: BBR2 Not Planned
 
-### Current State
-- Existing BBR module (src/quic/bbr.zig, 380 lines): simplified startup/drain/probe-RTT phases.
-- CUBIC with PTO-based recovery interval: 33% retained at 1% loss, 43% at 5% loss.
-- BBR current: slightly better loss recovery (266 vs 249 MB/s at 1%) but 5.7x worse no-loss throughput.
+BBR2 is removed from the roadmap (2026-07-27). Rationale:
 
-### Gap Analysis (vs msquic BBR2)
-| Feature | quicz BBR | msquic BBR2 | Impact |
-|---|---|---|---|
-| Bandwidth estimation | Basic max filter | Delivery rate sampling + windowed max | Throughput accuracy |
-| Loss response | Reduces cwnd | inflight_hi/inflight_lo, no cwnd cut | Loss recovery |
-| Startup exit | BtlBw plateau | 2-round plateau + loss-based exit | Startup speed |
-| ProbeRTT | Fixed interval | Adaptive, skipped if recent low RTT | Latency spikes |
-| Pacing | Basic rate | Precise per-packet pacing with timer | Smoothness |
-| ECN | Not integrated | CE-based inflight adjustment | Congestion signal |
+- **No stable specification**: BBR2 has no RFC or finalized IETF draft; Google continues iterating internally.
+- **Fairness risk**: BBR flows can starve coexisting CUBIC flows; BBR2 mitigations are not validated at scale in mixed-traffic production environments.
+- **Ecosystem alignment**: quic-go, quiche (Cloudflare), and s2n-quic (AWS) all default to CUBIC (RFC 8312/9438); matching this avoids interop and fairness surprises.
+- **Implementation cost vs. benefit**: ~2000 lines for a moving target with uncertain marginal gain over tuned CUBIC in our primary use cases (datacenter-to-user, CDN, API gateway).
 
-### Implementation Plan (~2000 lines)
-1. **Phase 1: Delivery rate sampling** — track delivered bytes + time per packet, compute delivery rate.
-2. **Phase 2: Windowed BtlBw/RTprop** — max filter over 10s (BtlBw) and min filter over 10s (RTprop).
-3. **Phase 3: State machine** — Startup → Drain → ProbeBW → ProbeRTT with proper transitions.
-4. **Phase 4: Loss-based adaptation** — inflight_hi/inflight_lo (BBR2), no multiplicative decrease.
-5. **Phase 5: Pacing engine** — per-packet send timing based on pacing_rate = BtlBw * gain.
-6. **Phase 6: Integration** — connect to Connection recovery path, config option, benchmark validation.
-
-### Success Criteria
-- 1% loss: retain >= 60% throughput (vs current 33%)
-- 5% loss: retain >= 40% throughput (vs current 43%, already met)
-- No loss: maintain >= 700 MB/s (vs current 760 MB/s)
-- Latency P99: no regression from current 65μs
-
-### References
-- RFC 9438 (CUBIC) — current implementation baseline
-- BBR2 paper: "BBR: Congestion-Based Congestion Control" (Cardwell et al., 2017)
-- BBR2 draft: draft-cardwell-iccrg-bbr-congestion-control-03
-- msquic BBR2: github.com/microsoft/msquic/src/core/congestion_control_bbr.c
+Loss recovery improvement will focus on CUBIC parameter tuning (recovery interval, utilization threshold) instead.
+The existing simplified BBR module (`src/quic/bbr.zig`) is retained for experimentation but is not a production path.
 
 ## References
 
