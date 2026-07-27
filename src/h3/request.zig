@@ -410,3 +410,313 @@ test "HTTP/3 404 response roundtrip" {
     try std.testing.expect(!result.response.isSuccess());
     try std.testing.expectEqualStrings("Not Found", result.response.body.?);
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic table variants (RFC 9204 integration)
+// ---------------------------------------------------------------------------
+
+/// Encode a complete HTTP/3 request using QPACK dynamic table references.
+pub fn encodeRequestWithDynamic(
+    out: []u8,
+    request: Request,
+    dynamic_table: *const qpack.DynamicTable,
+) !usize {
+    var pos: usize = 0;
+
+    // Build header fields
+    var fields_buf: [32]qpack.HeaderField = undefined;
+    var count: usize = 0;
+    fields_buf[count] = .{ .name = ":method", .value = request.method };
+    count += 1;
+    fields_buf[count] = .{ .name = ":path", .value = request.path };
+    count += 1;
+    fields_buf[count] = .{ .name = ":scheme", .value = request.scheme };
+    count += 1;
+    if (request.authority) |auth| {
+        fields_buf[count] = .{ .name = ":authority", .value = auth };
+        count += 1;
+    }
+    for (request.extra_headers) |h| {
+        if (count >= fields_buf.len) break;
+        fields_buf[count] = h;
+        count += 1;
+    }
+
+    // Encode header block with dynamic table
+    var header_buf: [4096]u8 = undefined;
+    const header_len = try qpack.encodeHeaderBlockWithDynamic(&header_buf, fields_buf[0..count], dynamic_table);
+
+    // Write HEADERS frame
+    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+
+    // Write DATA frame if body present
+    if (request.body) |body| {
+        if (body.len > 0) {
+            pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.data), body);
+        }
+    }
+
+    return pos;
+}
+
+/// Decode an HTTP/3 request using QPACK dynamic table references.
+pub fn decodeRequestWithDynamic(
+    data: []const u8,
+    dynamic_table: *const qpack.DynamicTable,
+) !struct { request: DecodedRequest, consumed: usize } {
+    var pos: usize = 0;
+    var method: ?[]const u8 = null;
+    var path: ?[]const u8 = null;
+    var scheme: ?[]const u8 = null;
+    var authority: ?[]const u8 = null;
+    var body: ?[]const u8 = null;
+
+    // Parse HEADERS frame
+    const headers_result = try h3_frame.decodeFrame(data[pos..]);
+    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+        return error.ExpectedHeadersFrame;
+    }
+    pos += headers_result.consumed;
+
+    // Decode QPACK header block with dynamic table
+    var fields: [32]qpack.HeaderField = undefined;
+    const field_count = try qpack.decodeHeaderBlockWithDynamic(headers_result.frame.payload, &fields, dynamic_table);
+
+    for (fields[0..field_count]) |field| {
+        if (std.mem.eql(u8, field.name, ":method")) {
+            method = field.value;
+        } else if (std.mem.eql(u8, field.name, ":path")) {
+            path = field.value;
+        } else if (std.mem.eql(u8, field.name, ":scheme")) {
+            scheme = field.value;
+        } else if (std.mem.eql(u8, field.name, ":authority")) {
+            authority = field.value;
+        }
+    }
+
+    if (method == null) return error.MissingMethod;
+    if (path == null) return error.MissingPath;
+
+    // Parse optional DATA frame
+    if (pos < data.len) {
+        const data_result = h3_frame.decodeFrame(data[pos..]) catch null;
+        if (data_result) |dr| {
+            if (dr.frame.frame_type == @intFromEnum(h3_frame.FrameType.data)) {
+                body = dr.frame.payload;
+                pos += dr.consumed;
+            }
+        }
+    }
+
+    return .{
+        .request = .{
+            .method = method.?,
+            .path = path.?,
+            .scheme = scheme orelse "https",
+            .authority = authority,
+            .body = body,
+        },
+        .consumed = pos,
+    };
+}
+
+/// Encode a complete HTTP/3 response using QPACK dynamic table references.
+pub fn encodeResponseWithDynamic(
+    out: []u8,
+    response: Response,
+    dynamic_table: *const qpack.DynamicTable,
+) !usize {
+    var pos: usize = 0;
+
+    var status_buf: [8]u8 = undefined;
+    const status_str = std.fmt.bufPrint(&status_buf, "{d}", .{response.status}) catch "500";
+
+    var fields_buf: [32]qpack.HeaderField = undefined;
+    var count: usize = 0;
+    fields_buf[count] = .{ .name = ":status", .value = status_str };
+    count += 1;
+    for (response.extra_headers) |h| {
+        if (count >= fields_buf.len) break;
+        fields_buf[count] = h;
+        count += 1;
+    }
+
+    var header_buf: [4096]u8 = undefined;
+    const header_len = try qpack.encodeHeaderBlockWithDynamic(&header_buf, fields_buf[0..count], dynamic_table);
+
+    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+
+    if (response.body) |body| {
+        if (body.len > 0) {
+            pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.data), body);
+        }
+    }
+
+    return pos;
+}
+
+/// Decode an HTTP/3 response using QPACK dynamic table references.
+pub fn decodeResponseWithDynamic(
+    data: []const u8,
+    dynamic_table: *const qpack.DynamicTable,
+) !struct { response: DecodedResponse, consumed: usize } {
+    var pos: usize = 0;
+    var status: ?u16 = null;
+    var body: ?[]const u8 = null;
+
+    // Parse HEADERS frame
+    const headers_result = try h3_frame.decodeFrame(data[pos..]);
+    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+        return error.ExpectedHeadersFrame;
+    }
+    pos += headers_result.consumed;
+
+    // Decode QPACK header block with dynamic table
+    var fields: [32]qpack.HeaderField = undefined;
+    const field_count = try qpack.decodeHeaderBlockWithDynamic(headers_result.frame.payload, &fields, dynamic_table);
+
+    for (fields[0..field_count]) |field| {
+        if (std.mem.eql(u8, field.name, ":status")) {
+            status = std.fmt.parseInt(u16, field.value, 10) catch return error.InvalidStatusCode;
+        }
+    }
+
+    if (status == null) return error.MissingStatus;
+
+    // Parse optional DATA frame
+    if (pos < data.len) {
+        const data_result = h3_frame.decodeFrame(data[pos..]) catch null;
+        if (data_result) |dr| {
+            if (dr.frame.frame_type == @intFromEnum(h3_frame.FrameType.data)) {
+                body = dr.frame.payload;
+                pos += dr.consumed;
+            }
+        }
+    }
+
+    return .{
+        .response = .{
+            .status = status.?,
+            .body = body,
+        },
+        .consumed = pos,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic table request/response tests
+// ---------------------------------------------------------------------------
+
+test "HTTP/3 request with dynamic table roundtrip" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-request-id", "req-abc-123");
+    try dt.insert("x-api-key", "secret-key-456");
+
+    const extra = [_]qpack.HeaderField{
+        .{ .name = "x-request-id", .value = "req-abc-123" },
+        .{ .name = "x-api-key", .value = "secret-key-456" },
+    };
+
+    const req = Request{
+        .method = "GET",
+        .path = "/api/data",
+        .authority = "api.example.com",
+        .extra_headers = &extra,
+    };
+
+    var buf: [4096]u8 = undefined;
+    const len = try encodeRequestWithDynamic(&buf, req, &dt);
+
+    const result = try decodeRequestWithDynamic(buf[0..len], &dt);
+    try std.testing.expectEqualStrings("GET", result.request.method);
+    try std.testing.expectEqualStrings("/api/data", result.request.path);
+    try std.testing.expectEqualStrings("api.example.com", result.request.authority.?);
+}
+
+test "HTTP/3 response with dynamic table roundtrip" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("content-type", "application/json");
+    try dt.insert("x-cache", "HIT");
+
+    const extra = [_]qpack.HeaderField{
+        .{ .name = "content-type", .value = "application/json" },
+        .{ .name = "x-cache", .value = "HIT" },
+    };
+
+    const resp = Response{
+        .status = 200,
+        .extra_headers = &extra,
+        .body = "{\"result\":\"ok\"}",
+    };
+
+    var buf: [4096]u8 = undefined;
+    const len = try encodeResponseWithDynamic(&buf, resp, &dt);
+
+    const result = try decodeResponseWithDynamic(buf[0..len], &dt);
+    try std.testing.expectEqual(@as(u16, 200), result.response.status);
+    try std.testing.expect(result.response.isSuccess());
+    try std.testing.expectEqualStrings("{\"result\":\"ok\"}", result.response.body.?);
+}
+
+test "HTTP/3 dynamic table reduces wire size" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-long-header-name", "x-long-header-value-that-is-repeated");
+
+    const extra = [_]qpack.HeaderField{
+        .{ .name = "x-long-header-name", .value = "x-long-header-value-that-is-repeated" },
+    };
+
+    const req = Request{
+        .method = "GET",
+        .path = "/",
+        .extra_headers = &extra,
+    };
+
+    // Encode with dynamic table
+    var buf_dynamic: [4096]u8 = undefined;
+    const len_dynamic = try encodeRequestWithDynamic(&buf_dynamic, req, &dt);
+
+    // Encode without dynamic table (empty table)
+    var empty_dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer empty_dt.deinit();
+    empty_dt.setCapacity(4096);
+
+    var buf_static: [4096]u8 = undefined;
+    const len_static = try encodeRequestWithDynamic(&buf_static, req, &empty_dt);
+
+    // Dynamic encoding should be smaller (indexed vs literal)
+    try std.testing.expect(len_dynamic < len_static);
+}
+
+test "HTTP/3 POST with dynamic table and body" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("content-type", "application/json");
+
+    const extra = [_]qpack.HeaderField{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+
+    const req = Request{
+        .method = "POST",
+        .path = "/api/submit",
+        .authority = "example.com",
+        .extra_headers = &extra,
+        .body = "{\"data\":\"payload\"}",
+    };
+
+    var buf: [4096]u8 = undefined;
+    const len = try encodeRequestWithDynamic(&buf, req, &dt);
+
+    const result = try decodeRequestWithDynamic(buf[0..len], &dt);
+    try std.testing.expectEqualStrings("POST", result.request.method);
+    try std.testing.expectEqualStrings("/api/submit", result.request.path);
+    try std.testing.expectEqualStrings("{\"data\":\"payload\"}", result.request.body.?);
+}
