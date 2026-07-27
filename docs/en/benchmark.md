@@ -104,6 +104,18 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
 
+## Loss Recovery Improvement Path (5% loss: 19% → 30-40% target)
+
+Current 5% loss retention (19%) is below s2n-quic/quic-go (30-40%). Root causes:
+1. Loopback RTT=0 gives CUBIC no recovery time between loss events
+2. No TLP (Tail Loss Probe) — loss detection relies on packet threshold (3 newer ACKed)
+3. No RACK — time-based loss detection would be faster on low-RTT paths
+
+Planned fixes:
+- [ ] TLP (RFC 8985): send probe before RTO, trigger early ACK, faster retransmission
+- [ ] RACK: declare loss by receive timestamp, not packet number gap
+- [ ] Retransmission pacing: space retransmits to avoid cascading secondary loss
+
 
 ## Decision: BBR2 Not Planned
 

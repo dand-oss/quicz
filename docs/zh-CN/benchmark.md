@@ -104,6 +104,18 @@ zig build-exe -OReleaseFast --dep quicz \
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
 
+## 丢包恢复改善路径（5% 丢包：19% → 30-40% 目标）
+
+当前 5% 丢包保留率（19%）低于 s2n-quic/quic-go（30-40%）。根因：
+1. Loopback RTT=0，CUBIC 无恢复时间
+2. 无 TLP（Tail Loss Probe）——丢包检测依赖包号阈值（3 个更新包被 ACK）
+3. 无 RACK——基于时间的丢包检测在低 RTT 路径更快
+
+计划修复：
+- [ ] TLP（RFC 8985）：RTO 前发探测包，触发早期 ACK，加速重传
+- [ ] RACK：按接收时间戳判定丢包，非包号间隔
+- [ ] 重传 pacing：分散重传避免级联二次丢包
+
 
 ## 决策：BBR2 不列入路线图
 
