@@ -119,9 +119,9 @@ const qlog = quicz.qlog;
 | 传输层（19 项） | 19/19 — QUIC v1+v2、TLS 1.3、0-RTT、迁移、路径验证、Retry、无状态重置、密钥更新、版本协商、DATAGRAM、多路径、ECN、PMTU、GSO/GRO、连接池、qlog、fuzz |
 | 拥塞控制（4 项） | 4/4 — NewReno、CUBIC、BBR、报文 pacing |
 | 密码套件（5 项） | 5/5 — AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、X25519、X25519Kyber768（后量子） |
-| 应用层 | HTTP/3（基础）、QPACK 静态表、WebTransport（基础） |
+| 应用层（6/6） | HTTP/3 完整连接管理、QPACK 静态+动态表、WebTransport 完整会话、HTTP Datagrams (RFC 9297)、流重置部分交付 |
 | 外部互通 | ✅ quic-go、quiche、s2n-quic — 握手 + 传输全部验证 |
-| 测试 | 1696 个单元测试，零泄漏 |
+| 测试 | 1793 个单元测试，零泄漏 |
 
 完整对比见[传输任务矩阵](docs/zh-CN/quic_transport_tasks.md)。
 
@@ -131,7 +131,7 @@ const qlog = quicz.qlog;
 
 ```sh
 zig build                                    # 构建库
-zig build test --summary all                 # 1696 个单元测试
+zig build test --summary all                 # 1793 个单元测试
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP 回环
 zig build run-interop-client-standalone      # 互通自测
 zig fmt --check build.zig src examples       # 格式检查

@@ -11,7 +11,7 @@ transport parameters、ACK/loss/PTO、拥塞控制、连接 ID、path validation
 stateless reset 和 endpoint lifecycle。TLS 1.3 由纯 Zig 实现（src/tls/tls13.zig，8227 行，213 测试），支持 ECDSA P-256、X25519、X25519Kyber768（后量子）、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖。同时保留 C-ABI TLS adapter 用于 OpenSSL 互通测试。
 
 当前文档中的“核心协议流程”指 transport 内部状态流转，不代表某个上层应用业务。
-HTTP/3（基础）、QPACK 静态表、WebTransport（基础）已实现。互通已验证 quic-go、quiche、s2n-quic 三库。生产级高层 API 见 src/quic/api.zig（Endpoint/Connection/Stream 三层）。
+HTTP/3 完整连接管理（SETTINGS 全参数、GOAWAY、stream 状态机）、QPACK 静态+动态表（encoder/decoder instructions、header block 动态引用）、WebTransport 完整会话管理（uni/bidi 帧、CLOSE capsule、datagram）、HTTP Datagrams (RFC 9297)、流重置部分交付均已实现。功能覆盖 36/37，与 quic-go 持平。互通已验证 quic-go、quiche、s2n-quic 三库。生产级高层 API 见 src/quic/api.zig（Endpoint/Connection/Stream 三层）。
 
 ## 关键名词
 

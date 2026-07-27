@@ -15,8 +15,10 @@ in pure Zig with a pure Zig TLS 1.3 implementation. The project covers:
   connection IDs, path validation, Retry, stateless reset, endpoint lifecycle.
 - **Pure Zig TLS 1.3** (src/tls/tls13.zig, 8227 lines, 213 tests): handshake state machine, key schedule,
   certificate verification, ALPN, QUIC transport parameters extension.
-- **HTTP/3** (src/h3/): frame codec (RFC 9114), QPACK header compression
-  (RFC 9204), connection/stream management.
+- **HTTP/3** (src/h3/): frame codec (RFC 9114), QPACK static + dynamic table
+  (RFC 9204), full connection management (SETTINGS, GOAWAY, stream state machine),
+  HTTP Datagrams (RFC 9297), WebTransport session management, production limits
+  and fuzz-resistant parsing.
 - **Extensions**: RFC 9221 DATAGRAM, DPLPMTUD (RFC 8899), multipath path
   management, connection migration with anti-amplification, 0-RTT session
   cache, GSO/GRO segmentation, qlog observability.
