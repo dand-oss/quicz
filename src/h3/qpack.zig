@@ -11,7 +11,7 @@ pub const StaticEntry = struct {
     value: []const u8,
 };
 
-/// QPACK static table (subset of RFC 9204 Appendix A).
+/// QPACK static table (RFC 9204 Appendix A, all 99 entries).
 pub const static_table = [_]StaticEntry{
     .{ .name = ":authority", .value = "" },
     .{ .name = ":path", .value = "/" },
@@ -43,6 +43,75 @@ pub const static_table = [_]StaticEntry{
     .{ .name = "cache-control", .value = "max-age=604800" },
     .{ .name = "cache-control", .value = "no-cache" },
     .{ .name = "cache-control", .value = "no-store" },
+    .{ .name = "cache-control", .value = "no-transform" },
+    .{ .name = "cache-control", .value = "only-if-cached" },
+    .{ .name = "cache-control", .value = "private" },
+    .{ .name = "cache-control", .value = "proxy-revalidate" },
+    .{ .name = "cache-control", .value = "public" },
+    .{ .name = "cache-control", .value = "s-maxage=0" },
+    .{ .name = "cache-control", .value = "s-maxage=2592000" },
+    .{ .name = "cache-control", .value = "s-maxage=604800" },
+    .{ .name = "content-encoding", .value = "br" },
+    .{ .name = "content-encoding", .value = "gzip" },
+    .{ .name = "content-security-policy", .value = "script-src 'none'; object-src 'none'; base-uri 'none'" },
+    .{ .name = "content-security-policy", .value = "script-src 'self'; object-src 'none'; base-uri 'none'" },
+    .{ .name = "content-type", .value = "application/dns-message" },
+    .{ .name = "content-type", .value = "application/javascript" },
+    .{ .name = "content-type", .value = "application/json" },
+    .{ .name = "content-type", .value = "application/x-www-form-urlencoded" },
+    .{ .name = "content-type", .value = "image/gif" },
+    .{ .name = "content-type", .value = "image/jpeg" },
+    .{ .name = "content-type", .value = "image/png" },
+    .{ .name = "content-type", .value = "text/css" },
+    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+    .{ .name = "content-type", .value = "text/plain" },
+    .{ .name = "content-type", .value = "text/plain;charset=utf-8" },
+    .{ .name = "date", .value = "" },
+    .{ .name = "etag", .value = "" },
+    .{ .name = "expect-ct", .value = "" },
+    .{ .name = "expires", .value = "" },
+    .{ .name = "if-modified-since", .value = "" },
+    .{ .name = "if-none-match", .value = "" },
+    .{ .name = "last-modified", .value = "" },
+    .{ .name = "link", .value = "" },
+    .{ .name = "location", .value = "" },
+    .{ .name = "referer", .value = "" },
+    .{ .name = "set-cookie", .value = "" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000; includesubdomains" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000; includesubdomains; preload" },
+    .{ .name = "vary", .value = "accept-encoding" },
+    .{ .name = "vary", .value = "origin" },
+    .{ .name = "x-content-type-options", .value = "nosniff" },
+    .{ .name = "x-xss-protection", .value = "1; mode=block" },
+    .{ .name = ":status", .value = "100" },
+    .{ .name = ":status", .value = "204" },
+    .{ .name = ":status", .value = "206" },
+    .{ .name = ":status", .value = "302" },
+    .{ .name = ":status", .value = "400" },
+    .{ .name = ":status", .value = "403" },
+    .{ .name = ":status", .value = "405" },
+    .{ .name = ":status", .value = "406" },
+    .{ .name = ":status", .value = "408" },
+    .{ .name = ":status", .value = "409" },
+    .{ .name = ":status", .value = "410" },
+    .{ .name = ":status", .value = "413" },
+    .{ .name = ":status", .value = "414" },
+    .{ .name = ":status", .value = "415" },
+    .{ .name = ":status", .value = "416" },
+    .{ .name = ":status", .value = "417" },
+    .{ .name = ":status", .value = "418" },
+    .{ .name = ":status", .value = "421" },
+    .{ .name = ":status", .value = "425" },
+    .{ .name = ":status", .value = "429" },
+    .{ .name = ":status", .value = "500" },
+    .{ .name = ":status", .value = "502" },
+    .{ .name = ":status", .value = "504" },
+    .{ .name = ":status", .value = "505" },
+    .{ .name = ":status", .value = "506" },
+    .{ .name = ":status", .value = "507" },
+    .{ .name = ":status", .value = "508" },
+    .{ .name = ":status", .value = "510" },
 };
 
 /// An HTTP header field.
@@ -87,12 +156,26 @@ pub fn encodeHeaderBlock(out: []u8, fields: []const HeaderField) !usize {
     for (fields) |field| {
         if (findStaticIndex(field.name, field.value)) |idx| {
             // Indexed Field Line (static): 1TXXXXXX, T=1 for static
-            out[pos] = @intCast(0xc0 | idx);
-            pos += 1;
+            // Index uses 6-bit prefix; values >= 63 use multi-byte varint
+            if (idx < 63) {
+                out[pos] = @intCast(0xc0 | idx);
+                pos += 1;
+            } else {
+                out[pos] = 0xff; // 0xc0 | 0x3f (all 1s in 6-bit prefix)
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, idx - 63);
+            }
         } else if (findStaticNameIndex(field.name)) |name_idx| {
             // Literal with Name Reference (static): 01NTXXXX
-            out[pos] = @intCast(0x50 | name_idx);
-            pos += 1;
+            // Name Index uses 4-bit prefix; values >= 15 use multi-byte varint
+            if (name_idx < 15) {
+                out[pos] = @intCast(0x50 | name_idx);
+                pos += 1;
+            } else {
+                out[pos] = 0x5f; // 0x50 | 0x0f (all 1s in 4-bit prefix)
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, name_idx - 15);
+            }
             pos = try encodeStringToBuf(out, pos, field.value);
         } else {
             // Literal without Name Reference: 001NXXXX
@@ -104,6 +187,39 @@ pub fn encodeHeaderBlock(out: []u8, fields: []const HeaderField) !usize {
     }
 
     return pos;
+}
+
+/// Encode a varint continuation (RFC 7541 §5.1) after a prefix of all 1s.
+/// The value passed is already reduced by the prefix maximum.
+fn encodeVarintToBuf(out: []u8, pos: usize, value: u64) usize {
+    var p = pos;
+    var v = value;
+    while (v >= 128) {
+        out[p] = @intCast(0x80 | (v & 0x7f));
+        p += 1;
+        v >>= 7;
+    }
+    out[p] = @intCast(v);
+    p += 1;
+    return p;
+}
+
+/// Decode a varint continuation (RFC 7541 §5.1) after a prefix of all 1s.
+/// Returns the decoded value (already added to prefix_max by caller).
+fn decodeVarintFromBuf(data: []const u8, pos: usize) !struct { value: u64, end: usize } {
+    var p = pos;
+    var result: u64 = 0;
+    var shift: u6 = 0;
+    while (true) {
+        if (p >= data.len) return error.IncompleteString;
+        const byte = data[p];
+        p += 1;
+        result |= @as(u64, byte & 0x7f) << shift;
+        if (byte & 0x80 == 0) break;
+        shift += 7;
+        if (shift >= 63) return error.InvalidVarint;
+    }
+    return .{ .value = result, .end = p };
 }
 
 /// Encode a length-prefixed string into a buffer (no Huffman for simplicity).
@@ -201,7 +317,14 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
         if (first & 0x80 != 0) {
             // Indexed Field Line: 1TXXXXXX
             const is_static = (first & 0x40) != 0;
-            const index: u64 = first & 0x3f;
+            var index: u64 = first & 0x3f;
+            var next_pos = pos + 1;
+            if (index == 63) {
+                // Multi-byte varint: 6-bit prefix was all 1s
+                const varint = try decodeVarintFromBuf(data, next_pos);
+                index = 63 + varint.value;
+                next_pos = varint.end;
+            }
             if (!is_static) return error.DynamicTableUnsupported;
             if (index >= static_table.len) return error.InvalidStaticIndex;
             out_fields[count] = .{
@@ -209,15 +332,21 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
                 .value = static_table[index].value,
             };
             count += 1;
-            pos += 1;
+            pos = next_pos;
         } else if (first & 0x40 != 0) {
             // Literal with Name Reference: 01NTXXXX
             const is_static = (first & 0x10) != 0;
-            const name_index: u64 = first & 0x0f;
+            var name_index: u64 = first & 0x0f;
+            var next_pos = pos + 1;
+            if (name_index == 15) {
+                // Multi-byte varint: 4-bit prefix was all 1s
+                const varint = try decodeVarintFromBuf(data, next_pos);
+                name_index = 15 + varint.value;
+                next_pos = varint.end;
+            }
             if (!is_static) return error.DynamicTableUnsupported;
             if (name_index >= static_table.len) return error.InvalidStaticIndex;
-            pos += 1;
-            const value_result = try decodeString(data, pos);
+            const value_result = try decodeString(data, next_pos);
             out_fields[count] = .{
                 .name = static_table[name_index].name,
                 .value = value_result.value,
