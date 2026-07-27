@@ -459,3 +459,335 @@ test "QPACK decode :status 200" {
     try std.testing.expectEqualStrings(":status", decoded[0].name);
     try std.testing.expectEqualStrings("200", decoded[0].value);
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic table (RFC 9204 §3)
+// ---------------------------------------------------------------------------
+
+/// QPACK dynamic table entry size overhead (RFC 9204 §3.2.1).
+pub const dynamic_entry_overhead: usize = 32;
+
+/// A single dynamic table entry.
+pub const DynamicEntry = struct {
+    name: []const u8,
+    value: []const u8,
+
+    /// Wire size of this entry per RFC 9204 §3.2.1.
+    pub fn size(self: DynamicEntry) usize {
+        return self.name.len + self.value.len + dynamic_entry_overhead;
+    }
+};
+
+/// QPACK dynamic table state (RFC 9204 §3).
+///
+/// The dynamic table is a FIFO structure where new entries are inserted at
+/// the front (index 0) and old entries are evicted from the back when the
+/// table exceeds its maximum capacity.
+pub const DynamicTable = struct {
+    allocator: std.mem.Allocator,
+    /// Entries ordered from newest (index 0) to oldest.
+    entries: std.ArrayList(DynamicEntry) = .empty,
+    /// Total number of entries ever inserted (monotonically increasing).
+    insert_count: u64 = 0,
+    /// Maximum table capacity in bytes (set by encoder via Set Capacity).
+    max_capacity: usize = 0,
+    /// Current table size in bytes.
+    current_size: usize = 0,
+
+    pub fn init(allocator: std.mem.Allocator) DynamicTable {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *DynamicTable) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.name);
+            self.allocator.free(entry.value);
+        }
+        self.entries.deinit(self.allocator);
+    }
+
+    /// Set the dynamic table capacity (RFC 9204 §4.3.1).
+    /// Evicts entries until current_size <= new_capacity.
+    pub fn setCapacity(self: *DynamicTable, new_capacity: usize) void {
+        self.max_capacity = new_capacity;
+        self.evictToCapacity();
+    }
+
+    /// Insert a new entry at the front of the table.
+    /// Evicts oldest entries if necessary to make room.
+    pub fn insert(self: *DynamicTable, name: []const u8, value: []const u8) !void {
+        const entry_size = name.len + value.len + dynamic_entry_overhead;
+
+        // If the entry is larger than max_capacity, it cannot be added.
+        // Clear the table per RFC 9204 §3.2.1 but do NOT increment insert_count.
+        if (entry_size > self.max_capacity) {
+            self.clearEntries();
+            return;
+        }
+
+        // Evict until there's room
+        while (self.current_size + entry_size > self.max_capacity and self.entries.items.len > 0) {
+            self.evictOldest();
+        }
+
+        // Insert at front (index 0 = newest)
+        const name_copy = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(name_copy);
+        const value_copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(value_copy);
+
+        try self.entries.insert(self.allocator, 0, .{
+            .name = name_copy,
+            .value = value_copy,
+        });
+        self.current_size += entry_size;
+        self.insert_count += 1;
+    }
+
+    /// Duplicate an existing entry (RFC 9204 §4.3.4).
+    /// The index is relative (0 = newest).
+    pub fn duplicate(self: *DynamicTable, relative_index: u64) !void {
+        const idx = try self.relativeToAbsolute(relative_index);
+        const entry = self.entries.items[idx];
+        try self.insert(entry.name, entry.value);
+    }
+
+    /// Look up an entry by relative index (0 = newest).
+    pub fn lookup(self: *const DynamicTable, relative_index: u64) !DynamicEntry {
+        const idx = try self.relativeToAbsolute(relative_index);
+        return self.entries.items[idx];
+    }
+
+    /// Convert a relative index (0 = newest) to an absolute index into entries.
+    fn relativeToAbsolute(self: *const DynamicTable, relative_index: u64) !usize {
+        if (relative_index >= self.entries.items.len) return error.InvalidDynamicIndex;
+        return @intCast(relative_index);
+    }
+
+    /// Convert an absolute dynamic table index to a relative index for encoding.
+    /// Absolute index 0 = first entry ever inserted.
+    /// Relative index 0 = most recent entry.
+    pub fn absoluteToRelative(self: *const DynamicTable, absolute_index: u64) !u64 {
+        if (absolute_index >= self.insert_count) return error.InvalidDynamicIndex;
+        const entries_ago = self.insert_count - 1 - absolute_index;
+        if (entries_ago >= self.entries.items.len) return error.InvalidDynamicIndex;
+        return entries_ago;
+    }
+
+    /// Get the absolute index for a relative index.
+    pub fn getAbsoluteIndex(self: *const DynamicTable, relative_index: u64) !u64 {
+        if (relative_index >= self.entries.items.len) return error.InvalidDynamicIndex;
+        return self.insert_count - 1 - relative_index;
+    }
+
+    /// Evict the oldest entry from the table.
+    fn evictOldest(self: *DynamicTable) void {
+        if (self.entries.items.len == 0) return;
+        const entry = self.entries.orderedRemove(self.entries.items.len - 1);
+        self.current_size -= entry.size();
+        self.allocator.free(entry.name);
+        self.allocator.free(entry.value);
+    }
+
+    /// Evict entries until current_size <= max_capacity.
+    fn evictToCapacity(self: *DynamicTable) void {
+        while (self.current_size > self.max_capacity and self.entries.items.len > 0) {
+            self.evictOldest();
+        }
+    }
+
+    /// Clear all entries.
+    fn clearEntries(self: *DynamicTable) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.name);
+            self.allocator.free(entry.value);
+        }
+        self.entries.clearRetainingCapacity();
+        self.current_size = 0;
+    }
+
+    /// Number of entries currently in the table.
+    pub fn entryCount(self: *const DynamicTable) usize {
+        return self.entries.items.len;
+    }
+
+    /// Find a dynamic table entry by name+value (for encoder optimization).
+    /// Returns the relative index if found.
+    pub fn findExact(self: *const DynamicTable, name: []const u8, value: []const u8) ?u64 {
+        for (self.entries.items, 0..) |entry, i| {
+            if (std.mem.eql(u8, entry.name, name) and std.mem.eql(u8, entry.value, value)) {
+                return @intCast(i);
+            }
+        }
+        return null;
+    }
+
+    /// Find a dynamic table entry by name only (for encoder optimization).
+    /// Returns the relative index if found.
+    pub fn findName(self: *const DynamicTable, name: []const u8) ?u64 {
+        for (self.entries.items, 0..) |entry, i| {
+            if (std.mem.eql(u8, entry.name, name)) {
+                return @intCast(i);
+            }
+        }
+        return null;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Dynamic table tests
+// ---------------------------------------------------------------------------
+
+test "DynamicTable insert and lookup" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(4096);
+    try dt.insert(":method", "GET");
+    try dt.insert(":path", "/index.html");
+
+    try std.testing.expectEqual(@as(usize, 2), dt.entryCount());
+    try std.testing.expectEqual(@as(u64, 2), dt.insert_count);
+
+    // Index 0 = newest = ":path"
+    const entry0 = try dt.lookup(0);
+    try std.testing.expectEqualStrings(":path", entry0.name);
+    try std.testing.expectEqualStrings("/index.html", entry0.value);
+
+    // Index 1 = older = ":method"
+    const entry1 = try dt.lookup(1);
+    try std.testing.expectEqualStrings(":method", entry1.name);
+    try std.testing.expectEqualStrings("GET", entry1.value);
+}
+
+test "DynamicTable eviction under capacity pressure" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    // Each entry: name.len + value.len + 32
+    // ":method" (7) + "GET" (3) + 32 = 42 bytes
+    dt.setCapacity(85); // Room for exactly 2 entries (42 + 43 = 85)
+
+    try dt.insert(":method", "GET"); // 42 bytes, total = 42
+    try dt.insert(":method", "POST"); // 43 bytes, total = 85
+    try std.testing.expectEqual(@as(usize, 2), dt.entryCount());
+
+    // Insert a third entry: evicts oldest
+    try dt.insert(":path", "/"); // ":path"(5) + "/"(1) + 32 = 38 bytes
+    // 85 + 38 = 123 > 85, so evict oldest (":method" "GET", 42 bytes)
+    // 85 - 42 = 43, 43 + 38 = 81 <= 85, OK
+    try std.testing.expectEqual(@as(usize, 2), dt.entryCount());
+    try std.testing.expectEqual(@as(u64, 3), dt.insert_count);
+
+    // Newest is ":path" "/"
+    const entry0 = try dt.lookup(0);
+    try std.testing.expectEqualStrings(":path", entry0.name);
+
+    // Oldest remaining is ":method" "POST"
+    const entry1 = try dt.lookup(1);
+    try std.testing.expectEqualStrings(":method", entry1.name);
+    try std.testing.expectEqualStrings("POST", entry1.value);
+}
+
+test "DynamicTable setCapacity evicts" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(4096);
+    try dt.insert(":method", "GET");
+    try dt.insert(":path", "/");
+    try std.testing.expectEqual(@as(usize, 2), dt.entryCount());
+
+    // Shrink capacity to force eviction
+    dt.setCapacity(40); // ":path"(5) + "/"(1) + 32 = 38 <= 40, ":method"(7) + "GET"(3) + 32 = 42 > 40
+    // current_size = 38 + 42 = 80 > 40, evict oldest (":method" "GET", 42 bytes)
+    // 80 - 42 = 38 <= 40, OK
+    try std.testing.expectEqual(@as(usize, 1), dt.entryCount());
+    const entry = try dt.lookup(0);
+    try std.testing.expectEqualStrings(":path", entry.name);
+}
+
+test "DynamicTable entry too large clears table" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(50);
+    try dt.insert(":method", "GET"); // 42 bytes
+    try std.testing.expectEqual(@as(usize, 1), dt.entryCount());
+
+    // Insert entry larger than capacity: clears table
+    try dt.insert("x-very-long-header-name", "x-very-long-header-value"); // 23 + 23 + 32 = 78 > 50
+    try std.testing.expectEqual(@as(usize, 0), dt.entryCount());
+    try std.testing.expectEqual(@as(u64, 1), dt.insert_count); // insert_count does NOT increment for oversized entry
+}
+
+test "DynamicTable duplicate" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(4096);
+    try dt.insert(":method", "GET");
+    try dt.insert(":path", "/");
+
+    // Duplicate index 1 (":method" "GET")
+    try dt.duplicate(1);
+    try std.testing.expectEqual(@as(usize, 3), dt.entryCount());
+    try std.testing.expectEqual(@as(u64, 3), dt.insert_count);
+
+    // Newest is the duplicate
+    const entry0 = try dt.lookup(0);
+    try std.testing.expectEqualStrings(":method", entry0.name);
+    try std.testing.expectEqualStrings("GET", entry0.value);
+}
+
+test "DynamicTable findExact and findName" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(4096);
+    try dt.insert(":method", "GET");
+    try dt.insert(":path", "/");
+    try dt.insert(":method", "POST");
+
+    // findExact: ":method" "POST" is at index 0 (newest)
+    try std.testing.expectEqual(@as(?u64, 0), dt.findExact(":method", "POST"));
+    // findExact: ":method" "GET" is at index 2 (oldest)
+    try std.testing.expectEqual(@as(?u64, 2), dt.findExact(":method", "GET"));
+    // findExact: not found
+    try std.testing.expect(dt.findExact(":method", "DELETE") == null);
+
+    // findName: ":method" first match is index 0 (newest)
+    try std.testing.expectEqual(@as(?u64, 0), dt.findName(":method"));
+    // findName: ":path" is at index 1
+    try std.testing.expectEqual(@as(?u64, 1), dt.findName(":path"));
+    // findName: not found
+    try std.testing.expect(dt.findName(":scheme") == null);
+}
+
+test "DynamicTable absolute/relative index conversion" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+
+    dt.setCapacity(4096);
+    try dt.insert(":method", "GET"); // absolute 0, relative 2
+    try dt.insert(":path", "/"); // absolute 1, relative 1
+    try dt.insert(":scheme", "https"); // absolute 2, relative 0
+
+    try std.testing.expectEqual(@as(u64, 0), try dt.getAbsoluteIndex(2)); // relative 2 -> absolute 0
+    try std.testing.expectEqual(@as(u64, 1), try dt.getAbsoluteIndex(1)); // relative 1 -> absolute 1
+    try std.testing.expectEqual(@as(u64, 2), try dt.getAbsoluteIndex(0)); // relative 0 -> absolute 2
+
+    try std.testing.expectEqual(@as(u64, 2), try dt.absoluteToRelative(0)); // absolute 0 -> relative 2
+    try std.testing.expectEqual(@as(u64, 1), try dt.absoluteToRelative(1)); // absolute 1 -> relative 1
+    try std.testing.expectEqual(@as(u64, 0), try dt.absoluteToRelative(2)); // absolute 2 -> relative 0
+}
+
+test "DynamicTable entry size calculation" {
+    const entry = DynamicEntry{ .name = ":method", .value = "GET" };
+    // ":method" (7) + "GET" (3) + 32 = 42
+    try std.testing.expectEqual(@as(usize, 42), entry.size());
+
+    const entry2 = DynamicEntry{ .name = "x-custom", .value = "value" };
+    // "x-custom" (8) + "value" (5) + 32 = 45
+    try std.testing.expectEqual(@as(usize, 45), entry2.size());
+}
