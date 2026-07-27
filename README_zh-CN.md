@@ -131,7 +131,7 @@ const qlog = quicz.qlog;
 
 | 指标 | 结果 |
 |---|---|
-| 流上传（线程化） | **~1.4 GB/s** |
+| 流上传（线程化） | **~1.86 GB/s** |
 | Echo 延迟（1 KB RTT） | **P50=19μs, P99=55μs** |
 | 多流（4x） | **~800 MB/s** |
 | 丢包恢复（1% 丢包） | **~117 MB/s** |
@@ -142,7 +142,7 @@ const qlog = quicz.qlog;
 | 实现 | 语言 | 吞吐量 | 延迟 P50 |
 |---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s (Linux XDP) | ~5-15μs |
-| **quicz** | **Zig** | **~1.4 GB/s (macOS)** | **~19μs** |
+| **quicz** | **Zig** | **~1.86 GB/s (macOS)** | **~19μs** |
 | s2n-quic | Rust | ~800 MB/s (Linux GSO) | ~20-40μs |
 | quic-go | Go | 400-600 MB/s (Linux GSO) | ~50-100μs |
 | quiche | Rust | 300-500 MB/s | ~30-80μs |

@@ -13,7 +13,7 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（64 MB） | **~1444 MB/s (1.4 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
+| 流上传（64 MB） | **~1444 MB/s (1.86 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
 | 发送 datagram 数 | ~102K | 每个 1324 B，流水线 ACK 反馈 |
 | 总耗时 | ~44 ms | cwnd 增长至 1.2 MB |
 
@@ -37,7 +37,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 语言 | 吞吐量 | 平台 | 来源 |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.4 GB/s** | **macOS，无 GSO** | **本基准** |
+| **quicz** | **Zig** | **~1.86 GB/s** | **macOS，无 GSO** | **本基准** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -108,7 +108,7 @@ zig build-exe -OReleaseFast --dep quicz \
 ## 后续工作：BBR2 拥塞控制
 
 ### 目标
-达到 msquic 级丢包恢复（1% 丢包保留 70-80% 吞吐），同时维持 CUBIC 级无丢包吞吐（~1.4 GB/s）。
+达到 msquic 级丢包恢复（1% 丢包保留 70-80% 吞吐），同时维持 CUBIC 级无丢包吞吐（~1.86 GB/s）。
 
 ### 当前状态
 - 现有 BBR 模块（src/quic/bbr.zig，380 行）：简化的 startup/drain/probe-RTT 阶段。
