@@ -25,6 +25,7 @@ pub const h3_server = @import("h3/server.zig");
 pub const h3_client = @import("h3/client.zig");
 pub const webtransport = @import("h3/webtransport.zig");
 pub const h3_limits = @import("h3/limits.zig");
+pub const h3_datagram = @import("h3/datagram.zig");
 const h3_fuzz_test = @import("h3/fuzz_test.zig");
 pub const api = @import("quic/api.zig");
 const h3_integration_test = @import("h3/h3_integration_test.zig");
@@ -60,6 +61,7 @@ comptime {
     _ = h3_client;
     _ = webtransport;
     _ = h3_limits;
+    _ = h3_datagram;
     _ = h3_fuzz_test;
     _ = h3_integration_test;
     _ = quic_v2_test;
