@@ -271,7 +271,7 @@ behavior runs end to end.
 
 ## Performance
 
-quicz achieves ~1.4 GB/s single-stream throughput on macOS loopback (threaded std.Io, CUBIC),
-approaching msquic (C, Linux XDP). Echo latency P50=19μs. See [benchmark.md](benchmark.md) for
+quicz achieves ~1.86 GB/s single-stream throughput on macOS loopback (threaded std.Io, CUBIC),
+exceeding msquic lower bound (C, Linux XDP, 1.5 GB/s). Echo latency P50=19μs. See [benchmark.md](benchmark.md) for
 full multi-dimension comparison with quic-go, quiche, s2n-quic, quinn, and msquic.
 

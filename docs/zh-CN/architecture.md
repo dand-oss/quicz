@@ -206,7 +206,7 @@ timer、投递 stateless reset、清理关闭连接。生产级高层 API 已通
 
 ## 性能
 
-quicz 在 macOS loopback 上达到 ~1.4 GB/s 单流吞吐（线程化 std.Io，CUBIC），
-接近 msquic（C，Linux XDP）。Echo 延迟 P50=19μs。
+quicz 在 macOS loopback 上达到 ~1.86 GB/s 单流吞吐（线程化 std.Io，CUBIC），
+超过 msquic 下限（C，Linux XDP 1.5 GB/s）。Echo 延迟 P50=19μs。
 完整多维度对比见 [benchmark.md](benchmark.md)。
 

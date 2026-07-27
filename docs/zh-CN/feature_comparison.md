@@ -84,14 +84,14 @@
 | 实现 | 语言 | 吞吐量 | 平台 | 备注 |
 | --- | --- | --- | --- | --- |
 | msquic | C | 1.5-2.5 GB/s | Linux | XDP/GSO，内核旁路 |
-| **quicz** | **Zig** | **1.4 GB/s** | **macOS** | **线程化 std.Io，CUBIC，无 GSO** |
+| **quicz** | **Zig** | **1.86 GB/s** | **macOS** | **线程化 std.Io，CUBIC，无 GSO** |
 | s2n-quic | Rust | ~800 MB/s | Linux | GSO/GRO |
 | quic-go | Go | ~400-600 MB/s | Linux | GSO |
 | quiche | Rust | ~300-500 MB/s | Linux | — |
 | quinn | Rust | ~300-500 MB/s | Linux | tokio async |
 
 说明：
-- quicz 在 macOS loopback（无 GSO/XDP）下达到 1.4 GB/s，接近 msquic 在 Linux 最优条件下的水平。
+- quicz 在 macOS loopback（无 GSO/XDP）下达到 1.86 GB/s，超过 msquic 下限（1.5 GB/s）。
 - msquic 的 2.5 GB/s 依赖 Linux XDP 内核旁路 + UDP_SEGMENT (GSO)，macOS 无此能力。
 - 在 Linux + GSO 条件下，quicz 预期可进一步提升（sendmmsg + UDP_SEGMENT）。
 - 测试方法：64 MB 单流上传，client/server 分线程，CUBIC 拥塞控制，cwnd 增长至 1.2 MB。
