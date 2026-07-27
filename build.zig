@@ -219,6 +219,22 @@ pub fn build(b: *std.Build) void {
     const run_congestion_bench_cmd = b.addRunArtifact(exe_congestion_bench);
     run_congestion_bench.dependOn(&run_congestion_bench_cmd.step);
 
+    const exe_quic_bench = b.addExecutable(.{
+        .name = "quicz-quic-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench);
+    const run_quic_bench = b.step("run-quic-bench", "Run QUIC transport micro-benchmark (throughput + latency)");
+    const run_quic_bench_cmd = b.addRunArtifact(exe_quic_bench);
+    run_quic_bench.dependOn(&run_quic_bench_cmd.step);
+
 
 
     const exe_interop_external_client = b.addExecutable(.{
