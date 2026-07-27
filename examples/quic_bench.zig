@@ -267,6 +267,147 @@ pub fn main() !void {
         });
     }
 
+
+    // --- Benchmark 3: Multi-stream throughput (4 concurrent streams, threaded) ---
+    std.debug.print("\n  --- Multi-Stream Throughput (4 streams) ---\n", .{});
+    {
+        const ms_size: usize = 16 * 1024 * 1024; // 16 MB total across 4 streams
+        const num_streams: usize = 4;
+        const per_stream: usize = ms_size / num_streams;
+
+        var ms_client_sock = try bindLoopback(io);
+        defer ms_client_sock.close(io);
+        var ms_server_sock = try bindLoopback(io);
+        defer ms_server_sock.close(io);
+        const ms_addr = ms_server_sock.address;
+
+        var ms_cli = try quicz.Connection.init(allocator, .client, .{
+            .initial_max_data = 256 * 1024 * 1024,
+            .initial_max_stream_data = 256 * 1024 * 1024,
+            .congestion_algorithm = .cubic,
+        });
+        var ms_srv = try quicz.Connection.init(allocator, .server, .{
+            .initial_max_data = 256 * 1024 * 1024,
+            .initial_max_stream_data = 256 * 1024 * 1024,
+        });
+        try ms_cli.installOneRttTrafficSecrets(.{ .local = secrets.client.secret, .peer = secrets.server.secret });
+        try ms_srv.installOneRttTrafficSecrets(.{ .local = secrets.server.secret, .peer = secrets.client.secret });
+        try ms_cli.confirmHandshake();
+        try ms_srv.confirmHandshake();
+        try ms_srv.validatePeerAddress();
+
+        var ms_ids: [num_streams]u64 = undefined;
+        for (0..num_streams) |si| ms_ids[si] = try ms_cli.openStream();
+
+        var ms_done_flag = std.atomic.Value(bool).init(false);
+        var ms_recv_count = std.atomic.Value(usize).init(0);
+
+        const MsSrvCtx = struct {
+            sock: *std.Io.net.Socket,
+            io_ref: std.Io,
+            srv: *quicz.Connection,
+            flag: *std.atomic.Value(bool),
+            count: *std.atomic.Value(usize),
+            peer: std.Io.net.IpAddress,
+        };
+        var ms_ctx = MsSrvCtx{ .sock = &ms_server_sock, .io_ref = io, .srv = &ms_srv, .flag = &ms_done_flag, .count = &ms_recv_count, .peer = ms_addr };
+
+        const ms_fn = struct {
+            fn run(c: *MsSrvCtx) void {
+                var rb: [1500]u8 = undefined;
+                var rdb: [65536]u8 = undefined;
+                var have = false;
+                while (!c.flag.load(.acquire)) {
+                    var got = false;
+                    while (true) {
+                        const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(1) } }) catch break;
+                        if (!have) { c.peer = r.from; have = true; }
+                        _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, r.data) catch {};
+                        got = true;
+                    }
+                    if (!got) continue;
+                    for (0..4) |si| {
+                        while (true) {
+                            const n = c.srv.recvOnStream(si * 4, &rdb) catch break orelse break;
+                            if (n == 0) break;
+                            _ = c.count.fetchAdd(n, .monotonic);
+                        }
+                    }
+                    if (have) while (true) {
+                        const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid) catch break orelse break;
+                        defer c.srv.allocator.free(a);
+                        c.sock.send(c.io_ref, &c.peer, a) catch break;
+                    };
+                }
+            }
+        }.run;
+
+        const ms_thr = try std.Thread.spawn(.{}, ms_fn, .{&ms_ctx});
+
+        var ms_payload: [max_datagram_size]u8 = undefined;
+        @memset(&ms_payload, 'M');
+        var ms_rb: [1500]u8 = undefined;
+        var ms_queued: [num_streams]usize = .{ 0, 0, 0, 0 };
+        var ms_total_q: usize = 0;
+        var ms_pn: i64 = 0;
+
+        const ms_t0 = nanoTime();
+        while (ms_total_q < ms_size) {
+            for (0..num_streams) |si| {
+                if (ms_queued[si] >= per_stream) continue;
+                var f: usize = 0;
+                while (ms_queued[si] < per_stream and f < 64) : (f += 1) {
+                    const ch = @min(ms_payload.len, per_stream - ms_queued[si]);
+                    ms_cli.sendOnStream(ms_ids[si], ms_payload[0..ch], ms_queued[si] + ch >= per_stream) catch break;
+                    ms_queued[si] += ch;
+                    ms_total_q += ch;
+                }
+            }
+            while (true) {
+                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                defer allocator.free(dg);
+                ms_pn += 1;
+                ms_client_sock.send(io, &ms_addr, dg) catch break;
+            }
+            while (true) {
+                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+            }
+        }
+        var ms_w: usize = 0;
+        while (ms_recv_count.load(.monotonic) < ms_size and ms_w < 5_000_000) : (ms_w += 1) {
+            while (true) {
+                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                defer allocator.free(dg);
+                ms_pn += 1;
+                ms_client_sock.send(io, &ms_addr, dg) catch break;
+            }
+            while (true) {
+                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+            }
+        }
+        const ms_el = nanoTime() - ms_t0;
+        ms_done_flag.store(true, .release);
+        ms_thr.join();
+
+        const ms_r = ms_recv_count.load(.monotonic);
+        const ms_s = @as(f64, @floatFromInt(ms_el)) / 1_000_000_000.0;
+        std.debug.print("  {s:20} {d:.2} MB/s  ({d} MB, {d} streams, {d:.3} ms)\n", .{
+            "Multi-Stream (4x)",
+            @as(f64, @floatFromInt(ms_r)) / (1024.0 * 1024.0) / ms_s,
+            ms_r / (1024 * 1024),
+            num_streams,
+            @as(f64, @floatFromInt(ms_el)) / 1_000_000.0,
+        });
+    }
+
+    // --- Benchmark 4: DATAGRAM throughput (RFC 9221) ---
+    // NOTE: Requires full TLS handshake for transport parameter exchange.
+    // The installed-keys bypass does not advertise max_datagram_frame_size
+    // to the peer, so DATAGRAM frames are not emitted.
+    // TODO: Use EndpointConnectionLifecycle with full handshake for DATAGRAM bench.
+    std.debug.print("\n  --- DATAGRAM: skipped (requires full handshake) ---\n", .{});
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }
 
