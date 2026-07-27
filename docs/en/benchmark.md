@@ -68,7 +68,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | 0% loss | 1% loss | 5% loss | Recovery algorithm |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | ~70-80% retained | ~40-50% retained | BBR2/CUBIC |
-| **quicz** | **~1370 MB/s** | **~100% (PTO 窗口内无降级)** | **~37%** | **CUBIC** |
+| **quicz** | **~1350 MB/s** | **~497 MB/s (37%)** | **~314 MB/s (23%)** | **CUBIC** |
 | quic-go | 400-600 MB/s | ~60-70% retained | ~30-40% retained | CUBIC/NewReno |
 | quiche | 300-500 MB/s | ~50-60% retained | ~25-35% retained | CUBIC |
 | quinn | 300-500 MB/s | ~55-65% retained | ~30-40% retained | CUBIC/NewReno |
