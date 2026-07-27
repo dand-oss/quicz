@@ -3,6 +3,7 @@ const std = @import("std");
 pub const packet = @import("packet.zig");
 pub const frame = @import("frame.zig");
 pub const recovery = @import("recovery.zig");
+const pacer_module = @import("pacer.zig");
 pub const protection = @import("protection.zig");
 pub const address_validation_token = @import("address_validation_token.zig");
 pub const endpoint = @import("endpoint.zig");
@@ -741,6 +742,8 @@ pub const Connection = struct {
     crypto_send_queue: std.ArrayList(PendingCryptoFrame),
     crypto_recv_pending: std.ArrayList(PendingCryptoFrame),
     send_queue: std.ArrayList(PendingStreamFrame),
+    /// Token bucket pacer for ack-eliciting packet transmission.
+    tx_pacer: pacer_module.Pacer,
     /// RFC 9221 outgoing DATAGRAM payloads queued by sendDatagram().
     pending_datagrams: std.ArrayList([]const u8),
     /// RFC 9221 incoming DATAGRAM payloads received from peer.
@@ -912,6 +915,7 @@ pub const Connection = struct {
             .crypto_send_queue = .empty,
             .crypto_recv_pending = .empty,
             .send_queue = .empty,
+            .tx_pacer = pacer_module.Pacer.init(config.max_datagram_size),
             .pending_datagrams = .empty,
             .received_datagrams = .empty,
             .pending_reset_streams = .empty,
@@ -4212,6 +4216,16 @@ pub const Connection = struct {
         }
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
+        // Pacer gate: block ack-eliciting packets when budget is exhausted.
+        // Control packets (ACK, CLOSE, PATH_RESPONSE) bypass the pacer.
+        if (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0) {
+            const cwnd = self.recovery_state.congestion_window;
+            const srtt = self.recovery_state.smoothed_rtt_ms;
+            if (!self.tx_pacer.canSend(now_millis, self.maxTxDatagramSize(), cwnd, srtt)) {
+                return null;
+            }
+        }
+
         var built = (try self.buildNextProtectedShortPacket(dcid, keys, key_phase)) orelse return null;
         errdefer {
             built.deinitSidecars(self.allocator);
@@ -4236,6 +4250,11 @@ pub const Connection = struct {
         }
 
         self.commitBuiltProtectedShortPacket(built, now_millis);
+        if (built.ack_eliciting) {
+            const cwnd = self.recovery_state.congestion_window;
+            const srtt = self.recovery_state.smoothed_rtt_ms;
+            self.tx_pacer.onPacketSent(now_millis, built.datagram.len, cwnd, srtt);
+        }
         return built.datagram;
     }
 
