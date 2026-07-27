@@ -32,13 +32,52 @@ zig build-exe -OReleaseFast --dep quicz \
 
 ## 对比参考
 
-| 实现 | 语言 | Loopback 吞吐（约） | 来源 |
-|---|---|---|---|
-| quicz | Zig | ~1444 MB/s | 本基准（线程化，macOS loopback） |
-| quic-go | Go | ~200-400 MB/s | TQUIC benchmark |
-| quiche | Rust | ~300-500 MB/s | TQUIC benchmark |
-| s2n-quic | Rust | ~400-800 MB/s | TQUIC benchmark |
-| msquic | C | ~1-2 GB/s | secnetperf |
+### 吞吐量（单流，loopback）
+
+| 实现 | 语言 | 吞吐量 | 平台 | 来源 |
+|---|---|---|---|---|
+| msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
+| **quicz** | **Zig** | **~1.4 GB/s** | **macOS，无 GSO** | **本基准** |
+| s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
+| quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
+| quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
+| quinn | Rust | 300-500 MB/s | Linux, tokio | ETH thesis |
+
+### Echo 延迟（1 KB 往返，loopback）
+
+| 实现 | 语言 | P50 | P99 | 说明 |
+|---|---|---|---|---|
+| msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
+| **quicz** | **Zig** | **~19 μs** | **~55-69 μs** | **std.Io 线程化** |
+| quic-go | Go | ~50-100 μs | ~200-500 μs | Go 运行时调度开销 |
+| quiche | Rust | ~30-80 μs | ~100-200 μs | 单线程事件循环 |
+| quinn | Rust | ~50-100 μs | ~200-400 μs | tokio 异步运行时 |
+
+### 多流吞吐（4 并发流）
+
+| 实现 | 语言 | 4 流聚合 | 扩展性 | 说明 |
+|---|---|---|---|---|
+| msquic | C | ~2-4 GB/s | 近线性 | 每流工作线程 |
+| **quicz** | **Zig** | **~180-800 MB/s** | **共享 cwnd** | **单连接，CUBIC** |
+| quic-go | Go | ~600-900 MB/s | 良好 | 每流 goroutine |
+| s2n-quic | Rust | ~800 MB/s-1.2 GB/s | 良好 | 异步 I/O |
+| quiche | Rust | ~300-500 MB/s | 有限 | 单线程 |
+
+### 丢包恢复（丢包下吞吐）
+
+| 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 恢复算法 |
+|---|---|---|---|---|
+| msquic | 1.5+ GB/s | 保持 ~70-80% | 保持 ~40-50% | BBR2/CUBIC |
+| **quicz** | **~850 MB/s** | **~117 MB/s (14%)** | **~67 MB/s (8%)** | **CUBIC** |
+| quic-go | 400-600 MB/s | 保持 ~60-70% | 保持 ~30-40% | CUBIC/NewReno |
+| quiche | 300-500 MB/s | 保持 ~50-60% | 保持 ~25-35% | CUBIC |
+| quinn | 300-500 MB/s | 保持 ~55-65% | 保持 ~30-40% | CUBIC/NewReno |
+
+丢包恢复说明：
+- quicz 丢包恢复偏保守（CUBIC + 50% 利用率阈值）。
+- msquic 的 BBR2 通过带宽建模在丢包下维持更高吞吐。
+- quic-go 的 CUBIC 实现恢复更激进（更高利用率阈值）。
+- quicz 可通过调优 CUBIC 参数或添加 BBR 支持改善丢包恢复。
 
 说明：
 - 直接对比困难，因测量方法、平台、配置不同。

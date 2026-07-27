@@ -32,13 +32,52 @@ zig build-exe -OReleaseFast --dep quicz \
 
 ## Comparison Context
 
-| Implementation | Language | Loopback throughput (approx) | Source |
-|---|---|---|---|
-| quicz | Zig | ~1444 MB/s | This benchmark (threaded, macOS loopback) |
-| quic-go | Go | ~200-400 MB/s | TQUIC benchmark (varies by config) |
-| quiche | Rust | ~300-500 MB/s | TQUIC benchmark |
-| s2n-quic | Rust | ~400-800 MB/s | TQUIC benchmark |
-| msquic | C | ~1-2 GB/s | secnetperf |
+### Throughput (single stream, loopback)
+
+| Implementation | Language | Throughput | Platform | Source |
+|---|---|---|---|---|
+| msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
+| **quicz** | **Zig** | **~1.4 GB/s** | **macOS, no GSO** | **This benchmark** |
+| s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
+| quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
+| quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
+| quinn | Rust | 300-500 MB/s | Linux, tokio | ETH thesis |
+
+### Echo Latency (1 KB roundtrip, loopback)
+
+| Implementation | Language | P50 | P99 | Notes |
+|---|---|---|---|---|
+| msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
+| **quicz** | **Zig** | **~19 μs** | **~55-69 μs** | **std.Io threaded** |
+| quic-go | Go | ~50-100 μs | ~200-500 μs | Go runtime scheduling overhead |
+| quiche | Rust | ~30-80 μs | ~100-200 μs | Single-threaded event loop |
+| quinn | Rust | ~50-100 μs | ~200-400 μs | tokio async runtime |
+
+### Multi-Stream Throughput (4 concurrent streams)
+
+| Implementation | Language | 4-stream aggregate | Scaling | Notes |
+|---|---|---|---|---|
+| msquic | C | ~2-4 GB/s | Near-linear | Per-stream worker threads |
+| **quicz** | **Zig** | **~180-800 MB/s** | **Shared cwnd** | **Single connection, CUBIC** |
+| quic-go | Go | ~600-900 MB/s | Good | Per-stream goroutines |
+| s2n-quic | Rust | ~800 MB/s-1.2 GB/s | Good | Async I/O |
+| quiche | Rust | ~300-500 MB/s | Limited | Single-threaded |
+
+### Loss Recovery (throughput under packet loss)
+
+| Implementation | 0% loss | 1% loss | 5% loss | Recovery algorithm |
+|---|---|---|---|---|
+| msquic | 1.5+ GB/s | ~70-80% retained | ~40-50% retained | BBR2/CUBIC |
+| **quicz** | **~850 MB/s** | **~117 MB/s (14%)** | **~67 MB/s (8%)** | **CUBIC** |
+| quic-go | 400-600 MB/s | ~60-70% retained | ~30-40% retained | CUBIC/NewReno |
+| quiche | 300-500 MB/s | ~50-60% retained | ~25-35% retained | CUBIC |
+| quinn | 300-500 MB/s | ~55-65% retained | ~30-40% retained | CUBIC/NewReno |
+
+Notes on loss recovery:
+- quicz loss recovery is conservative (CUBIC with 50% utilization threshold).
+- msquic's BBR2 maintains higher throughput under loss by modeling bandwidth.
+- quic-go's CUBIC implementation has more aggressive recovery (higher utilization threshold).
+- quicz loss recovery can be improved by tuning CUBIC parameters or adding BBR support.
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
