@@ -38,7 +38,7 @@ fn serverThread(ctx: *ServerContext) void {
         // Receive datagrams
         var received_any = false;
         while (true) {
-            const received = ctx.socket.receiveTimeout(ctx.io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(1) } }) catch break;
+            const received = ctx.socket.receiveTimeout(ctx.io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
             // Learn client address from first datagram
             if (!have_client_addr) {
                 ctx.client_addr = received.from;
@@ -320,7 +320,7 @@ pub fn main() !void {
                 while (!c.flag.load(.acquire)) {
                     var got = false;
                     while (true) {
-                        const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(1) } }) catch break;
+                        const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                         if (!have) { c.peer = r.from; have = true; }
                         _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, r.data) catch {};
                         got = true;
@@ -468,7 +468,7 @@ pub fn main() !void {
                     while (!c.flag.load(.acquire)) {
                         var got = false;
                         while (true) {
-                            const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(1) } }) catch break;
+                            const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                             if (!have) { c.peer = r.from; have = true; }
                             // Simulate packet loss: drop every Nth packet
                             c.drop_counter.* += 1;
