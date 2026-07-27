@@ -103,6 +103,47 @@ zig build-exe -OReleaseFast --dep quicz \
 - [ ] 丢包恢复（tc netem 1%/5% 丢包）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
+- [ ] 完整 BBR2 实现（msquic 级丢包恢复）
+
+## 后续工作：BBR2 拥塞控制
+
+### 目标
+达到 msquic 级丢包恢复（1% 丢包保留 70-80% 吞吐），同时维持 CUBIC 级无丢包吞吐（~1.4 GB/s）。
+
+### 当前状态
+- 现有 BBR 模块（src/quic/bbr.zig，380 行）：简化的 startup/drain/probe-RTT 阶段。
+- CUBIC + PTO 恢复间隔：1% 丢包保留 33%，5% 丢包保留 43%。
+- BBR 当前：丢包恢复略好（266 vs 249 MB/s），但无丢包吞吐差 5.7x。
+
+### 差距分析（vs msquic BBR2）
+| 特性 | quicz BBR | msquic BBR2 | 影响 |
+|---|---|---|---|
+| 带宽估计 | 基础 max 滤波 | 投递速率采样 + 窗口 max | 吞吐精度 |
+| 丢包响应 | 缩减 cwnd | inflight_hi/lo，不缩窗 | 丢包恢复 |
+| Startup 退出 | BtlBw 平台 | 2 轮平台 + 丢包退出 | 启动速度 |
+| ProbeRTT | 固定间隔 | 自适应，近期低 RTT 跳过 | 延迟抖动 |
+| Pacing | 基础速率 | 精确逐包 pacing + 定时器 | 平滑性 |
+| ECN | 未集成 | CE 信号调整 inflight | 拥塞信号 |
+
+### 实现计划（~2000 行）
+1. **阶段 1：投递速率采样** — 跟踪每包 delivered bytes + time，计算 delivery rate。
+2. **阶段 2：窗口 BtlBw/RTprop** — 10s max 滤波（BtlBw）+ 10s min 滤波（RTprop）。
+3. **阶段 3：状态机** — Startup → Drain → ProbeBW → ProbeRTT，正确转换条件。
+4. **阶段 4：丢包自适应** — inflight_hi/inflight_lo（BBR2），不做乘法缩减。
+5. **阶段 5：Pacing 引擎** — 逐包发送时序，pacing_rate = BtlBw × gain。
+6. **阶段 6：集成** — 接入 Connection recovery 路径，配置选项，benchmark 验证。
+
+### 成功标准
+- 1% 丢包：保留 >= 60% 吞吐（当前 33%）
+- 5% 丢包：保留 >= 40% 吞吐（当前 43%，已达标）
+- 无丢包：维持 >= 700 MB/s（当前 760 MB/s）
+- 延迟 P99：不劣于当前 65μs
+
+### 参考
+- RFC 9438 (CUBIC) — 当前实现基线
+- BBR 论文："BBR: Congestion-Based Congestion Control" (Cardwell et al., 2017)
+- BBR2 草案：draft-cardwell-iccrg-bbr-congestion-control-03
+- msquic BBR2：github.com/microsoft/msquic/src/core/congestion_control_bbr.c
 
 ## 参考
 
