@@ -13,9 +13,9 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（4 MB） | **~160 MB/s** | 单双向流，client → server |
-| 发送 datagram 数 | ~3500 | 每个 1200 B，含 ACK 反馈循环 |
-| 总耗时 | ~25 ms | 含 ACK 处理 |
+| 流上传（64 MB） | **~1444 MB/s (1.4 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
+| 发送 datagram 数 | ~102K | 每个 1324 B，流水线 ACK 反馈 |
+| 总耗时 | ~44 ms | cwnd 增长至 1.2 MB |
 
 ## 运行方式
 
@@ -34,7 +34,7 @@ zig build-exe -OReleaseFast --dep quicz \
 
 | 实现 | 语言 | Loopback 吞吐（约） | 来源 |
 |---|---|---|---|
-| quicz | Zig | ~160 MB/s | 本基准 |
+| quicz | Zig | ~1444 MB/s | 本基准（线程化，macOS loopback） |
 | quic-go | Go | ~200-400 MB/s | TQUIC benchmark |
 | quiche | Rust | ~300-500 MB/s | TQUIC benchmark |
 | s2n-quic | Rust | ~400-800 MB/s | TQUIC benchmark |

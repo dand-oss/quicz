@@ -13,9 +13,9 @@ secnetperf-style micro-benchmark measuring raw QUIC transport performance over l
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream Upload (4 MB) | **~160 MB/s** | Single bidi stream, client → server |
-| Datagrams sent | ~3500 | 1200 B each, with ACK feedback loop |
-| Total time | ~25 ms | Including ACK processing |
+| Stream Upload (64 MB) | **~1444 MB/s (1.4 GB/s)** | Threaded client/server, CUBIC, std.Io async |
+| Datagrams sent | ~102K | 1324 B each, pipelined with ACK feedback |
+| Total time | ~44 ms | cwnd grew to 1.2 MB |
 
 ## Running
 
@@ -34,7 +34,7 @@ zig build-exe -OReleaseFast --dep quicz \
 
 | Implementation | Language | Loopback throughput (approx) | Source |
 |---|---|---|---|
-| quicz | Zig | ~160 MB/s | This benchmark |
+| quicz | Zig | ~1444 MB/s | This benchmark (threaded, macOS loopback) |
 | quic-go | Go | ~200-400 MB/s | TQUIC benchmark (varies by config) |
 | quiche | Rust | ~300-500 MB/s | TQUIC benchmark |
 | s2n-quic | Rust | ~400-800 MB/s | TQUIC benchmark |
