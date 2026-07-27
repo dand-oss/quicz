@@ -6118,7 +6118,7 @@ zig build run-udp-stateless-reset-loopback
 
 ## 与其它 QUIC 实现的功能对比
 
-更新时间：2026-07-24。来源：各项目 README、源码审查、RFC 合规追踪。
+更新时间：2026-07-27。来源：各项目 README、源码审查、RFC 合规追踪。
 
 | 功能 | RFC | quic-go | quiche | s2n-quic | quicz | 差距 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -6155,7 +6155,7 @@ zig build run-udp-stateless-reset-loopback
 | QPACK 动态表 | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |
 | HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ✅ | Quarter Stream ID + payload 帧格式 |
 | WebTransport | draft | ✅ | ❌ | ❌ | ✅ | 完整会话管理、uni/bidi 帧、CLOSE capsule、datagram |
-| 流重置部分交付 | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
+| 流重置部分交付 | draft | ✅ | ❌ | ❌ | ✅ | opt-in enable_reset_partial_delivery |
 | 外部互通 | — | — | — | — | ✅ 全部通过 | — |
 | 纯语言 TLS（无 C 依赖） | — | ✅ | ❌ | ❌ | ✅ | — |
 | FIPS 140-3 | — | ✅(Go 1.26+) | ❌ | ❌ | ❌ | 仅 quic-go |
