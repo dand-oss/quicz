@@ -68,7 +68,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 恢复算法 |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | 保持 ~70-80% | 保持 ~40-50% | BBR2/CUBIC |
-| **quicz** | **~850 MB/s** | **~117 MB/s (14%)** | **~67 MB/s (8%)** | **CUBIC** |
+| **quicz** | **~760 MB/s** | **~249 MB/s (33%)** | **~331 MB/s (43%)** | **CUBIC** |
 | quic-go | 400-600 MB/s | 保持 ~60-70% | 保持 ~30-40% | CUBIC/NewReno |
 | quiche | 300-500 MB/s | 保持 ~50-60% | 保持 ~25-35% | CUBIC |
 | quinn | 300-500 MB/s | 保持 ~55-65% | 保持 ~30-40% | CUBIC/NewReno |
