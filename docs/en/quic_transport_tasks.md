@@ -7167,7 +7167,7 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |
 | HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ✅ | Quarter Stream ID + payload 帧格式 |
 | WebTransport | draft | ✅ | ❌ | ❌ | ✅ | 完整会话管理、uni/bidi 帧、CLOSE capsule、datagram |
-| Stream reset partial delivery | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
+| Stream reset partial delivery | draft | ✅ | ❌ | ❌ | ✅ | opt-in enable_reset_partial_delivery |
 | External interop | — | — | — | — | ✅ all three | — |
 | Pure-language TLS (no C) | — | ✅ | ❌ | ❌ | ✅ | — |
 | FIPS 140-3 | — | ✅(Go 1.26+) | ❌ | ❌ | ❌ | 仅 quic-go |
@@ -7182,7 +7182,7 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
 | Application layer (6 items) | 6/6 | 3/6 | 0/6 | 6/6 |
 | Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
-| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **35/37** |
+| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **36/37** |
 
 ### Gap analysis
 
