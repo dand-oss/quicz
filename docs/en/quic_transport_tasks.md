@@ -7162,9 +7162,9 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | X25519 ECDH | 8446 | ✅ | ✅ | ✅ | ✅ | — |
 | X25519Kyber768 (PQ) | draft | ✅ | ✅ | ✅ | ✅ | — |
-| HTTP/3 | 9114 | ✅ | ✅ | ❌ | ⚠️ basic | 需完善连接管理 |
+| HTTP/3 | 9114 | ✅ | ✅ | ❌ | ✅ | 完整连接管理、Settings、GOAWAY、stream 状态机 |
 | QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
-| QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ❌ | **2/3 建议实现** |
+| QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |
 | HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | 1/3 可选 |
 | WebTransport | draft | ✅ | ❌ | ❌ | ⚠️ basic | 需完善会话管理 |
 | Stream reset partial delivery | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
@@ -7180,9 +7180,9 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | Transport (19 items) | 19/19 | 14/19 | 14/19 | 19/19 |
 | Congestion (4 items) | 4/4 | 4/4 | 3/4 | 4/4 |
 | Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
-| Application layer (6 items) | 6/6 | 3/6 | 0/6 | 2/6 |
+| Application layer (6 items) | 6/6 | 3/6 | 0/6 | 4/6 |
 | Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
-| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **31/37** |
+| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **33/37** |
 
 ### Gap analysis
 
@@ -7193,8 +7193,8 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 
 **Recommended (2/3 have):**
 
-3. **QPACK dynamic table** — quic-go + quiche
-4. **Complete HTTP/3 connection management** — GOAWAY, SETTINGS, stream lifecycle
+3. ~~QPACK dynamic table~~ — DONE (c8e605c)
+4. ~~Complete HTTP/3 connection management~~ — DONE (a15d22d)
 
 **Optional (1/3 or fewer):**
 
