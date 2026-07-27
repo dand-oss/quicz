@@ -275,3 +275,210 @@ test "H3 integration: QPACK static table full roundtrip" {
         try std.testing.expectEqualStrings(expected.value, decoded[i].value);
     }
 }
+
+test "H3 integration: full flow with QPACK dynamic table" {
+    // Simulate client and server sharing a dynamic table (as in a real connection)
+    var client_dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer client_dt.deinit();
+    client_dt.setCapacity(4096);
+
+    var server_dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer server_dt.deinit();
+    server_dt.setCapacity(4096);
+
+    // Both sides insert the same entries (simulating encoder stream sync)
+    try client_dt.insert("x-api-version", "v3");
+    try server_dt.insert("x-api-version", "v3");
+    try client_dt.insert("x-trace-id", "trace-abc-123");
+    try server_dt.insert("x-trace-id", "trace-abc-123");
+
+    // Client sends request with dynamic headers
+    const extra_req = [_]qpack.HeaderField{
+        .{ .name = "x-api-version", .value = "v3" },
+        .{ .name = "x-trace-id", .value = "trace-abc-123" },
+    };
+    const req = h3_request.Request{
+        .method = "GET",
+        .path = "/api/v3/data",
+        .authority = "service.internal",
+        .extra_headers = &extra_req,
+    };
+
+    var req_buf: [4096]u8 = undefined;
+    const req_len = try h3_request.encodeRequestWithDynamic(&req_buf, req, &client_dt);
+
+    // Server decodes request
+    const decoded_req = try h3_request.decodeRequestWithDynamic(req_buf[0..req_len], &server_dt);
+    try std.testing.expectEqualStrings("GET", decoded_req.request.method);
+    try std.testing.expectEqualStrings("/api/v3/data", decoded_req.request.path);
+    try std.testing.expectEqualStrings("service.internal", decoded_req.request.authority.?);
+
+    // Server sends response with dynamic headers
+    try client_dt.insert("content-type", "application/json");
+    try server_dt.insert("content-type", "application/json");
+
+    const extra_resp = [_]qpack.HeaderField{
+        .{ .name = "content-type", .value = "application/json" },
+        .{ .name = "x-trace-id", .value = "trace-abc-123" },
+    };
+    const resp = h3_request.Response{
+        .status = 200,
+        .extra_headers = &extra_resp,
+        .body = "{\"items\":[1,2,3]}",
+    };
+
+    var resp_buf: [4096]u8 = undefined;
+    const resp_len = try h3_request.encodeResponseWithDynamic(&resp_buf, resp, &server_dt);
+
+    // Client decodes response
+    const decoded_resp = try h3_request.decodeResponseWithDynamic(resp_buf[0..resp_len], &client_dt);
+    try std.testing.expectEqual(@as(u16, 200), decoded_resp.response.status);
+    try std.testing.expect(decoded_resp.response.isSuccess());
+    try std.testing.expectEqualStrings("{\"items\":[1,2,3]}", decoded_resp.response.body.?);
+}
+
+test "H3 integration: connection lifecycle with settings and GOAWAY" {
+    var conn = h3_connection.H3Connection.init(std.testing.allocator);
+    defer conn.deinit();
+
+    // Phase 1: not ready
+    try std.testing.expect(!conn.isReady());
+    try std.testing.expectError(error.ConnectionClosing, blk: {
+        conn.sendGoaway(0);
+        break :blk conn.openRequestStream();
+    });
+
+    // Phase 2: settings exchange
+    var conn2 = h3_connection.H3Connection.init(std.testing.allocator);
+    defer conn2.deinit();
+
+    const local_settings = h3_connection.Settings{
+        .max_field_section_size = 65536,
+        .qpack_max_table_capacity = 4096,
+        .qpack_blocked_streams = 16,
+    };
+    conn2.markSettingsSent(local_settings);
+    try std.testing.expectEqual(@as(u64, 65536), conn2.local_settings.max_field_section_size);
+
+    const peer_settings = h3_connection.Settings{
+        .max_field_section_size = 32768,
+        .qpack_max_table_capacity = 8192,
+    };
+    conn2.markSettingsReceived(peer_settings);
+    try std.testing.expect(conn2.isReady());
+    try std.testing.expectEqual(@as(u64, 8192), conn2.peer_settings.qpack_max_table_capacity);
+
+    // Phase 3: request streams
+    const s0 = try conn2.openRequestStream();
+    const s1 = try conn2.openRequestStream();
+    try std.testing.expectEqual(@as(u64, 0), s0);
+    try std.testing.expectEqual(@as(u64, 4), s1);
+
+    // Phase 4: stream lifecycle
+    const stream0 = conn2.getStream(s0).?;
+    try stream0.transition(.headers_done);
+    try stream0.transition(.data_transfer);
+    try stream0.transition(.complete);
+    try std.testing.expectEqual(@as(usize, 1), conn2.activeStreamCount());
+
+    // Phase 5: prune and GOAWAY
+    conn2.pruneFinishedStreams();
+    try std.testing.expectEqual(@as(usize, 1), conn2.streams.items.len);
+
+    conn2.sendGoaway(s1);
+    try std.testing.expectError(error.ConnectionClosing, conn2.openRequestStream());
+}
+
+test "H3 integration: settings frame wire format roundtrip" {
+    // Encode settings to wire format and decode back
+    const settings = h3_connection.Settings{
+        .max_field_section_size = 131072,
+        .qpack_max_table_capacity = 16384,
+        .qpack_blocked_streams = 64,
+        .enable_connect_protocol = 1,
+        .h3_datagram = 1,
+    };
+
+    var payload_buf: [128]u8 = undefined;
+    const payload_len = try settings.encodePayload(&payload_buf);
+
+    // Wrap in SETTINGS frame
+    var frame_buf: [256]u8 = undefined;
+    var pos: usize = 0;
+    frame_buf[pos] = 0x04; // SETTINGS frame type
+    pos += 1;
+    frame_buf[pos] = @intCast(payload_len);
+    pos += 1;
+    @memcpy(frame_buf[pos .. pos + payload_len], payload_buf[0..payload_len]);
+    pos += payload_len;
+
+    // Decode frame
+    const frame_result = try h3_frame.decodeFrame(frame_buf[0..pos]);
+    try std.testing.expectEqual(@as(u64, 0x04), frame_result.frame.frame_type);
+
+    // Decode settings from payload
+    const decoded = try h3_connection.Settings.decodePayload(frame_result.frame.payload);
+    try std.testing.expectEqual(@as(u64, 131072), decoded.max_field_section_size);
+    try std.testing.expectEqual(@as(u64, 16384), decoded.qpack_max_table_capacity);
+    try std.testing.expectEqual(@as(u64, 64), decoded.qpack_blocked_streams);
+    try std.testing.expectEqual(@as(u64, 1), decoded.enable_connect_protocol);
+    try std.testing.expectEqual(@as(u64, 1), decoded.h3_datagram);
+}
+
+test "H3 integration: GOAWAY frame wire format roundtrip" {
+    // Encode GOAWAY frame
+    var goaway_payload: [16]u8 = undefined;
+    const gp_len = try h3_connection.H3Connection.encodeGoawayPayload(&goaway_payload, 12);
+
+    var frame_buf: [32]u8 = undefined;
+    var pos: usize = 0;
+    frame_buf[pos] = 0x07; // GOAWAY frame type
+    pos += 1;
+    frame_buf[pos] = @intCast(gp_len);
+    pos += 1;
+    @memcpy(frame_buf[pos .. pos + gp_len], goaway_payload[0..gp_len]);
+    pos += gp_len;
+
+    // Decode frame
+    const frame_result = try h3_frame.decodeFrame(frame_buf[0..pos]);
+    try std.testing.expectEqual(@as(u64, 0x07), frame_result.frame.frame_type);
+
+    // Decode GOAWAY payload
+    const stream_id = try h3_connection.H3Connection.decodeGoawayPayload(frame_result.frame.payload);
+    try std.testing.expectEqual(@as(u64, 12), stream_id);
+}
+
+test "H3 integration: multiple requests with growing dynamic table" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(8192);
+
+    // Simulate multiple requests where headers accumulate in dynamic table
+    const paths = [_][]const u8{ "/api/users", "/api/orders", "/api/products" };
+
+    for (paths, 0..) |path, i| {
+        // Insert a per-request header into dynamic table
+        var trace_buf: [32]u8 = undefined;
+        const trace_val = std.fmt.bufPrint(&trace_buf, "trace-{d}", .{i}) catch unreachable;
+        try dt.insert("x-trace-id", trace_val);
+
+        const extra = [_]qpack.HeaderField{
+            .{ .name = "x-trace-id", .value = trace_val },
+        };
+        const req = h3_request.Request{
+            .method = "GET",
+            .path = path,
+            .extra_headers = &extra,
+        };
+
+        var buf: [4096]u8 = undefined;
+        const len = try h3_request.encodeRequestWithDynamic(&buf, req, &dt);
+
+        const decoded = try h3_request.decodeRequestWithDynamic(buf[0..len], &dt);
+        try std.testing.expectEqualStrings("GET", decoded.request.method);
+        try std.testing.expectEqualStrings(path, decoded.request.path);
+    }
+
+    // Dynamic table should have accumulated entries
+    try std.testing.expect(dt.entryCount() >= 3);
+}
