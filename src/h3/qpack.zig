@@ -1215,3 +1215,348 @@ test "Encoder instruction: large capacity (>= 31)" {
         else => return error.UnexpectedInstruction,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Header block with dynamic table references (RFC 9204 §4.5)
+// ---------------------------------------------------------------------------
+
+/// Encode a header block using dynamic table references when beneficial.
+/// The dynamic table's insert_count is used as Required Insert Count.
+/// Delta Base is always 0 (Base = Required Insert Count).
+pub fn encodeHeaderBlockWithDynamic(
+    out: []u8,
+    fields: []const HeaderField,
+    dynamic_table: *const DynamicTable,
+) !usize {
+    var pos: usize = 0;
+
+    // Header block prefix (RFC 9204 §4.5.1)
+    // Required Insert Count: 8-bit prefix
+    const req_insert_count = dynamic_table.insert_count;
+    if (req_insert_count == 0) {
+        out[pos] = 0x00;
+        pos += 1;
+    } else {
+        // Encode with 8-bit prefix varint
+        if (req_insert_count < 255) {
+            out[pos] = @intCast(req_insert_count);
+            pos += 1;
+        } else {
+            out[pos] = 0xff;
+            pos += 1;
+            pos = encodeVarintToBuf(out, pos, req_insert_count - 255);
+        }
+    }
+
+    // Delta Base: sign bit (0 = positive) + 7-bit prefix, value = 0
+    out[pos] = 0x00;
+    pos += 1;
+
+    for (fields) |field| {
+        // Try dynamic table exact match first (smallest encoding)
+        if (dynamic_table.findExact(field.name, field.value)) |rel_idx| {
+            // Indexed Field Line (dynamic): 1TXXXXXX, T=0
+            // 0x80 | index with 6-bit prefix
+            if (rel_idx < 63) {
+                out[pos] = @intCast(0x80 | rel_idx);
+                pos += 1;
+            } else {
+                out[pos] = 0xbf; // 0x80 | 0x3f
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, rel_idx - 63);
+            }
+        } else if (findStaticIndex(field.name, field.value)) |idx| {
+            // Indexed Field Line (static): 1TXXXXXX, T=1
+            if (idx < 63) {
+                out[pos] = @intCast(0xc0 | idx);
+                pos += 1;
+            } else {
+                out[pos] = 0xff;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, idx - 63);
+            }
+        } else if (dynamic_table.findName(field.name)) |rel_idx| {
+            // Literal with Name Reference (dynamic): 01NTXXXX, T=0, N=0
+            // 0x40 | index with 4-bit prefix
+            if (rel_idx < 15) {
+                out[pos] = @intCast(0x40 | rel_idx);
+                pos += 1;
+            } else {
+                out[pos] = 0x4f; // 0x40 | 0x0f
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, rel_idx - 15);
+            }
+            pos = try encodeStringToBuf(out, pos, field.value);
+        } else if (findStaticNameIndex(field.name)) |name_idx| {
+            // Literal with Name Reference (static): 01NTXXXX, T=1, N=0
+            if (name_idx < 15) {
+                out[pos] = @intCast(0x50 | name_idx);
+                pos += 1;
+            } else {
+                out[pos] = 0x5f;
+                pos += 1;
+                pos = encodeVarintToBuf(out, pos, name_idx - 15);
+            }
+            pos = try encodeStringToBuf(out, pos, field.value);
+        } else {
+            // Literal without Name Reference: 001NXXXX, N=0
+            out[pos] = 0x20;
+            pos += 1;
+            pos = try encodeStringToBuf(out, pos, field.name);
+            pos = try encodeStringToBuf(out, pos, field.value);
+        }
+    }
+
+    return pos;
+}
+
+/// Decode a header block that may contain dynamic table references.
+/// The dynamic table must be in the same state as when the block was encoded.
+pub fn decodeHeaderBlockWithDynamic(
+    data: []const u8,
+    out_fields: []HeaderField,
+    dynamic_table: *const DynamicTable,
+) !usize {
+    if (data.len < 2) return error.InvalidHeaderBlock;
+
+    var pos: usize = 0;
+
+    // Skip Required Insert Count (8-bit prefix varint)
+    if (data[pos] == 0xff) {
+        pos += 1;
+        const v = try decodeVarintFromBuf(data, pos);
+        pos = v.end;
+    } else {
+        pos += 1;
+    }
+
+    // Skip Delta Base (sign bit + 7-bit prefix varint)
+    if (data[pos] & 0x7f == 0x7f) {
+        pos += 1;
+        const v = try decodeVarintFromBuf(data, pos);
+        pos = v.end;
+    } else {
+        pos += 1;
+    }
+
+    var field_count: usize = 0;
+
+    while (pos < data.len) {
+        const byte = data[pos];
+
+        if (byte & 0x80 != 0) {
+            // Indexed Field Line: 1TXXXXXX
+            const is_static = (byte & 0x40) != 0;
+            var index: u64 = 0;
+            if (byte & 0x3f == 0x3f) {
+                pos += 1;
+                const v = try decodeVarintFromBuf(data, pos);
+                index = v.value + 63;
+                pos = v.end;
+            } else {
+                index = byte & 0x3f;
+                pos += 1;
+            }
+
+            if (is_static) {
+                if (index >= static_table.len) return error.InvalidStaticIndex;
+                const entry = static_table[@intCast(index)];
+                out_fields[field_count] = .{ .name = entry.name, .value = entry.value };
+            } else {
+                // Dynamic table reference: index is relative (0 = newest)
+                const entry = try dynamic_table.lookup(index);
+                out_fields[field_count] = .{ .name = entry.name, .value = entry.value };
+            }
+            field_count += 1;
+        } else if (byte & 0xc0 == 0x40) {
+            // Literal with Name Reference: 01NTXXXX
+            const is_static = (byte & 0x10) != 0;
+            var name_index: u64 = 0;
+            if (byte & 0x0f == 0x0f) {
+                pos += 1;
+                const v = try decodeVarintFromBuf(data, pos);
+                name_index = v.value + 15;
+                pos = v.end;
+            } else {
+                name_index = byte & 0x0f;
+                pos += 1;
+            }
+
+            const name: []const u8 = if (is_static) blk: {
+                if (name_index >= static_table.len) return error.InvalidStaticIndex;
+                break :blk static_table[@intCast(name_index)].name;
+            } else blk: {
+                const entry = try dynamic_table.lookup(name_index);
+                break :blk entry.name;
+            };
+
+            const str = try decodeString(data, pos);
+            pos = str.end;
+            out_fields[field_count] = .{ .name = name, .value = str.value };
+            field_count += 1;
+        } else if (byte & 0xe0 == 0x20) {
+            // Literal without Name Reference: 001NXXXX
+            pos += 1;
+            const name_str = try decodeString(data, pos);
+            pos = name_str.end;
+            const value_str = try decodeString(data, pos);
+            pos = value_str.end;
+            out_fields[field_count] = .{ .name = name_str.value, .value = value_str.value };
+            field_count += 1;
+        } else {
+            return error.InvalidHeaderBlock;
+        }
+
+        if (field_count >= out_fields.len) break;
+    }
+
+    return field_count;
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic header block tests
+// ---------------------------------------------------------------------------
+
+test "encodeHeaderBlockWithDynamic: dynamic exact match" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-custom", "my-value");
+
+    const fields = [_]HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = "x-custom", .value = "my-value" },
+    };
+
+    var encoded: [256]u8 = undefined;
+    const len = try encodeHeaderBlockWithDynamic(&encoded, &fields, &dt);
+
+    // Prefix: Required Insert Count = 1, Delta Base = 0
+    try std.testing.expectEqual(@as(u8, 1), encoded[0]);
+    try std.testing.expectEqual(@as(u8, 0), encoded[1]);
+    // :method GET = static index 8: 0xc0 | 8 = 0xc8
+    try std.testing.expectEqual(@as(u8, 0xc8), encoded[2]);
+    // x-custom my-value = dynamic index 0: 0x80 | 0 = 0x80
+    try std.testing.expectEqual(@as(u8, 0x80), encoded[3]);
+    try std.testing.expectEqual(@as(usize, 4), len);
+}
+
+test "encodeHeaderBlockWithDynamic: dynamic name ref" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-token", "abc");
+
+    const fields = [_]HeaderField{
+        .{ .name = "x-token", .value = "xyz" },
+    };
+
+    var encoded: [256]u8 = undefined;
+    const len = try encodeHeaderBlockWithDynamic(&encoded, &fields, &dt);
+
+    // Prefix: RIC=1, DB=0
+    try std.testing.expectEqual(@as(u8, 1), encoded[0]);
+    try std.testing.expectEqual(@as(u8, 0), encoded[1]);
+    // Literal with Name Reference (dynamic): 0x40 | 0 = 0x40
+    try std.testing.expectEqual(@as(u8, 0x40), encoded[2]);
+    // Value "xyz" length = 3
+    try std.testing.expectEqual(@as(u8, 3), encoded[3]);
+    try std.testing.expectEqual(@as(usize, 7), len); // 2 prefix + 1 instr + 1 len + 3 value
+}
+
+test "encodeHeaderBlockWithDynamic: roundtrip" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-request-id", "req-123");
+    try dt.insert("x-session", "sess-456");
+
+    const fields = [_]HeaderField{
+        .{ .name = ":method", .value = "POST" },
+        .{ .name = ":path", .value = "/api/v1" },
+        .{ .name = "x-request-id", .value = "req-123" },
+        .{ .name = "x-session", .value = "sess-456" },
+        .{ .name = "content-type", .value = "application/json" },
+    };
+
+    var encoded: [512]u8 = undefined;
+    const len = try encodeHeaderBlockWithDynamic(&encoded, &fields, &dt);
+
+    var decoded: [16]HeaderField = undefined;
+    const count = try decodeHeaderBlockWithDynamic(encoded[0..len], &decoded, &dt);
+
+    try std.testing.expectEqual(@as(usize, 5), count);
+    try std.testing.expectEqualStrings(":method", decoded[0].name);
+    try std.testing.expectEqualStrings("POST", decoded[0].value);
+    try std.testing.expectEqualStrings(":path", decoded[1].name);
+    try std.testing.expectEqualStrings("/api/v1", decoded[1].value);
+    try std.testing.expectEqualStrings("x-request-id", decoded[2].name);
+    try std.testing.expectEqualStrings("req-123", decoded[2].value);
+    try std.testing.expectEqualStrings("x-session", decoded[3].name);
+    try std.testing.expectEqualStrings("sess-456", decoded[3].value);
+    try std.testing.expectEqualStrings("content-type", decoded[4].name);
+    try std.testing.expectEqualStrings("application/json", decoded[4].value);
+}
+
+test "encodeHeaderBlockWithDynamic: empty dynamic table falls back to static" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+
+    const fields = [_]HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = ":status", .value = "200" },
+    };
+
+    var encoded: [256]u8 = undefined;
+    const len = try encodeHeaderBlockWithDynamic(&encoded, &fields, &dt);
+
+    // Prefix: RIC=0, DB=0
+    try std.testing.expectEqual(@as(u8, 0), encoded[0]);
+    try std.testing.expectEqual(@as(u8, 0), encoded[1]);
+    // :method GET = static 8: 0xc8
+    try std.testing.expectEqual(@as(u8, 0xc8), encoded[2]);
+    // :status 200 = static 16: 0xd0
+    try std.testing.expectEqual(@as(u8, 0xd0), encoded[3]);
+    try std.testing.expectEqual(@as(usize, 4), len);
+
+    // Decode roundtrip
+    var decoded: [4]HeaderField = undefined;
+    const count = try decodeHeaderBlockWithDynamic(encoded[0..len], &decoded, &dt);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqualStrings(":method", decoded[0].name);
+    try std.testing.expectEqualStrings("GET", decoded[0].value);
+    try std.testing.expectEqualStrings(":status", decoded[1].name);
+    try std.testing.expectEqualStrings("200", decoded[1].value);
+}
+
+test "encodeHeaderBlockWithDynamic: large dynamic index (>= 63)" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(65536);
+
+    // Insert 65 entries so we can reference index 64
+    var i: u64 = 0;
+    while (i < 65) : (i += 1) {
+        var name_buf: [32]u8 = undefined;
+        var value_buf: [32]u8 = undefined;
+        const name = std.fmt.bufPrint(&name_buf, "hdr-{d}", .{i}) catch unreachable;
+        const value = std.fmt.bufPrint(&value_buf, "val-{d}", .{i}) catch unreachable;
+        try dt.insert(name, value);
+    }
+
+    // Reference the oldest entry (relative index 64)
+    const fields = [_]HeaderField{
+        .{ .name = "hdr-0", .value = "val-0" },
+    };
+
+    var encoded: [256]u8 = undefined;
+    const len = try encodeHeaderBlockWithDynamic(&encoded, &fields, &dt);
+
+    // Decode and verify
+    var decoded: [4]HeaderField = undefined;
+    const count = try decodeHeaderBlockWithDynamic(encoded[0..len], &decoded, &dt);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqualStrings("hdr-0", decoded[0].name);
+    try std.testing.expectEqualStrings("val-0", decoded[0].value);
+}
