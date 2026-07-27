@@ -8153,6 +8153,17 @@ pub const Connection = struct {
 
         const stream_state = self.findRecvStream(stream_id) orelse return null;
         if (stream_state.reset_error_code != null) {
+            // Partial delivery: if enabled and buffered data remains, deliver it first.
+            if (self.config.enable_reset_partial_delivery and
+                stream_state.read_offset < stream_state.data.items.len)
+            {
+                const available = stream_state.data.items[stream_state.read_offset..];
+                const n = @min(buf.len, available.len);
+                try self.queueReceiveFlowControlCredit(stream_state, n);
+                @memcpy(buf[0..n], available[0..n]);
+                stream_state.read_offset += n;
+                return n;
+            }
             try self.queueClosedReceiveStreamCountCredit(stream_state);
             stream_state.reset_read_observed = true;
             return error.StreamClosed;
@@ -72786,6 +72797,76 @@ test "receive stream ignores data after RESET_STREAM within final size" {
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
 
     var read_buf: [8]u8 = undefined;
+    try std.testing.expectError(error.StreamClosed, conn.recvOnStream(0, &read_buf));
+}
+
+test "partial delivery: buffered data delivered before StreamClosed when enabled" {
+    var conn = try Connection.init(std.testing.allocator, .server, .{
+        .initial_max_data = 100,
+        .initial_max_stream_data = 100,
+        .enable_reset_partial_delivery = true,
+    });
+    defer conn.deinit();
+
+    // Receive STREAM data first
+    var datagram: [128]u8 = undefined;
+    var out = buffer.fixedWriter(&datagram);
+    try frame.encodeFrame(out.writer(), .{ .stream = .{
+        .stream_id = 0,
+        .offset = 0,
+        .fin = false,
+        .data = "hello",
+    } });
+    try conn.processDatagram(0, out.getWritten());
+
+    // Now receive RESET_STREAM
+    out = buffer.fixedWriter(&datagram);
+    try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
+        .stream_id = 0,
+        .application_error_code = 42,
+        .final_size = 10,
+    } });
+    try conn.processDatagram(1, out.getWritten());
+    try std.testing.expectEqual(@as(?u64, 42), conn.recv_streams.items[0].reset_error_code);
+
+    // Partial delivery: buffered "hello" should be readable
+    var read_buf: [16]u8 = undefined;
+    const n = try conn.recvOnStream(0, &read_buf);
+    try std.testing.expectEqual(@as(?usize, 5), n);
+    try std.testing.expectEqualStrings("hello", read_buf[0..5]);
+
+    // After buffered data exhausted, returns StreamClosed
+    try std.testing.expectError(error.StreamClosed, conn.recvOnStream(0, &read_buf));
+}
+
+test "partial delivery disabled: immediate StreamClosed (default)" {
+    var conn = try Connection.init(std.testing.allocator, .server, .{
+        .initial_max_data = 100,
+        .initial_max_stream_data = 100,
+        // enable_reset_partial_delivery defaults to false
+    });
+    defer conn.deinit();
+
+    var datagram: [128]u8 = undefined;
+    var out = buffer.fixedWriter(&datagram);
+    try frame.encodeFrame(out.writer(), .{ .stream = .{
+        .stream_id = 0,
+        .offset = 0,
+        .fin = false,
+        .data = "hello",
+    } });
+    try conn.processDatagram(0, out.getWritten());
+
+    out = buffer.fixedWriter(&datagram);
+    try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
+        .stream_id = 0,
+        .application_error_code = 42,
+        .final_size = 10,
+    } });
+    try conn.processDatagram(1, out.getWritten());
+
+    // Default: immediate StreamClosed, buffered data discarded
+    var read_buf: [16]u8 = undefined;
     try std.testing.expectError(error.StreamClosed, conn.recvOnStream(0, &read_buf));
 }
 

@@ -198,4 +198,10 @@ pub const Config = struct {
     /// defenses (single-use PSK identities, address-validation tokens) outside
     /// the connection because 0-RTT is vulnerable to replay.
     accept_zero_rtt: bool = false,
+    /// Enable partial delivery of buffered data on reset streams.
+    ///
+    /// When true, recvOnStream delivers already-buffered data before returning
+    /// error.StreamClosed on a reset stream. When false (RFC 9000 default),
+    /// recvOnStream immediately returns error.StreamClosed, discarding buffered data.
+    enable_reset_partial_delivery: bool = false,
 };
