@@ -69,7 +69,8 @@ pub const H3Server = struct {
 
         // SETTINGS frame with max_field_section_size=8192
         var settings_payload: [16]u8 = undefined;
-        const sp_len = try h3_connection.H3Connection.encodeSettings(&settings_payload, 8192);
+        const settings = h3_connection.Settings{ .max_field_section_size = 8192 };
+        const sp_len = try settings.encodePayload(&settings_payload);
 
         // Frame type (0x04) + length + payload
         buf[pos] = 0x04; // SETTINGS frame type

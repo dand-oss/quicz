@@ -67,7 +67,8 @@ pub const H3Client = struct {
 
         // SETTINGS frame
         var settings_payload: [16]u8 = undefined;
-        const sp_len = try h3_connection.H3Connection.encodeSettings(&settings_payload, 8192);
+        const settings = h3_connection.Settings{ .max_field_section_size = 8192 };
+        const sp_len = try settings.encodePayload(&settings_payload);
 
         buf[pos] = 0x04; // SETTINGS frame type
         pos += 1;

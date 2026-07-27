@@ -113,8 +113,8 @@ test "integration: H3 connection with QPACK headers" {
     var conn = h3_connection.H3Connection.init(std.testing.allocator);
     defer conn.deinit();
 
-    conn.markSettingsSent();
-    conn.markSettingsReceived();
+    conn.markSettingsSent(.{});
+    conn.markSettingsReceived(.{});
     try std.testing.expect(conn.isReady());
 
     const stream_id = try conn.openRequestStream();
