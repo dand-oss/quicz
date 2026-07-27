@@ -7165,8 +7165,8 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | HTTP/3 | 9114 | ✅ | ✅ | ❌ | ✅ | 完整连接管理、Settings、GOAWAY、stream 状态机 |
 | QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
 | QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |
-| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | 1/3 可选 |
-| WebTransport | draft | ✅ | ❌ | ❌ | ⚠️ basic | 需完善会话管理 |
+| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ✅ | Quarter Stream ID + payload 帧格式 |
+| WebTransport | draft | ✅ | ❌ | ❌ | ✅ | 完整会话管理、uni/bidi 帧、CLOSE capsule、datagram |
 | Stream reset partial delivery | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
 | External interop | — | — | — | — | ✅ all three | — |
 | Pure-language TLS (no C) | — | ✅ | ❌ | ❌ | ✅ | — |
@@ -7180,9 +7180,9 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | Transport (19 items) | 19/19 | 14/19 | 14/19 | 19/19 |
 | Congestion (4 items) | 4/4 | 4/4 | 3/4 | 4/4 |
 | Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
-| Application layer (6 items) | 6/6 | 3/6 | 0/6 | 4/6 |
+| Application layer (6 items) | 6/6 | 3/6 | 0/6 | 6/6 |
 | Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
-| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **33/37** |
+| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **35/37** |
 
 ### Gap analysis
 

@@ -6153,8 +6153,8 @@ zig build run-udp-stateless-reset-loopback
 | HTTP/3 | 9114 | ✅ | ✅ | ❌ | ✅ | 完整连接管理、Settings、GOAWAY、stream 状态机 |
 | QPACK 静态表 | 9204 | ✅ | ✅ | ❌ | ✅ | — |
 | QPACK 动态表 | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |
-| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ❌ | 1/3 可选 |
-| WebTransport | draft | ✅ | ❌ | ❌ | ⚠️ 基础 | 需完善会话管理 |
+| HTTP Datagrams | 9297 | ✅ | ❌ | ❌ | ✅ | Quarter Stream ID + payload 帧格式 |
+| WebTransport | draft | ✅ | ❌ | ❌ | ✅ | 完整会话管理、uni/bidi 帧、CLOSE capsule、datagram |
 | 流重置部分交付 | draft | ✅ | ❌ | ❌ | ❌ | 仅 quic-go |
 | 外部互通 | — | — | — | — | ✅ 全部通过 | — |
 | 纯语言 TLS（无 C 依赖） | — | ✅ | ❌ | ❌ | ✅ | — |
@@ -6168,9 +6168,9 @@ zig build run-udp-stateless-reset-loopback
 | 传输层（19 项） | 19/19 | 14/19 | 14/19 | 19/19 |
 | 拥塞控制（4 项） | 4/4 | 4/4 | 3/4 | 4/4 |
 | 密码套件（5 项） | 5/5 | 5/5 | 5/5 | 5/5 |
-| 应用层（6 项） | 6/6 | 3/6 | 0/6 | 4/6 |
+| 应用层（6 项） | 6/6 | 3/6 | 0/6 | 6/6 |
 | 平台（3 项） | 2/3 | 0/3 | 1/3 | 1/3 |
-| **合计（37 项）** | **36/37** | **26/37** | **23/37** | **33/37** |
+| **合计（37 项）** | **36/37** | **26/37** | **23/37** | **35/37** |
 
 ### 差距分析
 
@@ -6186,8 +6186,8 @@ zig build run-udp-stateless-reset-loopback
 
 **可选差距（1/3 或更少）：**
 
-5. HTTP Datagrams (RFC 9297) — 仅 quic-go
-6. 完整 WebTransport 会话 — 仅 quic-go
+5. ~~HTTP Datagrams (RFC 9297)~~ — 已完成 (da6a670)
+6. ~~完整 WebTransport 会话~~ — 已完成 (a961f3e)
 7. 流重置部分交付 — 仅 quic-go (draft)
 8. FIPS 140-3 — 仅 quic-go
 9. XDP 零拷贝 I/O — 仅 s2n-quic
