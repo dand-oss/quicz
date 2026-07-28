@@ -6569,31 +6569,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Drive backends across ordered packet number spaces and queue
-    /// CONNECTION_CLOSE on peer transport-parameter errors for each view.
-    ///
-    /// This preserves the success behavior of
-    /// `driveCryptoBackendsAcrossSpacesAndArmConnections()` while routing
-    /// malformed or semantically invalid peer transport-parameter extension
-    /// bytes through the close-on-error policy.
-    pub fn driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-        self: *EndpointConnectionLifecycle,
-        spaces: []const PacketNumberSpace,
-        views: []const EndpointCryptoBackendDriveView,
-    ) Error!EndpointCryptoBackendDriveSweepResult {
-        var result = EndpointCryptoBackendDriveSweepResult{};
-        for (views) |view| {
-            const progress = try self.driveCryptoBackendAcrossSpacesOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                spaces,
-                view.backend,
-                view.scratch,
-            );
-            accumulateCryptoBackendProgress(&result, progress);
-        }
-        return result;
-    }
 
     // -----------------------------------------------------------------------
     // Unified crypto backend drive step
@@ -7621,31 +7596,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Drive compatible-version backends across ordered packet number spaces
-    /// for caller-owned connections.
-    ///
-    /// This is the cross-space sweep form of
-    /// `driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections()`.
-    pub fn driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
-        self: *EndpointConnectionLifecycle,
-        spaces: []const PacketNumberSpace,
-        views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-    ) Error!EndpointCryptoBackendDriveSweepResult {
-        var result = EndpointCryptoBackendDriveSweepResult{};
-        for (views) |view| {
-            const progress = try self.driveCryptoBackendAcrossSpacesWithCompatibleVersionAndArmConnection(
-                view.connection_id,
-                view.connection,
-                spaces,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            );
-            accumulateCryptoBackendProgress(&result, progress);
-        }
-        return result;
-    }
 
     /// Drive compatible-version backends across ordered packet number spaces,
     /// then select the next deadline.
