@@ -2732,7 +2732,7 @@ pub const Connection = struct {
         self.peer_version_information_available_versions = peer_available_versions;
         peer_available_versions = null;
         self.peer_active_connection_id_limit = params.active_connection_id_limit;
-        self.recovery_state.max_ack_delay_ns = params.max_ack_delay;
+        self.recovery_state.max_ack_delay_ns = params.max_ack_delay * 1_000_000; // ms→ns
         self.syncRecoveryMaxDatagramSize();
 
         for (self.send_streams.items) |*stream| {
@@ -11722,7 +11722,7 @@ test "init validates initial stream count limits" {
         .ack_delay_exponent = 21,
     }));
     try std.testing.expectError(error.InvalidPacket, Connection.init(std.testing.allocator, .client, .{
-        .max_ack_delay_ns = 1 << 14,
+        .max_ack_delay_ns = (1 << 14) * 1_000_000, // 16384ms in ns
     }));
     try std.testing.expectError(error.InvalidStream, Connection.init(std.testing.allocator, .client, .{
         .receive_stream_count_window = max_stream_count + 1,
@@ -12092,7 +12092,7 @@ test "localTransportParameters keeps local ACK policy separate from peer recover
         .max_ack_delay = 50,
     });
     try std.testing.expectEqual(@as(u64, 4), conn.peer_ack_delay_exponent);
-    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ns);
+    try std.testing.expectEqual(@as(u64, 50_000_000), conn.recovery_state.max_ack_delay_ns);
 
     const after = conn.localTransportParameters();
     try std.testing.expectEqual(@as(u64, 7), after.ack_delay_exponent);
@@ -12394,7 +12394,7 @@ test "applyPeerTransportParameters updates send limits and ACK policy" {
     try std.testing.expectEqual(preferred.ipv4_port, stored_preferred.ipv4_port);
     try std.testing.expectEqualSlices(u8, preferred.connectionId(), stored_preferred.connectionId());
     try std.testing.expectEqualSlices(u8, &reset_token, &stored_preferred.stateless_reset_token);
-    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ns);
+    try std.testing.expectEqual(@as(u64, 50_000_000), conn.recovery_state.max_ack_delay_ns);
     try std.testing.expectEqual(@as(u64, 5), conn.findSendStream(bidi_stream).?.max_data);
     try std.testing.expectError(error.FlowControlBlocked, conn.openStream());
 
