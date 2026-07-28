@@ -52,6 +52,7 @@ comptime {
     _ = pq_kex;
     _ = qlog;
     _ = cubic;
+    _ = @import("quic/connection_tests.zig");
     _ = pacer;
     _ = duration;
     _ = pmtu;
