@@ -243,11 +243,14 @@ pub const Recovery = struct {
     ) void {
         self.pto_count = 0;
         if (!congestion_window_utilized) {
-            // RFC 8312 §5.8: signal app-limited to CUBIC epoch
+            // RFC 8312 §5.8: signal app-limited to CUBIC epoch.
             if (self.congestion_algorithm == .cubic) {
                 self.cubic.onAppLimited(sent_time_nanos);
             }
-            return;
+            // Slow start must not grow when the window is underutilized.
+            // Congestion avoidance still grows (s2n-quic behavior):
+            // the app-limited signal only adjusts the CUBIC epoch timing.
+            if (self.congestion_state != .congestion_avoidance) return;
         }
         // No cwnd growth during recovery. Recovery ends when
         // an ACK arrives for a packet sent after the recovery started.
