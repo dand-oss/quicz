@@ -44997,11 +44997,7 @@ test "EndpointConnectionLifecycle backend drive selects next deadline" {
         .connection = &connection,
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceAndSelectNextDeadline(
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.driveCryptoBackendStep(&.{.handshake}, &drive_views, .{ .output = .select_deadline }, &.{}, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 0), result.backend.progress.outbound_chunks);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -45072,11 +45068,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive selects next d
         .connection = &connection,
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.driveCryptoBackendStep(&.{.handshake}, &drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 0), result.backend.progress.outbound_chunks);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -45841,12 +45833,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
         .connection = &connection,
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const result = try lifecycle.driveCryptoBackendStep(&.{.handshake}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, &compatibilities, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(peer_params.len, result.backend.progress.peer_transport_parameters_bytes);
     try std.testing.expect(result.backend.progress.peer_transport_parameters_applied);
@@ -46144,12 +46131,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backends acro
         .connection_id = 165,
         .connection = &sweep_connection,
     }};
-    const sweep = try lifecycle.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        &spaces,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const sweep = try lifecycle.driveCryptoBackendStep(&spaces, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, &compatibilities, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), sweep.backend.connections_driven);
     try std.testing.expectEqual(peer_params.len, sweep.backend.progress.peer_transport_parameters_bytes);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), sweep.backend.progress.peer_compatible_version_selected);
