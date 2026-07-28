@@ -9005,6 +9005,7 @@ pub const Connection = struct {
             self.local_one_rtt_key_update_ack_threshold = null;
         }
 
+        packet_space.recovery_state.notifyLargestAcked(ack.largest_acknowledged);
         const pto_backoff_before_ack = self.ptoBackoffSnapshot();
         if (latest_rtt_sample) |rtt_sample| {
             packet_space.recovery_state.onPacketAckedWithUtilization(

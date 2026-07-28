@@ -65,6 +65,9 @@ pub const Recovery = struct {
     largest_sent_packet_number: u64 = 0,
     /// Largest sent PN at the last cwnd cutback (quic-go style recovery).
     largest_sent_at_last_cutback: ?u64 = null,
+    /// Largest acknowledged packet number (updated by Connection on each ACK).
+    /// Used for packet-number-based recovery detection (quic-go style).
+    largest_acked_packet_number: ?u64 = null,
     ssthresh: usize = std.math.maxInt(usize),
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
@@ -128,6 +131,26 @@ pub const Recovery = struct {
     /// Record bytes for a sent ack-eliciting packet.
     pub fn onPacketSent(self: *Recovery, bytes: usize) void {
         self.bytes_in_flight = std.math.add(usize, self.bytes_in_flight, bytes) catch std.math.maxInt(usize);
+    }
+
+    /// Update the largest acknowledged packet number (called by Connection
+    /// when processing ACK frames). Enables packet-number-based recovery
+    /// detection: recovery ends when largestAckedPN > largestSentAtLastCutback.
+    pub fn notifyLargestAcked(self: *Recovery, pn: u64) void {
+        if (self.largest_acked_packet_number) |cur| {
+            if (pn > cur) self.largest_acked_packet_number = pn;
+        } else {
+            self.largest_acked_packet_number = pn;
+        }
+    }
+
+    /// Packet-number-based recovery check (quic-go style).
+    /// True when the largest ACKed packet was sent before or at the last
+    /// cwnd cutback, meaning we are still in the recovery period.
+    pub fn inRecoveryByPacketNumber(self: Recovery) bool {
+        const acked = self.largest_acked_packet_number orelse return false;
+        const cutback = self.largest_sent_at_last_cutback orelse return false;
+        return acked <= cutback;
     }
 
     /// Record an acknowledged packet and update RTT/congestion state.
@@ -978,4 +1001,29 @@ test "NewReno still works when selected" {
     // NewReno halves the window
     try std.testing.expectEqual(initial_cwnd / 2, r.ssthresh);
     try std.testing.expect(r.congestion_window >= r.ssthresh);
+}
+
+test "PN-based recovery blocks then allows growth after cutback ACK" {
+    var r = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100_000_000, .congestion_algorithm = .cubic });
+    r.largest_sent_packet_number = 100;
+    r.onPacketSent(12000);
+    const cwnd_before = r.congestion_window;
+
+    // Loss at PN 50 → cutback, largest_sent_at_last_cutback = 100
+    r.onPacketLostWithNumber(1200, 10, 20, 50);
+    try std.testing.expect(r.congestion_window < cwnd_before);
+    try std.testing.expectEqual(@as(?u64, 100), r.largest_sent_at_last_cutback);
+
+    // ACK for PN 90 (before cutback) → still in recovery, no growth
+    r.notifyLargestAcked(90);
+    try std.testing.expect(r.inRecoveryByPacketNumber());
+    const cwnd_in_recovery = r.congestion_window;
+    r.onPacketAckedWithUtilization(1200, 15, 100_000_000, 0, true);
+    try std.testing.expectEqual(cwnd_in_recovery, r.congestion_window);
+
+    // ACK for PN 101 (after cutback) → recovery ends, growth resumes
+    r.notifyLargestAcked(101);
+    try std.testing.expect(!r.inRecoveryByPacketNumber());
+    r.onPacketAckedWithUtilization(1200, 25, 100_000_000, 0, true);
+    try std.testing.expect(r.congestion_window > cwnd_in_recovery);
 }
