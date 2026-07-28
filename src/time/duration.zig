@@ -2,9 +2,9 @@
 //! s2n-quic/Rust Duration, and quiche Duration).
 //!
 //! Usage:
-//!   .initial_rtt = Duration.fromMillis(333),
-//!   .max_ack_delay = Duration.fromMillis(25),
-//!   .min_rtt = Duration.fromMicros(1),
+//!   const rtt = Duration.fromMillis(333);
+//!   const delay = Duration.fromMicros(100);
+//!   const timeout = Duration.fromSecs(30);
 
 /// Time duration with nanosecond precision (u64 nanoseconds internally).
 /// Compatible with quic-go (time.Duration), s2n-quic (Duration), quiche (Duration).
@@ -60,17 +60,14 @@ pub const Duration = struct {
     /// Zero duration.
     pub const zero = Duration{ .ns = 0 };
 
-    /// 1 microsecond (s2n-quic MIN_RTT).
+    /// 1 microsecond.
     pub const one_micros = Duration{ .ns = 1_000 };
 
-    /// 1 millisecond (RFC 9002 kGranularity).
+    /// 1 millisecond.
     pub const one_millis = Duration{ .ns = 1_000_000 };
 
-    /// 333 milliseconds (RFC 9002 initial RTT).
-    pub const initial_rtt = Duration{ .ns = 333_000_000 };
-
-    /// 25 milliseconds (RFC 9000 default max_ack_delay).
-    pub const default_max_ack_delay = Duration{ .ns = 25_000_000 };
+    /// 1 second.
+    pub const one_sec = Duration{ .ns = 1_000_000_000 };
 
     // -- Arithmetic --
 
@@ -145,10 +142,9 @@ test "Duration fromMicros (s2n-quic MIN_RTT)" {
 }
 
 test "Duration constants" {
-    try std.testing.expectEqual(@as(u64, 333_000_000), Duration.initial_rtt.ns);
-    try std.testing.expectEqual(@as(u64, 25_000_000), Duration.default_max_ack_delay.ns);
     try std.testing.expectEqual(@as(u64, 1_000), Duration.one_micros.ns);
     try std.testing.expectEqual(@as(u64, 1_000_000), Duration.one_millis.ns);
+    try std.testing.expectEqual(@as(u64, 1_000_000_000), Duration.one_sec.ns);
 }
 
 test "Duration arithmetic" {

@@ -27,3 +27,37 @@ pub const packet_threshold_loss_gap: u64 = 3;
 
 /// Server anti-amplification budget is three times received bytes.
 pub const anti_amplification_multiplier: usize = 3;
+
+// ---------------------------------------------------------------------------
+// Timing constants (RFC 9000 / RFC 9002)
+// ---------------------------------------------------------------------------
+
+const Duration = @import("../time/duration.zig").Duration;
+
+/// RFC 9002 §6.2.2: Initial RTT estimate before any measurement.
+/// "When no previous RTT is available, the initial RTT SHOULD be set to
+/// 333 milliseconds."
+pub const initial_rtt: Duration = Duration.fromMillis(333);
+
+/// RFC 9000 §13.2.1: Default max_ack_delay transport parameter.
+/// "If this transport parameter is absent, a value of 25 milliseconds
+/// is assumed."
+pub const default_max_ack_delay: Duration = Duration.fromMillis(25);
+
+/// RFC 9002 §6.1.2: Timer granularity (kGranularity).
+/// "The RECOMMENDED value of the timer granularity is 1 millisecond."
+pub const timer_granularity: Duration = Duration.fromMillis(1);
+
+/// Minimum trackable RTT: 1μs (matching s2n-quic MIN_RTT).
+/// Prevents zero-RTT samples from collapsing the estimator on loopback.
+pub const min_trackable_rtt: Duration = Duration.fromMicros(1);
+
+/// RFC 9002 §7.6.1: Persistent congestion threshold multiplier.
+/// "(smoothed_rtt + max(4*rttvar, kGranularity) + max_ack_delay) *
+/// kPersistentCongestionThreshold"
+pub const persistent_congestion_threshold: u64 = 3;
+
+/// RFC 9002 §6.1.2: Time threshold numerator/denominator (9/8).
+/// "max(kTimeThreshold * max(smoothed_rtt, latest_rtt), kGranularity)"
+pub const time_threshold_numerator: u64 = 9;
+pub const time_threshold_denominator: u64 = 8;
