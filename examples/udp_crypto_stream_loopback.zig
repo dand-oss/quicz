@@ -156,14 +156,14 @@ pub fn main() !void {
         .initial_max_data = 12_345,
         .max_datagram_size = 1300,
         .ack_delay_exponent = 4,
-        .max_ack_delay_ms = 44,
+        .max_ack_delay_ns = 44000000,
     });
     defer client.deinit();
     var server = try quicz.Connection.init(allocator, .server, .{
         .initial_max_data = 54_321,
         .max_datagram_size = 1400,
         .ack_delay_exponent = 5,
-        .max_ack_delay_ms = 33,
+        .max_ack_delay_ns = 33000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();

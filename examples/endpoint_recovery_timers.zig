@@ -25,7 +25,7 @@ pub fn main() !void {
     };
 
     var pto_conn = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer pto_conn.deinit();
     var loss_conn = try quicz.Connection.init(allocator, .client, .{});
@@ -105,7 +105,7 @@ pub fn main() !void {
     try require(endpoint_lifecycle.routeCount() == 0);
 
     var closing_conn = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer closing_conn.deinit();
     try closing_conn.confirmHandshake();
@@ -149,7 +149,7 @@ pub fn main() !void {
     var long_pto_lifecycle = quicz.EndpointConnectionLifecycle.init(allocator);
     defer long_pto_lifecycle.deinit();
     var long_pto_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer long_pto_client.deinit();
     _ = try long_pto_client.recordPacketSentInSpace(.initial, 10, 100);
@@ -189,7 +189,7 @@ pub fn main() !void {
     var installed_pto_lifecycle = quicz.EndpointConnectionLifecycle.init(allocator);
     defer installed_pto_lifecycle.deinit();
     var installed_pto_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer installed_pto_client.deinit();
     try installed_pto_client.installOneRttTrafficSecrets(.{
@@ -229,7 +229,7 @@ pub fn main() !void {
     var installed_handshake_pto_lifecycle = quicz.EndpointConnectionLifecycle.init(allocator);
     defer installed_handshake_pto_lifecycle.deinit();
     var installed_handshake_pto_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer installed_handshake_pto_client.deinit();
     _ = try installed_handshake_pto_client.recordPacketSentInSpace(.initial, 10, 100);
@@ -267,7 +267,7 @@ pub fn main() !void {
     var installed_zero_rtt_pto_lifecycle = quicz.EndpointConnectionLifecycle.init(allocator);
     defer installed_zero_rtt_pto_lifecycle.deinit();
     var installed_zero_rtt_pto_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer installed_zero_rtt_pto_client.deinit();
     try installed_zero_rtt_pto_client.installZeroRttTrafficSecrets(.{
@@ -310,11 +310,11 @@ pub fn main() !void {
     try require(installed_zero_rtt_pto_lifecycle.recoveryTimerCount() == 1);
 
     var protected_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer protected_client.deinit();
     var protected_server = try quicz.Connection.init(allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer protected_server.deinit();
     try protected_server.validatePeerAddress();

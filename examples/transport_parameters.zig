@@ -63,7 +63,7 @@ pub fn main() !void {
     var client = try quicz.Connection.init(allocator, .client, .{
         .max_idle_timeout_ms = 300,
         .ack_delay_exponent = 4,
-        .max_ack_delay_ms = 33,
+        .max_ack_delay_ns = 33000000,
         .initial_max_data = 256,
         .initial_max_stream_data = 64,
         .initial_max_streams_bidi = 2,
@@ -74,7 +74,7 @@ pub fn main() !void {
         .max_datagram_size = 1200,
         .max_idle_timeout_ms = 200,
         .ack_delay_exponent = 5,
-        .max_ack_delay_ms = 40,
+        .max_ack_delay_ns = 40000000,
         .disable_active_migration = true,
         .stateless_reset_token = reset_token,
         .preferred_address = preferred,

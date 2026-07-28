@@ -94,10 +94,10 @@ pub const SentPacket = struct {
 /// RTT estimator rollback snapshot for one packet number space.
 pub const RttEstimateSnapshot = struct {
     first_rtt_sample_sent_time_millis: ?i64,
-    latest_rtt_ms: ?u64,
-    min_rtt_ms: ?u64,
-    smoothed_rtt_ms: u64,
-    rttvar_ms: u64,
+    latest_rtt_ns: ?u64,
+    min_rtt_ns: ?u64,
+    smoothed_rtt_ns: u64,
+    rttvar_ns: u64,
 };
 
 /// PTO backoff rollback snapshot across packet number spaces.

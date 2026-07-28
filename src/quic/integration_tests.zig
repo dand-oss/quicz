@@ -18,7 +18,7 @@ const Connection = connection_module.Connection;
 test "integration: CUBIC congestion control through recovery" {
     var r = recovery.Recovery.init(.{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .congestion_algorithm = .cubic,
     });
 

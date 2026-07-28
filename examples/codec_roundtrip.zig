@@ -468,7 +468,7 @@ fn connectionTransportParameters(allocator: std.mem.Allocator) !void {
     var client = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1400,
         .ack_delay_exponent = 7,
-        .max_ack_delay_ms = 15,
+        .max_ack_delay_ns = 15000000,
         .disable_active_migration = true,
         .stateless_reset_token = reset_token,
         .initial_max_data = 4096,
@@ -492,7 +492,7 @@ fn connectionTransportParameters(allocator: std.mem.Allocator) !void {
 
     var server = try quicz.Connection.init(allocator, .server, .{
         .ack_delay_exponent = 4,
-        .max_ack_delay_ms = 50,
+        .max_ack_delay_ns = 50000000,
         .disable_active_migration = true,
         .stateless_reset_token = reset_token,
         .preferred_address = preferred,

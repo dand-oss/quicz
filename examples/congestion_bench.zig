@@ -21,7 +21,7 @@ const Recovery = quicz.recovery.Recovery;
 const RecoveryConfig = quicz.recovery.Config;
 
 const max_datagram_size: usize = 1200;
-const initial_rtt_ms: u32 = 50;
+const initial_rtt_ns: u32 = 50;
 
 /// Simulation parameters.
 const sim_duration_ms: i64 = 10_000;
@@ -42,16 +42,16 @@ pub fn main() !void {
 
     try stdout.print("=== Congestion Control Comparison Benchmark ===\n", .{});
     try stdout.print("Path: RTT={d}ms, MDS={d}B, loss every {d}ms, duration={d}ms\n\n", .{
-        initial_rtt_ms,
+        initial_rtt_ns,
         max_datagram_size,
         loss_interval_ms,
         sim_duration_ms,
     });
 
     const algos = [_]struct { name: []const u8, config: RecoveryConfig }{
-        .{ .name = "NewReno", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ms = initial_rtt_ms, .congestion_algorithm = .new_reno } },
-        .{ .name = "CUBIC", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ms = initial_rtt_ms, .congestion_algorithm = .cubic } },
-        .{ .name = "BBR", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ms = initial_rtt_ms, .congestion_algorithm = .bbr } },
+        .{ .name = "NewReno", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .new_reno } },
+        .{ .name = "CUBIC", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .cubic } },
+        .{ .name = "BBR", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .bbr } },
     };
 
     var results: [3]AlgoResult = undefined;
@@ -118,9 +118,9 @@ fn runSimulation(
         }
 
         // Simulate ACK arrival after one RTT.
-        const sent_time = now_ms - @as(i64, initial_rtt_ms);
+        const sent_time = now_ms - @as(i64, initial_rtt_ns);
         if (send_bytes > 0) {
-            recovery.onPacketAcked(send_bytes, sent_time, initial_rtt_ms, 0);
+            recovery.onPacketAcked(send_bytes, sent_time, initial_rtt_ns, 0);
         }
 
         // Track peak.

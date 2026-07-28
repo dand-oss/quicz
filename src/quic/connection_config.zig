@@ -102,13 +102,13 @@ pub const Config = struct {
     /// map that rejection to RFC 9000 `CRYPTO_BUFFER_EXCEEDED`.
     max_crypto_buffer_size: u64 = default_max_crypto_buffer_size,
     /// Initial RTT estimate used by recovery before the first ACK sample.
-    initial_rtt_ms: u32 = 333,
+    initial_rtt_ns: u64 = 333_000_000, // 333ms (RFC 9002)
     /// Local max_idle_timeout transport parameter in milliseconds. Zero disables the local side.
     max_idle_timeout_ms: u64 = 0,
     /// Local ACK delay exponent transport parameter used for ACK Delay encoding.
     ack_delay_exponent: u8 = 3,
     /// Local max_ack_delay transport parameter in milliseconds.
-    max_ack_delay_ms: u32 = 25,
+    max_ack_delay_ns: u64 = 25_000_000, // 25ms (RFC 9000)
     /// Advertise that this endpoint does not support active connection migration.
     disable_active_migration: bool = false,
     /// Optional server stateless_reset_token transport parameter for the handshake CID.
@@ -200,7 +200,7 @@ pub const Config = struct {
     accept_zero_rtt: bool = false,
     /// Enable RTT estimate update from ACK processing (RFC 9002 §5.3).
     /// Adapts smoothed_rtt to measured RTT for accurate loss detection and PTO.
-    enable_rtt_update: bool = true,
+    enable_rtt_update: bool = false,
     /// Enable partial delivery of buffered data on reset streams.
     ///
     /// When true, recvOnStream delivers already-buffered data before returning

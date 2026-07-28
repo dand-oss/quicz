@@ -285,12 +285,12 @@ fn runRecoveryPeriodPhase(allocator: std.mem.Allocator, io: std.Io) !RecoveryPer
 
     var client = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try quicz.Connection.init(allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -356,12 +356,12 @@ fn runPersistentCongestionPhase(allocator: std.mem.Allocator, io: std.Io) !Persi
 
     var client = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try quicz.Connection.init(allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -429,12 +429,12 @@ fn runCeProbePhase(allocator: std.mem.Allocator, io: std.Io) !CeProbeResult {
 
     var client = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try quicz.Connection.init(allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();

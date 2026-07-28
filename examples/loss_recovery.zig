@@ -79,7 +79,7 @@ pub fn main() !void {
 
     var newreno = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer newreno.deinit();
 
@@ -137,7 +137,7 @@ pub fn main() !void {
 
     var batched_avoidance = quicz.recovery.Recovery.init(.{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     batched_avoidance.congestion_window = 12_000;
     batched_avoidance.ssthresh = 12_000;
@@ -152,7 +152,7 @@ pub fn main() !void {
 
     var newreno_clamp = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer newreno_clamp.deinit();
     newreno_clamp.recovery_state.congestion_window = 3_000;
@@ -175,7 +175,7 @@ pub fn main() !void {
 
     var persistent = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer persistent.deinit();
 
@@ -224,7 +224,7 @@ pub fn main() !void {
 
     var non_contiguous_persistent = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer non_contiguous_persistent.deinit();
 
@@ -258,7 +258,7 @@ pub fn main() !void {
 
     var recovery_period = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer recovery_period.deinit();
     var packet_number: u64 = 0;
@@ -286,7 +286,7 @@ pub fn main() !void {
 
     var recovery_ack_accounting = quicz.recovery.Recovery.init(.{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     recovery_ack_accounting.congestion_window = 12_000;
     recovery_ack_accounting.ssthresh = 12_000;
@@ -314,7 +314,7 @@ pub fn main() !void {
 
     var congestion_probe = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1350,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer congestion_probe.deinit();
     const probe_stream_id = try congestion_probe.openStream();
@@ -348,7 +348,7 @@ pub fn main() !void {
 
     var ce_probe = try quicz.Connection.init(allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ce_probe.deinit();
     const ce_probe_stream_id = try ce_probe.openStream();
@@ -394,7 +394,7 @@ pub fn main() !void {
     );
 
     var rtt_sampling = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer rtt_sampling.deinit();
     _ = try rtt_sampling.recordPacketSentInSpace(.application, 90, 100);
@@ -430,7 +430,7 @@ pub fn main() !void {
 
     var cross_space_gate = try quicz.Connection.init(allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer cross_space_gate.deinit();
     try cross_space_gate.validatePeerAddress();
@@ -463,7 +463,7 @@ pub fn main() !void {
     );
 
     var ack_delay = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ack_delay.deinit();
     try ack_delay.applyPeerTransportParameters(.{

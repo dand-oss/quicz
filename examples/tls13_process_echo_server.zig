@@ -364,7 +364,7 @@ fn serveConcurrent(
                     .max_datagram_size = server_max_datagram_size,
                     // Keep the local loss-recovery probe comfortably ahead of
                     // the configured endpoint idle timeout.
-                    .initial_rtt_ms = 100,
+                    .initial_rtt_ns = 100000000,
                     .max_idle_timeout_ms = idle_timeout_millis,
                 }, .{
                     .alpn = &alpn,

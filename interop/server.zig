@@ -278,7 +278,7 @@ pub fn main(init: std.process.Init) !void {
                         .initial_max_streams_bidi = 128,
                         .initial_max_streams_uni = 128,
                         .max_datagram_size = max_datagram_size,
-                        .initial_rtt_ms = 100,
+                        .initial_rtt_ns = 100000000,
                         .max_idle_timeout_ms = 30000,
                     }, .{
                         .alpn = &[_][]const u8{"hq-interop"},

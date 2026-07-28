@@ -374,8 +374,8 @@ const LossDetectionResult = struct {
     ) bool {
         if (self.pc_candidate_count < 2 or !self.pc_contiguous_packet_numbers) return false;
         const duration_ms = switch (space) {
-            .initial, .handshake => recovery_state.persistentCongestionDurationMsWithoutMaxAckDelay(),
-            .application => recovery_state.persistentCongestionDurationMs(),
+            .initial, .handshake => recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay(),
+            .application => recovery_state.persistentCongestionDurationNs(),
         };
         return elapsedMillis(self.pc_first_sent_time_millis, self.pc_last_sent_time_millis) >=
             duration_ms;
@@ -407,11 +407,11 @@ fn ptoDeadlineFor(
     const sent_time = latest_sent_time orelse return null;
     var deadline_recovery_state = recovery_state;
     deadline_recovery_state.pto_count = pto_count;
-    const pto_ms = if (include_max_ack_delay)
-        deadline_recovery_state.ptoMs()
+    const pto_ns = if (include_max_ack_delay)
+        deadline_recovery_state.ptoNs()
     else
-        deadline_recovery_state.ptoMsWithoutMaxAckDelay();
-    return saturatingAddMillis(sent_time, pto_ms);
+        deadline_recovery_state.ptoNsWithoutMaxAckDelay();
+    return saturatingAddMillis(sent_time, pto_ns / 1_000_000);
 }
 
 fn ptoDeadlineFromStart(
@@ -422,11 +422,11 @@ fn ptoDeadlineFromStart(
 ) i64 {
     var deadline_recovery_state = recovery_state;
     deadline_recovery_state.pto_count = pto_count;
-    const pto_ms = if (include_max_ack_delay)
-        deadline_recovery_state.ptoMs()
+    const pto_ns = if (include_max_ack_delay)
+        deadline_recovery_state.ptoNs()
     else
-        deadline_recovery_state.ptoMsWithoutMaxAckDelay();
-    return saturatingAddMillis(start_millis, pto_ms);
+        deadline_recovery_state.ptoNsWithoutMaxAckDelay();
+    return saturatingAddMillis(start_millis, pto_ns / 1_000_000);
 }
 
 fn saturatingAddU64(a: u64, b: u64) u64 {
@@ -446,6 +446,7 @@ fn deinitPeerClose(close: *PeerClose, allocator: std.mem.Allocator) void {
         .application => |application| allocator.free(application.reason_phrase),
     }
 }
+
 
 fn elapsedMillis(sent_time_millis: i64, now_millis: i64) u64 {
     if (now_millis <= sent_time_millis) return 0;
@@ -798,7 +799,7 @@ pub const Connection = struct {
         if (config.ack_delay_exponent > 20) {
             return error.InvalidPacket;
         }
-        if (config.max_ack_delay_ms >= (@as(u32, 1) << 14)) {
+        if (config.max_ack_delay_ns / 1_000_000 >= (@as(u64, 1) << 14)) {
             return error.InvalidPacket;
         }
         if (config.max_crypto_buffer_size > max_quic_varint) {
@@ -895,8 +896,8 @@ pub const Connection = struct {
             .peer_streams_blocked_uni_limit = null,
             .recovery_state = recovery.Recovery.init(.{
                 .max_datagram_size = config.max_datagram_size,
-                .initial_rtt_ms = config.initial_rtt_ms,
-                .max_ack_delay_ms = config.max_ack_delay_ms,
+                .initial_rtt_ns = config.initial_rtt_ns,
+                .max_ack_delay_ns = config.max_ack_delay_ns,
                 .congestion_algorithm = config.congestion_algorithm,
             }),
             .sent_packets = .empty,
@@ -1365,11 +1366,12 @@ pub const Connection = struct {
 
     /// Return the current smoothed RTT estimate for one packet number space.
     pub fn smoothedRttMillis(self: Connection, space: PacketNumberSpace) u64 {
-        return switch (space) {
-            .initial => self.initial_packet_space.recovery_state.smoothed_rtt_ms,
-            .handshake => self.handshake_packet_space.recovery_state.smoothed_rtt_ms,
-            .application => self.recovery_state.smoothed_rtt_ms,
+        const ns = switch (space) {
+            .initial => self.initial_packet_space.recovery_state.smoothed_rtt_ns,
+            .handshake => self.handshake_packet_space.recovery_state.smoothed_rtt_ns,
+            .application => self.recovery_state.smoothed_rtt_ns,
         };
+        return ns / 1_000_000; // ns→ms for backward-compatible API
     }
 
     /// Return the current time-threshold loss deadline for one packet number space.
@@ -2613,7 +2615,7 @@ pub const Connection = struct {
             .initial_max_streams_bidi = self.recv_max_streams_bidi,
             .initial_max_streams_uni = self.recv_max_streams_uni,
             .ack_delay_exponent = self.config.ack_delay_exponent,
-            .max_ack_delay = self.config.max_ack_delay_ms,
+            .max_ack_delay = self.config.max_ack_delay_ns,
             .disable_active_migration = self.config.disable_active_migration,
             .active_connection_id_limit = self.config.active_connection_id_limit,
             .original_destination_connection_id = if (self.side == .server) self.originalDestinationConnectionId() else null,
@@ -2730,7 +2732,7 @@ pub const Connection = struct {
         self.peer_version_information_available_versions = peer_available_versions;
         peer_available_versions = null;
         self.peer_active_connection_id_limit = params.active_connection_id_limit;
-        self.recovery_state.max_ack_delay_ms = params.max_ack_delay;
+        self.recovery_state.max_ack_delay_ns = params.max_ack_delay;
         self.syncRecoveryMaxDatagramSize();
 
         for (self.send_streams.items) |*stream| {
@@ -3053,7 +3055,7 @@ pub const Connection = struct {
     }
 
     fn closeStateTimeoutMillis(self: Connection) u64 {
-        return saturatingMulU64(close_state_pto_multiplier, self.recovery_state.ptoMs());
+        return saturatingMulU64(close_state_pto_multiplier, self.recovery_state.ptoNs() / 1_000_000);
     }
 
     fn closeStateDeadlineMillis(self: Connection, now_millis: i64) i64 {
@@ -3225,17 +3227,17 @@ pub const Connection = struct {
         if (space == .initial or space == .handshake) return 0;
         const scaled_ack_delay = self.scaledPeerAckDelay(ack_delay);
         if (!self.handshake_confirmed) return scaled_ack_delay;
-        return @min(scaled_ack_delay, self.recovery_state.max_ack_delay_ms);
+        return @min(scaled_ack_delay, self.recovery_state.max_ack_delay_ns);
     }
 
     fn rttEstimateSnapshot(self: *Connection, space: PacketNumberSpace) RttEstimateSnapshot {
         const packet_space = self.packetNumberSpace(space);
         return .{
             .first_rtt_sample_sent_time_millis = packet_space.first_rtt_sample_sent_time_millis.*,
-            .latest_rtt_ms = packet_space.recovery_state.latest_rtt_ms,
-            .min_rtt_ms = packet_space.recovery_state.min_rtt_ms,
-            .smoothed_rtt_ms = packet_space.recovery_state.smoothed_rtt_ms,
-            .rttvar_ms = packet_space.recovery_state.rttvar_ms,
+            .latest_rtt_ns = packet_space.recovery_state.latest_rtt_ns,
+            .min_rtt_ns = packet_space.recovery_state.min_rtt_ns,
+            .smoothed_rtt_ns = packet_space.recovery_state.smoothed_rtt_ns,
+            .rttvar_ns = packet_space.recovery_state.rttvar_ns,
         };
     }
 
@@ -3246,10 +3248,10 @@ pub const Connection = struct {
     ) void {
         const packet_space = self.packetNumberSpace(space);
         packet_space.first_rtt_sample_sent_time_millis.* = snapshot.first_rtt_sample_sent_time_millis;
-        packet_space.recovery_state.latest_rtt_ms = snapshot.latest_rtt_ms;
-        packet_space.recovery_state.min_rtt_ms = snapshot.min_rtt_ms;
-        packet_space.recovery_state.smoothed_rtt_ms = snapshot.smoothed_rtt_ms;
-        packet_space.recovery_state.rttvar_ms = snapshot.rttvar_ms;
+        packet_space.recovery_state.latest_rtt_ns = snapshot.latest_rtt_ns;
+        packet_space.recovery_state.min_rtt_ns = snapshot.min_rtt_ns;
+        packet_space.recovery_state.smoothed_rtt_ns = snapshot.smoothed_rtt_ns;
+        packet_space.recovery_state.rttvar_ns = snapshot.rttvar_ns;
     }
 
     fn ptoBackoffSnapshot(self: Connection) PtoBackoffSnapshot {
@@ -3328,10 +3330,10 @@ pub const Connection = struct {
             if (target_space == source_space) continue;
             const target_packet_space = self.packetNumberSpace(target_space);
             if (target_packet_space.discarded.*) continue;
-            target_packet_space.recovery_state.latest_rtt_ms = source_recovery.latest_rtt_ms;
-            target_packet_space.recovery_state.min_rtt_ms = source_recovery.min_rtt_ms;
-            target_packet_space.recovery_state.smoothed_rtt_ms = source_recovery.smoothed_rtt_ms;
-            target_packet_space.recovery_state.rttvar_ms = source_recovery.rttvar_ms;
+            target_packet_space.recovery_state.latest_rtt_ns = source_recovery.latest_rtt_ns;
+            target_packet_space.recovery_state.min_rtt_ns = source_recovery.min_rtt_ns;
+            target_packet_space.recovery_state.smoothed_rtt_ns = source_recovery.smoothed_rtt_ns;
+            target_packet_space.recovery_state.rttvar_ns = source_recovery.rttvar_ns;
         }
     }
 
@@ -4219,11 +4221,11 @@ pub const Connection = struct {
         // Pacer gate: block ack-eliciting packets when budget is exhausted.
         // Control packets (ACK, CLOSE, PATH_RESPONSE) bypass the pacer.
         // Before the first RTT sample, pacing is disabled (no rate estimate).
-        if (self.recovery_state.min_rtt_ms != null and
+        if (self.recovery_state.min_rtt_ns != null and
             (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0))
         {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt = self.recovery_state.smoothed_rtt_ms;
+            const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
             if (!self.tx_pacer.canSend(now_millis, self.maxTxDatagramSize(), cwnd, srtt)) {
                 return null;
             }
@@ -4255,7 +4257,7 @@ pub const Connection = struct {
         self.commitBuiltProtectedShortPacket(built, now_millis);
         if (built.ack_eliciting) {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt = self.recovery_state.smoothed_rtt_ms;
+            const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
             self.tx_pacer.onPacketSent(now_millis, built.datagram.len, cwnd, srtt);
         }
         return built.datagram;
@@ -8951,9 +8953,9 @@ pub const Connection = struct {
                 if (space == .initial or space == .handshake) {
                     ack_delay_ms = 0;
                 } else if (self.handshakeConfirmed()) {
-                    ack_delay_ms = @min(ack_delay_ms, self.config.max_ack_delay_ms);
+                    ack_delay_ms = @min(ack_delay_ms, self.config.max_ack_delay_ns);
                 }
-                packet_space.recovery_state.updateRtt(rtt_sample, ack_delay_ms);
+                packet_space.recovery_state.updateRtt(rtt_sample * 1_000_000, ack_delay_ms * 1_000_000); // ms→ns
             }
         }
         if (acked_bytes != 0) {
@@ -9091,9 +9093,9 @@ pub const Connection = struct {
         latest_rtt_sample_ms: ?u64,
         now_millis: i64,
     ) Error!LossDetectionResult {
-        const loss_delay_ms = recovery.timeThresholdLossDelayMs(
-            latest_rtt_sample_ms orelse packet_space.recovery_state.latest_rtt_ms,
-            packet_space.recovery_state.smoothed_rtt_ms,
+        const loss_delay_ns = recovery.timeThresholdLossDelayMs(
+            (latest_rtt_sample_ms orelse 0) * 1_000_000, // ms→ns
+            packet_space.recovery_state.smoothed_rtt_ns,
         );
 
         var retransmit_frames: std.ArrayList(PendingStreamFrame) = .empty;
@@ -9116,9 +9118,9 @@ pub const Connection = struct {
             if (sent_packet.packet_number > largest_acknowledged) continue;
             const packet_threshold_lost = largest_acknowledged >=
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
-            const time_threshold_lost = saturatingAddMillis(sent_packet.sent_time_millis, loss_delay_ms) <= now_millis;
+            const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = saturatingAddMillis(sent_packet.sent_time_millis, loss_delay_ms);
+                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast(loss_delay_ns / 1_000_000));
                 next_loss_deadline = if (next_loss_deadline) |current|
                     @min(current, deadline)
                 else
@@ -9181,9 +9183,9 @@ pub const Connection = struct {
             }
             const packet_threshold_lost = largest_acknowledged >=
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
-            const time_threshold_lost = saturatingAddMillis(sent_packet.sent_time_millis, loss_delay_ms) <= now_millis;
+            const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = saturatingAddMillis(sent_packet.sent_time_millis, loss_delay_ms);
+                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast(loss_delay_ns / 1_000_000));
                 packet_space.loss_deadline_millis.* = if (packet_space.loss_deadline_millis.*) |current|
                     @min(current, deadline)
                 else
@@ -9442,7 +9444,7 @@ pub const Connection = struct {
     fn expirePathChallenges(self: *Connection, now_millis: i64) Error!void {
         if (self.outstanding_path_challenges.items.len == 0) return;
 
-        const retry_after_ms = self.recovery_state.ptoMs();
+        const retry_after_ms = self.recovery_state.ptoNs() / 1_000_000;
         var retry_count: usize = 0;
         for (self.outstanding_path_challenges.items) |challenge| {
             if (elapsedMillis(challenge.sent_time_millis, now_millis) < retry_after_ms) continue;
@@ -11720,7 +11722,7 @@ test "init validates initial stream count limits" {
         .ack_delay_exponent = 21,
     }));
     try std.testing.expectError(error.InvalidPacket, Connection.init(std.testing.allocator, .client, .{
-        .max_ack_delay_ms = 1 << 14,
+        .max_ack_delay_ns = 1 << 14,
     }));
     try std.testing.expectError(error.InvalidStream, Connection.init(std.testing.allocator, .client, .{
         .receive_stream_count_window = max_stream_count + 1,
@@ -12077,7 +12079,7 @@ test "missing version_information after Version Negotiation follows v1 exception
 test "localTransportParameters keeps local ACK policy separate from peer recovery policy" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .ack_delay_exponent = 7,
-        .max_ack_delay_ms = 15,
+        .max_ack_delay_ns = 15000000,
     });
     defer conn.deinit();
 
@@ -12090,7 +12092,7 @@ test "localTransportParameters keeps local ACK policy separate from peer recover
         .max_ack_delay = 50,
     });
     try std.testing.expectEqual(@as(u64, 4), conn.peer_ack_delay_exponent);
-    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ms);
+    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ns);
 
     const after = conn.localTransportParameters();
     try std.testing.expectEqual(@as(u64, 7), after.ack_delay_exponent);
@@ -12392,7 +12394,7 @@ test "applyPeerTransportParameters updates send limits and ACK policy" {
     try std.testing.expectEqual(preferred.ipv4_port, stored_preferred.ipv4_port);
     try std.testing.expectEqualSlices(u8, preferred.connectionId(), stored_preferred.connectionId());
     try std.testing.expectEqualSlices(u8, &reset_token, &stored_preferred.stateless_reset_token);
-    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ms);
+    try std.testing.expectEqual(@as(u64, 50), conn.recovery_state.max_ack_delay_ns);
     try std.testing.expectEqual(@as(u64, 5), conn.findSendStream(bidi_stream).?.max_data);
     try std.testing.expectError(error.FlowControlBlocked, conn.openStream());
 
@@ -12933,7 +12935,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when address token va
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.confirmHandshake();
@@ -13094,7 +13096,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when Retry token vali
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.confirmHandshake();
@@ -14600,7 +14602,7 @@ test "driveCryptoBackendInSpace exchanges transport parameter bytes with backend
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1300,
         .ack_delay_exponent = 4,
-        .max_ack_delay_ms = 44,
+        .max_ack_delay_ns = 44000000,
         .initial_max_data = 999,
     });
     defer conn.deinit();
@@ -14632,7 +14634,7 @@ test "driveCryptoBackendInSpace exchanges transport parameter bytes with backend
     try std.testing.expectEqual(@as(u64, 5), conn.peer_ack_delay_exponent);
     try std.testing.expectEqual(@as(u64, 88), conn.peer_max_idle_timeout_ms);
     try std.testing.expectEqual(@as(usize, 1400), conn.peer_max_udp_payload_size);
-    try std.testing.expectEqual(@as(u64, 33), conn.recovery_state.max_ack_delay_ms);
+    try std.testing.expectEqual(@as(u64, 33), conn.recovery_state.max_ack_delay_ns);
 }
 
 test "TlsBackend adapter drives C ABI callbacks through CryptoBackend" {
@@ -15825,7 +15827,7 @@ test "processDatagram ACK updates recovery and removes sent packets" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ns);
 }
 
 test "connection ACK APIs reject ACK ranges that compute negative packet numbers" {
@@ -15870,7 +15872,7 @@ test "connection ACK APIs reject ACK ranges that compute negative packet numbers
 test "ACK delay is ignored for Initial and Handshake RTT samples" {
     var initial_conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer initial_conn.deinit();
 
@@ -15892,7 +15894,7 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
 
     var handshake_conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer handshake_conn.deinit();
 
@@ -15916,7 +15918,7 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
 test "RTT estimates are shared across packet number spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -15940,7 +15942,7 @@ test "RTT estimates are shared across packet number spaces" {
 
 test "RTT sharing rolls back when datagram payload is rejected" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -15967,9 +15969,9 @@ test "RTT sharing rolls back when datagram payload is rejected" {
 
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.initial));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.initial));
-    try std.testing.expectEqual(@as(?u64, null), conn.initial_packet_space.recovery_state.latest_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, null), conn.handshake_packet_space.recovery_state.latest_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.initial_packet_space.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, null), conn.handshake_packet_space.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.initial));
     try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.handshake));
     try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.application));
@@ -15981,7 +15983,7 @@ test "RTT sharing rolls back when datagram payload is rejected" {
 test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.applyPeerTransportParameters(.{
@@ -16022,7 +16024,7 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
 test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.applyPeerTransportParameters(.{
@@ -16037,7 +16039,7 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
     try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.application));
 
     const second_packet_number = try conn.recordPacketSentInSpace(.application, 100, 100);
@@ -16047,16 +16049,16 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
         .first_ack_range = 0,
     });
 
-    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
     try std.testing.expectEqual(@as(u64, 56), conn.smoothedRttMillis(.application));
-    try std.testing.expectEqual(@as(u64, 31), conn.recovery_state.rttvar_ms);
+    try std.testing.expectEqual(@as(u64, 31), conn.recovery_state.rttvar_ns);
 }
 
 test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -16069,7 +16071,7 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
 
     const lower_ranges = [_]frame.AckRange{
@@ -16086,7 +16088,7 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
 }
 
@@ -16115,7 +16117,7 @@ test "duplicate ACK does not trigger loss detection without newly acknowledged p
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.application));
-    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK marks packet-threshold losses in the selected packet number space" {
@@ -16136,7 +16138,7 @@ test "ACK marks packet-threshold losses in the selected packet number space" {
 
     try std.testing.expectEqual(@as(usize, 2), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, 57), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 57), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK marks time-threshold losses in the selected packet number space" {
@@ -16155,7 +16157,7 @@ test "ACK marks time-threshold losses in the selected packet number space" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, 400), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 400), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
@@ -16210,7 +16212,7 @@ test "loss detection timer reports loss-time before PTO across packet spaces" {
 
 test "loss detection timer reports earliest PTO when no loss time is armed" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -16227,7 +16229,7 @@ test "loss detection timer reports earliest PTO when no loss time is armed" {
 
 test "loss detection timer is disarmed in closing and draining states" {
     var closing = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer closing.deinit();
     try closing.confirmHandshake();
@@ -16243,7 +16245,7 @@ test "loss detection timer is disarmed in closing and draining states" {
     try std.testing.expectEqual(@as(u8, 0), closing.recovery_state.pto_count);
 
     var draining = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer draining.deinit();
     try draining.confirmHandshake();
@@ -16269,7 +16271,7 @@ test "loss detection timer is disarmed in closing and draining states" {
 
 test "Application PTO is gated until handshake confirmation" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -16291,7 +16293,7 @@ test "Application PTO is gated until handshake confirmation" {
 test "client no-in-flight Initial ACK arms anti-deadlock PTO" {
     var client = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -16337,7 +16339,7 @@ test "client anti-deadlock PTO selects Handshake when keys are installed" {
 
     var client = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -16376,7 +16378,7 @@ test "client anti-deadlock PTO selects Handshake when keys are installed" {
 
 test "server anti-amplification limit disarms PTO until more peer bytes arrive" {
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
 
@@ -16413,7 +16415,7 @@ test "server anti-amplification limit disarms PTO until more peer bytes arrive" 
 
 test "received datagram re-arms anti-amplification PTO and services expired timer" {
     var rearmed = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer rearmed.deinit();
 
@@ -16434,7 +16436,7 @@ test "received datagram re-arms anti-amplification PTO and services expired time
     try std.testing.expectEqual(@as(u8, 0), rearmed.initial_packet_space.recovery_state.pto_count);
 
     var expired = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer expired.deinit();
 
@@ -16462,7 +16464,7 @@ test "received datagram re-arms anti-amplification PTO and services expired time
 
 test "serviceLossDetectionTimer is no-op before aggregate deadline" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16506,7 +16508,7 @@ test "serviceLossDetectionTimer handles loss-time before due PTO probes" {
 
 test "serviceLossDetectionTimer handles PTO deadline through aggregate timer" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16523,7 +16525,7 @@ test "serviceLossDetectionTimer handles PTO deadline through aggregate timer" {
 
 test "PTO frame-payload probe bypasses congestion window once" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16557,12 +16559,12 @@ test "EndpointLossDetectionTimers selects and services earliest connection timer
     defer timers.deinit();
 
     var fast = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer fast.deinit();
     try fast.confirmHandshake();
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 200,
+        .initial_rtt_ns = 200000000,
     });
     defer slow.deinit();
     try slow.confirmHandshake();
@@ -16617,7 +16619,7 @@ test "EndpointLossDetectionTimers disarms closing connections" {
     defer timers.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16676,7 +16678,7 @@ test "PTO probe backoff doubles deadline across successive expirations on contro
     // RFC 9002 §6.2.2: 每次 PTO 触发后 pto_count 递增，下一次 PTO deadline = basePto * 2^pto_count。
     // 用固定 now_millis 推进时钟（controlled clock），不依赖真实丢包或 sleep。
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -16748,7 +16750,7 @@ test "ACK-driven packet loss reduces congestion window under controlled clock" {
     // 手动构造 ACK frame（只 ACK largest pn）模拟未 ACK 的包丢失，无需真实乱序。
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
@@ -16788,7 +16790,7 @@ test "persistent congestion resets congestion window to minimum under controlled
     // 验证 PC 重置 cwnd=minimumWindow(2400)，并保留 onCongestionEvent 设的 ssthresh=6000。
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
@@ -16799,7 +16801,7 @@ test "persistent congestion resets congestion window to minimum under controlled
     // persistentCongestionDuration = basePto * 3 = 975
     const cwnd_initial = conn.congestionWindow(.application);
     try std.testing.expectEqual(@as(usize, 12000), cwnd_initial);
-    try std.testing.expectEqual(@as(u64, 975), conn.recovery_state.persistentCongestionDurationMs());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
 
     // 步骤 1：发送 pn 0 并 ACK，建立 first RTT sample（first_rtt_sample_sent_time=10）。
     // RFC 9002 §5.3 要求 persistent congestion 只考虑 first RTT sample 之后发送的包。
@@ -16849,14 +16851,14 @@ test "Application persistent congestion duration includes max_ack_delay" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    try std.testing.expectEqual(@as(u64, 975), conn.recovery_state.persistentCongestionDurationMs());
-    try std.testing.expectEqual(@as(u64, 900), conn.recovery_state.persistentCongestionDurationMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
 
     _ = try conn.recordPacketSentInSpace(.application, 10, 100);
     try conn.receiveAckInSpace(.application, 110, .{
@@ -16888,13 +16890,13 @@ test "Application persistent congestion duration includes max_ack_delay" {
 test "Initial persistent congestion duration excludes max_ack_delay" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
     try std.testing.expectEqual(@as(usize, 12000), conn.congestionWindow(.initial));
-    try std.testing.expectEqual(@as(u64, 900), conn.initial_packet_space.recovery_state.persistentCongestionDurationMsWithoutMaxAckDelay());
-    try std.testing.expectEqual(@as(u64, 975), conn.initial_packet_space.recovery_state.persistentCongestionDurationMs());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDurationNs());
 
     _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
     try conn.receiveAckInSpace(.initial, 110, .{
@@ -16925,13 +16927,13 @@ test "Initial persistent congestion duration excludes max_ack_delay" {
 test "Handshake persistent congestion duration excludes max_ack_delay" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
     try std.testing.expectEqual(@as(usize, 12000), conn.congestionWindow(.handshake));
-    try std.testing.expectEqual(@as(u64, 900), conn.handshake_packet_space.recovery_state.persistentCongestionDurationMsWithoutMaxAckDelay());
-    try std.testing.expectEqual(@as(u64, 975), conn.handshake_packet_space.recovery_state.persistentCongestionDurationMs());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDurationNs());
 
     _ = try conn.recordPacketSentInSpace(.handshake, 10, 100);
     try conn.receiveAckInSpace(.handshake, 110, .{
@@ -16964,7 +16966,7 @@ test "EndpointConnectionLifecycle retires routes with recovery timer" {
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -17037,7 +17039,7 @@ test "EndpointConnectionLifecycle exposes socket-facing feed deadline and pendin
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer conn.deinit();
@@ -17120,7 +17122,7 @@ test "EndpointConnectionLifecycle sweeps pending work across caller-owned connec
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -17139,7 +17141,7 @@ test "EndpointConnectionLifecycle sweeps pending work across caller-owned connec
     try lifecycle.armRecoveryTimerFromConnection(66, &idle_conn);
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
@@ -17171,7 +17173,7 @@ test "EndpointConnectionLifecycle pending-work sweep selects next deadline" {
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -17190,7 +17192,7 @@ test "EndpointConnectionLifecycle pending-work sweep selects next deadline" {
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
@@ -17233,7 +17235,7 @@ test "EndpointConnectionLifecycle single pending-work selects next deadline" {
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -17302,7 +17304,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step selects 
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -17366,7 +17368,7 @@ test "EndpointConnectionLifecycle single pending-work backend next deadline stop
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer conn.deinit();
@@ -17431,7 +17433,7 @@ test "EndpointConnectionLifecycle single pending-work close backend loop step se
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -17508,7 +17510,7 @@ test "EndpointConnectionLifecycle single pending-work close backend returns curr
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -17595,7 +17597,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend loop st
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -17696,7 +17698,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space compatible bac
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -17789,7 +17791,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space compatible bac
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -17892,7 +17894,7 @@ test "EndpointConnectionLifecycle cross-connection pending-work cross-space comp
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -18255,7 +18257,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -18345,7 +18347,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend stops a
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer conn.deinit();
@@ -18441,7 +18443,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend l
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -18530,7 +18532,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend s
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer conn.deinit();
@@ -18626,7 +18628,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend r
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -18669,7 +18671,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection poll waits for r
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -18738,7 +18740,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain returns bo
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.confirmHandshake();
@@ -18749,7 +18751,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain returns bo
     try first.sendPing();
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.confirmHandshake();
@@ -18830,7 +18832,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection poll keeps expli
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -18921,7 +18923,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain keeps expl
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -18936,7 +18938,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain keeps expl
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19031,7 +19033,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step polls PTO outpu
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -19122,7 +19124,7 @@ test "EndpointConnectionLifecycle pending-work backend poll keeps explicit zero 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19222,7 +19224,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend poll keeps ex
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19324,7 +19326,7 @@ test "EndpointConnectionLifecycle pending-work backend drain keeps explicit zero
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19339,7 +19341,7 @@ test "EndpointConnectionLifecycle pending-work backend drain keeps explicit zero
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19464,7 +19466,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend drain keeps e
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19479,7 +19481,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend drain keeps e
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -19598,7 +19600,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step selects next de
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -19617,7 +19619,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step selects next de
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -19708,7 +19710,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
     defer lifecycle.deinit();
 
     var timer_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer timer_connection.deinit();
     try timer_connection.confirmHandshake();
@@ -19718,7 +19720,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -19874,7 +19876,7 @@ test "EndpointConnectionLifecycle pending-work close backend loop step selects n
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -19893,7 +19895,7 @@ test "EndpointConnectionLifecycle pending-work close backend loop step selects n
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -19972,7 +19974,7 @@ test "EndpointConnectionLifecycle pending-work close backend poll keeps explicit
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -20073,7 +20075,7 @@ test "EndpointConnectionLifecycle pending-work close backend drain keeps explici
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -20088,7 +20090,7 @@ test "EndpointConnectionLifecycle pending-work close backend drain keeps explici
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -20233,7 +20235,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend loop step sele
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -20254,7 +20256,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend loop step sele
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
@@ -20360,7 +20362,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend loop ste
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -20381,7 +20383,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend loop ste
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
@@ -20468,7 +20470,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step drains queued o
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
 
-    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer first.deinit();
     try first.confirmHandshake();
     try first.installOneRttTrafficSecrets(.{
@@ -20477,7 +20479,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step drains queued o
     });
     try first.sendPing();
 
-    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer second.deinit();
     try second.confirmHandshake();
     try second.installOneRttTrafficSecrets(.{
@@ -20762,7 +20764,7 @@ test "EndpointConnectionLifecycle single pending-work backend poll keeps explici
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -20859,7 +20861,7 @@ test "EndpointConnectionLifecycle single pending-work backend drain keeps explic
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -20959,7 +20961,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space backend poll k
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -21057,7 +21059,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space backend drain 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22160,7 +22162,7 @@ test "EndpointConnectionLifecycle pending-work close-propagating backend stops b
     defer server.deinit();
     try server.validatePeerAddress();
 
-    var ready = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var ready = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer ready.deinit();
     try ready.confirmHandshake();
     const secrets = try protection.deriveInitialSecrets(.v1, &[_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 });
@@ -22360,7 +22362,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend poll keeps exp
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22492,7 +22494,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend drain keeps ex
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22507,7 +22509,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend drain keeps ex
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22661,7 +22663,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend poll kee
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22793,7 +22795,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend drain ke
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -22808,7 +22810,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend drain ke
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -23007,7 +23009,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 5000,
     });
     defer idle_conn.deinit();
@@ -23018,7 +23020,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 10_000,
+        .initial_rtt_ns = 10_000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
@@ -23026,7 +23028,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     try lifecycle.armRecoveryTimerFromConnection(72, &recovery_conn);
 
     var closing_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer closing_conn.deinit();
     try closing_conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
@@ -23035,7 +23037,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     const close_deadline = closing_conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var no_deadline_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer no_deadline_conn.deinit();
 
@@ -23083,7 +23085,7 @@ test "EndpointConnectionLifecycle single due-deadline step selects next deadline
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -23135,7 +23137,7 @@ test "EndpointConnectionLifecycle due-deadline cleanup selects next deadline" {
     defer lifecycle.deinit();
 
     var idle_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer idle_conn.deinit();
@@ -23153,7 +23155,7 @@ test "EndpointConnectionLifecycle due-deadline cleanup selects next deadline" {
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 1000,
+        .initial_rtt_ns = 1000000000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
@@ -23228,7 +23230,7 @@ test "EndpointConnectionLifecycle single due-deadline backend loop step selects 
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -23312,7 +23314,7 @@ test "EndpointConnectionLifecycle single due-deadline close backend loop step se
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -23425,7 +23427,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend loop st
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -23543,7 +23545,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible close backend l
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -23632,7 +23634,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
@@ -23642,7 +23644,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -23733,7 +23735,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
@@ -23743,7 +23745,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -23851,7 +23853,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
@@ -23861,7 +23863,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
@@ -23971,7 +23973,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space close backend loop re
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.validatePeerAddress();
@@ -24068,7 +24070,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
@@ -24080,7 +24082,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
@@ -24204,7 +24206,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
     defer lifecycle.deinit();
 
     var due_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
@@ -24216,7 +24218,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
@@ -24354,7 +24356,7 @@ test "EndpointConnectionLifecycle pollDatagram emits 1-RTT packet" {
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -24364,7 +24366,7 @@ test "EndpointConnectionLifecycle pollDatagram emits 1-RTT packet" {
     });
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -24432,7 +24434,7 @@ test "EndpointConnectionLifecycle dispatches installed-key receive across caller
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -24442,7 +24444,7 @@ test "EndpointConnectionLifecycle dispatches installed-key receive across caller
     });
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -24453,7 +24455,7 @@ test "EndpointConnectionLifecycle dispatches installed-key receive across caller
     });
 
     var decoy = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer decoy.deinit();
     try decoy.validatePeerAddress();
@@ -24513,7 +24515,7 @@ test "EndpointConnectionLifecycle installed-key feed drains routed stateless res
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -24574,7 +24576,7 @@ test "EndpointConnectionLifecycle feed pending-work step reports reset close dea
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -24639,7 +24641,7 @@ test "EndpointConnectionLifecycle feed pending-work step retires due close" {
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -24694,7 +24696,7 @@ test "EndpointConnectionLifecycle feed pending-work drain step emits queued outp
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -24761,7 +24763,7 @@ test "EndpointConnectionLifecycle feed pending-work poll step emits queued outpu
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -24818,7 +24820,7 @@ test "EndpointConnectionLifecycle feed pending-work poll step retires due close 
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -24879,7 +24881,7 @@ test "EndpointConnectionLifecycle feed pending-work explicit poll step keeps zer
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -24951,7 +24953,7 @@ test "EndpointConnectionLifecycle feed pending-work drain step retires due close
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -25015,7 +25017,7 @@ test "EndpointConnectionLifecycle feed pending-work explicit drain step keeps ze
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -25098,7 +25100,7 @@ test "EndpointConnectionLifecycle single feed pending-work explicit poll keeps z
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -25172,7 +25174,7 @@ test "EndpointConnectionLifecycle single feed pending-work explicit drain keeps 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -25246,7 +25248,7 @@ test "EndpointConnectionLifecycle single feed pending-work explicit drain stops 
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -25310,7 +25312,7 @@ test "EndpointConnectionLifecycle installed-key feed keeps long packets out of s
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -25382,7 +25384,7 @@ test "EndpointConnectionLifecycle across-connections feed drains routed stateles
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -25457,7 +25459,7 @@ test "EndpointConnectionLifecycle installed-key feed selects next deadline" {
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -25467,7 +25469,7 @@ test "EndpointConnectionLifecycle installed-key feed selects next deadline" {
     });
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -25479,7 +25481,7 @@ test "EndpointConnectionLifecycle installed-key feed selects next deadline" {
     });
 
     var decoy = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer decoy.deinit();
     try decoy.validatePeerAddress();
@@ -33309,7 +33311,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalled
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -33397,7 +33399,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagramsWithInstall
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -33486,7 +33488,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagramWithInstalled
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{
@@ -33592,7 +33594,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagramsWithInstall
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{
@@ -33686,14 +33688,14 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     defer lifecycle.deinit();
 
     var fast = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 200,
+        .initial_rtt_ns = 200000000,
     });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -33803,14 +33805,14 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     defer lifecycle.deinit();
 
     var fast = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 200,
+        .initial_rtt_ns = 200000000,
     });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -33944,7 +33946,7 @@ test "EndpointConnectionLifecycle due-deadline backend poll keeps explicit zero 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -34053,7 +34055,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain keeps explicit zero
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -34607,7 +34609,7 @@ test "EndpointConnectionLifecycle single due-deadline explicit backend variants 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
@@ -35257,12 +35259,12 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 200 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200 });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try slow.confirmHandshake();
@@ -35409,12 +35411,12 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 200 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200 });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try slow.confirmHandshake();
@@ -35562,7 +35564,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend poll keeps ex
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try client.confirmHandshake();
@@ -35675,7 +35677,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend drain keeps e
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try client.confirmHandshake();
@@ -35800,7 +35802,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
     var client = try Connection.init(std.testing.allocator, .client, .{
         .chosen_version = .v2,
         .available_versions = &[_]packet.Version{ .v2, .v1 },
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -36029,7 +36031,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagram gates recove
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -36103,7 +36105,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagrams drains rec
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -36217,7 +36219,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -36370,7 +36372,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll continues aft
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -36500,7 +36502,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -36587,7 +36589,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -36700,7 +36702,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend drain a
     });
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .chosen_version = .v2,
         .available_versions = &server_versions,
     });
@@ -36847,7 +36849,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend poll ap
     });
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .chosen_version = .v2,
         .available_versions = &server_versions,
     });
@@ -36974,7 +36976,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose drains 
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .chosen_version = .v2,
         .available_versions = &server_versions,
     });
@@ -37083,7 +37085,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose polls c
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .chosen_version = .v2,
         .available_versions = &server_versions,
     });
@@ -37143,7 +37145,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     defer lifecycle.deinit();
 
     var fast = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer fast.deinit();
     try fast.confirmHandshake();
@@ -37153,7 +37155,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     });
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 10_000,
+        .initial_rtt_ns = 10_000,
     });
     defer slow.deinit();
     try slow.confirmHandshake();
@@ -37246,7 +37248,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     defer lifecycle.deinit();
 
     var fast = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer fast.deinit();
     try fast.confirmHandshake();
@@ -37256,7 +37258,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     });
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 10_000,
+        .initial_rtt_ns = 10_000,
     });
     defer slow.deinit();
     try slow.confirmHandshake();
@@ -37368,7 +37370,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop returns recovery dat
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -37447,7 +37449,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain returns recovery da
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -37610,7 +37612,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain skips terminal clea
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
 
-    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer first.deinit();
     try first.confirmHandshake();
     try first.installOneRttTrafficSecrets(.{
@@ -37619,7 +37621,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain skips terminal clea
     });
     try first.sendPing();
 
-    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer second.deinit();
     try second.confirmHandshake();
     try second.installOneRttTrafficSecrets(.{
@@ -37963,7 +37965,7 @@ test "EndpointConnectionLifecycle pollDatagramAcrossConnections selects first ou
     defer lifecycle.deinit();
 
     var idle = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer idle.deinit();
     try idle.confirmHandshake();
@@ -37973,7 +37975,7 @@ test "EndpointConnectionLifecycle pollDatagramAcrossConnections selects first ou
     });
 
     var ready = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ready.deinit();
     try ready.confirmHandshake();
@@ -38040,7 +38042,7 @@ test "EndpointConnectionLifecycle drains datagrams across caller-owned output sl
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.confirmHandshake();
@@ -38051,7 +38053,7 @@ test "EndpointConnectionLifecycle drains datagrams across caller-owned output sl
     try first.sendPing();
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.confirmHandshake();
@@ -38124,14 +38126,14 @@ test "EndpointConnectionLifecycle polls datagrams across explicit installed-key 
     defer lifecycle.deinit();
 
     var idle = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer idle.deinit();
     try idle.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try idle.confirmHandshake();
 
     var ready = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ready.deinit();
     try ready.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38200,7 +38202,7 @@ test "EndpointConnectionLifecycle drains datagrams across explicit installed-key
     defer lifecycle.deinit();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38215,7 +38217,7 @@ test "EndpointConnectionLifecycle drains datagrams across explicit installed-key
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38318,7 +38320,7 @@ test "EndpointConnectionLifecycle backend drive drains caller-owned output slots
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
 
-    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var first = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer first.deinit();
     try first.confirmHandshake();
     try first.installOneRttTrafficSecrets(.{
@@ -38327,7 +38329,7 @@ test "EndpointConnectionLifecycle backend drive drains caller-owned output slots
     });
     try first.sendPing();
 
-    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var second = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer second.deinit();
     try second.confirmHandshake();
     try second.installOneRttTrafficSecrets(.{
@@ -38416,14 +38418,14 @@ test "EndpointConnectionLifecycle backend drive polls explicit installed-key out
     try backend_connection.validatePeerAddress();
 
     var idle = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer idle.deinit();
     try idle.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try idle.confirmHandshake();
 
     var ready = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ready.deinit();
     try ready.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38523,7 +38525,7 @@ test "EndpointConnectionLifecycle backend drive drains explicit installed-key ou
     try backend_connection.validatePeerAddress();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38538,7 +38540,7 @@ test "EndpointConnectionLifecycle backend drive drains explicit installed-key ou
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38645,7 +38647,7 @@ test "EndpointConnectionLifecycle single backend drive polls separate explicit o
     try backend_connection.validatePeerAddress();
 
     var output_client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer output_client.deinit();
     try output_client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38730,7 +38732,7 @@ test "EndpointConnectionLifecycle single backend drive drains separate explicit 
     try backend_connection.validatePeerAddress();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -38745,7 +38747,7 @@ test "EndpointConnectionLifecycle single backend drive drains separate explicit 
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40139,7 +40141,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive stops before d
     defer server.deinit();
     try server.validatePeerAddress();
 
-    var ready = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var ready = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer ready.deinit();
     try ready.confirmHandshake();
     try ready.installOneRttTrafficSecrets(.{
@@ -40216,14 +40218,14 @@ test "EndpointConnectionLifecycle close backend drive polls explicit installed-k
     try backend_connection.validatePeerAddress();
 
     var idle = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer idle.deinit();
     try idle.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try idle.confirmHandshake();
 
     var ready = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer ready.deinit();
     try ready.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40323,7 +40325,7 @@ test "EndpointConnectionLifecycle close backend drive drains explicit installed-
     try backend_connection.validatePeerAddress();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40338,7 +40340,7 @@ test "EndpointConnectionLifecycle close backend drive drains explicit installed-
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40557,7 +40559,7 @@ test "EndpointConnectionLifecycle compatible backend drive polls explicit instal
     try server.validatePeerAddress();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40676,7 +40678,7 @@ test "EndpointConnectionLifecycle compatible backend drive drains explicit insta
     try server.validatePeerAddress();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -40691,7 +40693,7 @@ test "EndpointConnectionLifecycle compatible backend drive drains explicit insta
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -41250,7 +41252,7 @@ test "EndpointConnectionLifecycle compatible close backend drive polls explicit 
     try server.validatePeerAddress();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -41369,7 +41371,7 @@ test "EndpointConnectionLifecycle compatible close backend drive drains explicit
     try server.validatePeerAddress();
 
     var first = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -41384,7 +41386,7 @@ test "EndpointConnectionLifecycle compatible close backend drive drains explicit
     };
 
     var second = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
@@ -41465,7 +41467,7 @@ test "EndpointConnectionLifecycle retires route and timer after idle timeout clo
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer conn.deinit();
@@ -41517,7 +41519,7 @@ test "EndpointConnectionLifecycle retires route and timer after close timeout cl
     const closing_cid = [_]u8{ 0x43, 0x43, 0x43, 0x43 };
     const draining_cid = [_]u8{ 0x44, 0x44, 0x44, 0x44 };
 
-    var closing = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var closing = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer closing.deinit();
     try closing.confirmHandshake();
     try lifecycle.registerConnectionId(56, &closing_cid, path, .{ .sequence_number = 0 });
@@ -41543,7 +41545,7 @@ test "EndpointConnectionLifecycle retires route and timer after close timeout cl
     try std.testing.expectEqual(@as(usize, 0), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 0), lifecycle.recoveryTimerCount());
 
-    var draining = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var draining = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer draining.deinit();
     try draining.confirmHandshake();
     try draining.validatePeerAddress();
@@ -42095,7 +42097,7 @@ test "EndpointConnectionLifecycle emits protected Version Negotiation follow-up 
     var old_client = try Connection.init(std.testing.allocator, .client, .{
         .chosen_version = .v1,
         .available_versions = &client_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer old_client.deinit();
 
@@ -42195,7 +42197,7 @@ test "EndpointConnectionLifecycle cleans follow-up route when protected Version 
     var old_client = try Connection.init(std.testing.allocator, .client, .{
         .chosen_version = .v1,
         .available_versions = &client_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer old_client.deinit();
 
@@ -43312,7 +43314,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when accepted Initial
     };
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -44089,7 +44091,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when issuing connecti
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -44252,11 +44254,11 @@ test "EndpointConnectionLifecycle refreshes protected long timer lifecycle" {
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -44371,7 +44373,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long r
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -44419,7 +44421,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long i
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -44469,7 +44471,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long c
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -44521,7 +44523,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long p
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -44574,11 +44576,11 @@ test "EndpointConnectionLifecycle refreshes protected long CRYPTO space timer li
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -45371,11 +45373,11 @@ test "EndpointConnectionLifecycle refreshes caller-keyed zero RTT timer lifecycl
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -45505,11 +45507,11 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and polls
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -45608,11 +45610,11 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and drain
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -45842,11 +45844,11 @@ test "EndpointConnectionLifecycle refreshes installed-key Handshake timer lifecy
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -45960,11 +45962,11 @@ test "EndpointConnectionLifecycle refreshes installed-key zero RTT timer lifecyc
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46104,11 +46106,11 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and poll
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46218,11 +46220,11 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and drai
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46475,11 +46477,11 @@ test "EndpointConnectionLifecycle refreshes caller-keyed protected short timer l
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46578,11 +46580,11 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and polls AC
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46673,12 +46675,12 @@ test "EndpointConnectionLifecycle caller-keyed short receive selects deadline wi
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -46800,11 +46802,11 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and drains A
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -46903,12 +46905,12 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -47240,11 +47242,11 @@ test "EndpointConnectionLifecycle refreshes explicit key update short timer life
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -47371,11 +47373,11 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and p
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -47476,12 +47478,12 @@ test "EndpointConnectionLifecycle explicit key update receive selects deadline w
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -47614,11 +47616,11 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and d
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -47727,12 +47729,12 @@ test "EndpointConnectionLifecycle routes explicit key update receive and selects
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -47962,11 +47964,11 @@ test "EndpointConnectionLifecycle refreshes caller-owned key phase short timer l
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -48083,11 +48085,11 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -48190,12 +48192,12 @@ test "EndpointConnectionLifecycle caller-owned key phase receive selects deadlin
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -48332,11 +48334,11 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -48447,12 +48449,12 @@ test "EndpointConnectionLifecycle routes caller-owned key phase receive and sele
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -48686,11 +48688,11 @@ test "EndpointConnectionLifecycle refreshes installed-key protected short timer 
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -48800,11 +48802,11 @@ test "EndpointConnectionLifecycle installed-key short receive polls ACK output" 
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -48868,12 +48870,12 @@ test "EndpointConnectionLifecycle installed-key short receive selects deadline w
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -48978,12 +48980,12 @@ test "EndpointConnectionLifecycle installed-key short receive drives application
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -49413,12 +49415,12 @@ test "EndpointConnectionLifecycle routes installed-key short receive then drives
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -51175,9 +51177,9 @@ test "EndpointConnectionLifecycle installed-key short receive drives application
     var server_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer server_lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -51286,9 +51288,9 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and p
     var server_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer server_lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -51647,9 +51649,9 @@ test "EndpointConnectionLifecycle installed-key short receive drives application
     var server_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer server_lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -51764,9 +51766,9 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and d
     var server_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer server_lifecycle.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -52153,11 +52155,11 @@ test "EndpointConnectionLifecycle installed-key short receive drains ACK output"
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -52334,11 +52336,11 @@ test "EndpointConnectionLifecycle routes installed-key short receive and polls A
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -52441,12 +52443,12 @@ test "EndpointConnectionLifecycle routes installed-key short receive and selects
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -52609,11 +52611,11 @@ test "EndpointConnectionLifecycle routes installed-key short receive and drains 
     defer server_lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 30,
     });
     defer server.deinit();
@@ -52838,7 +52840,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key Ha
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -53156,7 +53158,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key Ha
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -53942,7 +53944,7 @@ test "EndpointLossDetectionTimers drives protected short PTO and ACK disarm" {
     defer timers.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -54039,7 +54041,7 @@ test "EndpointConnectionLifecycle drives crypto backend and refreshes recovery t
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -54140,7 +54142,7 @@ test "EndpointConnectionLifecycle drives crypto backend across ordered spaces in
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -54261,10 +54263,10 @@ test "EndpointConnectionLifecycle drives backends across ordered spaces for mult
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var first = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var first = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer first.deinit();
     try first.validatePeerAddress();
-    var second = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var second = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer second.deinit();
     try second.validatePeerAddress();
 
@@ -54352,7 +54354,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer after strict backend 
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -54411,7 +54413,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer after compatible back
     defer lifecycle.deinit();
 
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -56341,7 +56343,7 @@ test "EndpointConnectionLifecycle backend drive selects next deadline" {
     defer lifecycle.deinit();
 
     var connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer connection.deinit();
     try connection.confirmHandshake();
@@ -56377,7 +56379,7 @@ test "EndpointConnectionLifecycle backend drive selects next deadline" {
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
 
     var single_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer single_connection.deinit();
     try single_connection.confirmHandshake();
@@ -56417,7 +56419,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive selects next d
     defer lifecycle.deinit();
 
     var connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer connection.deinit();
     try connection.confirmHandshake();
@@ -56452,7 +56454,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive selects next d
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
 
     var single_connection = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer single_connection.deinit();
     try single_connection.confirmHandshake();
@@ -57082,7 +57084,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backend and r
     var server = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -57185,7 +57187,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
     var connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer connection.deinit();
     try connection.validatePeerAddress();
@@ -57228,7 +57230,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
     var close_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer close_connection.deinit();
     try close_connection.validatePeerAddress();
@@ -57318,7 +57320,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backends acro
     var first = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer first.deinit();
     try first.validatePeerAddress();
@@ -57330,7 +57332,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backends acro
     var second = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer second.deinit();
     try second.validatePeerAddress();
@@ -57461,7 +57463,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backends acro
     var connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
         .available_versions = &server_versions,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer connection.deinit();
     try connection.validatePeerAddress();
@@ -57965,7 +57967,7 @@ test "EndpointConnectionLifecycle refreshes installed-key Handshake OrClose erro
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -57975,7 +57977,7 @@ test "EndpointConnectionLifecycle refreshes installed-key Handshake OrClose erro
     });
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installHandshakeTrafficSecrets(.{
@@ -58055,14 +58057,14 @@ test "EndpointConnectionLifecycle refreshes protected short OrClose error state"
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
     try server.confirmHandshake();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58136,7 +58138,7 @@ test "EndpointConnectionLifecycle refreshes installed-key protected short OrClos
     defer lifecycle.deinit();
 
     var server = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -58147,7 +58149,7 @@ test "EndpointConnectionLifecycle refreshes installed-key protected short OrClos
     });
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58223,7 +58225,7 @@ test "EndpointConnectionLifecycle services and polls protected long Handshake PT
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -58315,7 +58317,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected Han
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -58400,7 +58402,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected zer
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{
@@ -58488,7 +58490,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key ze
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{
@@ -58540,7 +58542,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key ze
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installZeroRttTrafficSecrets(.{
@@ -58593,7 +58595,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58642,7 +58644,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58693,7 +58695,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when explicit key pha
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58742,7 +58744,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-owned key
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58793,7 +58795,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when explicit key upd
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58846,7 +58848,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-owned key
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -58898,7 +58900,7 @@ test "EndpointConnectionLifecycle services and polls protected short PTO probe" 
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -59011,7 +59013,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -59059,7 +59061,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -59107,7 +59109,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected sho
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installOneRttTrafficSecrets(.{
@@ -59220,7 +59222,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key sh
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installOneRttTrafficSecrets(.{
@@ -59270,7 +59272,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key sh
     defer lifecycle.deinit();
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.installOneRttTrafficSecrets(.{
@@ -59316,7 +59318,7 @@ test "protected short PTO probe bypasses congestion window once" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -59469,7 +59471,7 @@ test "loss detection timer expires protected short CRYPTO retransmission" {
 test "ACK-driven losses establish persistent congestion after prior RTT sample" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59499,7 +59501,7 @@ test "ACK-driven losses establish persistent congestion after prior RTT sample" 
 test "ACK-driven non-contiguous losses do not establish persistent congestion" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59535,7 +59537,7 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59548,7 +59550,7 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
     conn.recovery_state.onPtoExpired();
     conn.recovery_state.onPtoExpired();
     try std.testing.expectEqual(@as(u8, 2), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(u64, 975), conn.recovery_state.persistentCongestionDurationMs());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
 
     _ = try conn.recordPacketSentInSpace(.application, 10, 100);
     _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
@@ -59569,7 +59571,7 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59579,9 +59581,9 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 50), conn.initial_packet_space.recovery_state.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 50), conn.handshake_packet_space.recovery_state.min_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50), conn.initial_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50), conn.handshake_packet_space.recovery_state.min_rtt_ns);
 
     _ = try conn.recordPacketSentInSpace(.application, 100, 100);
     _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
@@ -59597,16 +59599,16 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
     try std.testing.expectEqual(recovery.minimumCongestionWindow(1200), conn.congestionWindow(.application));
-    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.latest_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 500), conn.initial_packet_space.recovery_state.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 500), conn.handshake_packet_space.recovery_state.min_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500), conn.initial_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500), conn.handshake_packet_space.recovery_state.min_rtt_ns);
 }
 
 test "ACK-driven losses do not establish persistent congestion before first RTT sample" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59629,7 +59631,7 @@ test "ACK-driven losses do not establish persistent congestion before first RTT 
 test "ACK losses respect NewReno congestion recovery period" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59658,7 +59660,7 @@ test "ACK losses respect NewReno congestion recovery period" {
 test "ACK-driven NewReno loss keeps ssthresh below minimum cwnd clamp" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59681,7 +59683,7 @@ test "ACK-driven NewReno loss keeps ssthresh below minimum cwnd clamp" {
 test "ACK growth follows NewReno slow start then congestion avoidance" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
@@ -59734,7 +59736,7 @@ test "ACK growth follows NewReno slow start then congestion avoidance" {
 test "batched ACK growth consumes multiple NewReno congestion avoidance credits" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59761,7 +59763,7 @@ test "batched ACK growth consumes multiple NewReno congestion avoidance credits"
 test "ACK growth is suppressed when congestion window was underutilized" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -59802,7 +59804,7 @@ test "processDatagram rolls back packet-threshold losses when later frame is inv
     try std.testing.expectError(error.InvalidPacket, conn.processDatagram(70, payload.getWritten()));
     try std.testing.expectEqual(@as(usize, 4), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 400), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.application));
 }
 
@@ -59826,14 +59828,14 @@ test "processDatagram rolls back time-threshold losses when later frame is inval
     try std.testing.expectError(error.InvalidPacket, conn.processDatagram(900, payload.getWritten()));
     try std.testing.expectEqual(@as(usize, 2), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.application));
 }
 
 test "processDatagram rolls back persistent congestion when later frame is invalid" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -59868,7 +59870,7 @@ test "processDatagram rolls back persistent congestion when later frame is inval
 
 test "checkPtoTimeouts queues application PING and backs off PTO" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -59906,7 +59908,7 @@ test "checkPtoTimeouts queues application PING and backs off PTO" {
 
 test "checkPtoTimeouts uses queued STREAM data as application probe before PING" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -59942,7 +59944,7 @@ test "checkPtoTimeouts uses queued STREAM data as application probe before PING"
 
 test "checkPtoTimeouts retransmits in-flight STREAM data before PING" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.confirmHandshake();
@@ -59985,7 +59987,7 @@ test "checkPtoTimeouts retransmits protected Initial CRYPTO data before PING" {
     const secrets = try protection.deriveInitialSecrets(.v1, &dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
 
@@ -60048,7 +60050,7 @@ test "checkPtoTimeouts retransmits protected short CRYPTO data before PING" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -60096,7 +60098,7 @@ test "checkPtoTimeouts retransmits protected short CRYPTO data before PING" {
 
 test "checkPtoTimeouts backs off PTO across packet number spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -60154,7 +60156,7 @@ test "checkPtoTimeouts backs off PTO across packet number spaces" {
 
 test "ACK resets connection-level PTO backoff across packet number spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -60180,7 +60182,7 @@ test "ACK resets connection-level PTO backoff across packet number spaces" {
 
 test "client Initial ACK preserves connection-level PTO backoff" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -60201,7 +60203,7 @@ test "client Initial ACK preserves connection-level PTO backoff" {
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.initial));
 
     var handshake_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer handshake_conn.deinit();
 
@@ -60221,7 +60223,7 @@ test "client Initial ACK preserves connection-level PTO backoff" {
 
 test "invalid payload rolls back connection-level PTO backoff reset" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -61826,7 +61828,7 @@ test "checkPtoTimeouts retransmits protected 0-RTT STREAM data before PING" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -62014,7 +62016,7 @@ test "checkPtoTimeouts retransmits protected 0-RTT control frames before PING" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var reset_client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer reset_client.deinit();
     try reset_client.confirmHandshake();
@@ -62057,7 +62059,7 @@ test "checkPtoTimeouts retransmits protected 0-RTT control frames before PING" {
     ));
 
     var stop_client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer stop_client.deinit();
     try stop_client.confirmHandshake();
@@ -62105,7 +62107,7 @@ test "ACKed RESET_STREAM suppresses obsolete control retransmission" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     try client.confirmHandshake();
@@ -63537,9 +63539,9 @@ test "EndpointConnectionLifecycle wakes to discard expired retained 1 RTT keys" 
     const client_dcid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -63585,9 +63587,9 @@ test "EndpointConnectionLifecycle key discard due-deadline poll leaves output qu
     const client_dcid = [_]u8{ 0x11, 0x22, 0x33, 0x46 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -63640,9 +63642,9 @@ test "EndpointConnectionLifecycle key discard due-deadline drain does not drain 
     const client_dcid = [_]u8{ 0x11, 0x22, 0x33, 0x45 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -63697,9 +63699,9 @@ test "EndpointConnectionLifecycle pending work counts retained one RTT key disca
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
     try client.confirmHandshake();
@@ -63750,7 +63752,7 @@ test "EndpointConnectionLifecycle single pending-work selects after key discard"
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x8a} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x8b} ** protection.traffic_secret_len;
@@ -63796,7 +63798,7 @@ test "EndpointConnectionLifecycle single pending-work poll reports key discard w
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x8c} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x8d} ** protection.traffic_secret_len;
@@ -63841,7 +63843,7 @@ test "EndpointConnectionLifecycle single explicit pending-work poll reports key 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x98} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x99} ** protection.traffic_secret_len;
@@ -63886,7 +63888,7 @@ test "EndpointConnectionLifecycle single pending-work drain reports key discard 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x8e} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x8f} ** protection.traffic_secret_len;
@@ -63934,7 +63936,7 @@ test "EndpointConnectionLifecycle single explicit pending-work drain reports key
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x9a} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x9b} ** protection.traffic_secret_len;
@@ -63982,7 +63984,7 @@ test "EndpointConnectionLifecycle cross pending-work poll reports key discard wi
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x90} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x91} ** protection.traffic_secret_len;
@@ -64037,7 +64039,7 @@ test "EndpointConnectionLifecycle cross pending-work drain reports key discard w
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x92} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x93} ** protection.traffic_secret_len;
@@ -64095,7 +64097,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work poll reports key d
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x94} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x95} ** protection.traffic_secret_len;
@@ -64152,7 +64154,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work drain reports key 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
     const local_secret = [_]u8{0x96} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x97} ** protection.traffic_secret_len;
@@ -64212,9 +64214,9 @@ test "EndpointConnectionLifecycle cross due-deadline poll reports key discard wi
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer fast.deinit();
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer slow.deinit();
     const local_secret = [_]u8{0x9c} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x9d} ** protection.traffic_secret_len;
@@ -64284,9 +64286,9 @@ test "EndpointConnectionLifecycle cross due-deadline drain reports key discard w
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer fast.deinit();
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer slow.deinit();
     const local_secret = [_]u8{0x9e} ** protection.traffic_secret_len;
     const peer_secret = [_]u8{0x9f} ** protection.traffic_secret_len;
@@ -65454,9 +65456,9 @@ test "pollProtectedShortDatagram emits protected CONNECTION_CLOSE and retransmit
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
 
@@ -65548,9 +65550,9 @@ test "pollProtectedLongDatagram emits protected Initial CONNECTION_CLOSE with ca
     const client_scid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
 
     try client.closeConnection(transport_error.codeValue(.no_error), @intFromEnum(frame.FrameType.crypto), "initial close");
@@ -65590,10 +65592,10 @@ test "pollProtectedLongDatagram emits protected Handshake CONNECTION_CLOSE with 
     const server_scid = [_]u8{ 0x55, 0x66, 0x77, 0x88 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var server = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer server.deinit();
     try server.validatePeerAddress();
-    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var client = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer client.deinit();
 
     try server.closeConnection(transport_error.codeValue(.internal_error), @intFromEnum(frame.FrameType.crypto), "handshake close");
@@ -66265,7 +66267,7 @@ test "processDatagram ACK_ECN updates recovery without queuing ACK" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(EcnValidationState.unknown, conn.ecnValidationState(.application));
 }
@@ -66299,7 +66301,7 @@ test "ACK_ECN validates ECT0 counters for modeled sent packets" {
 test "ACK_ECN CE increase enters NewReno recovery" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -66331,7 +66333,7 @@ test "ACK_ECN CE increase enters NewReno recovery" {
 test "ACK_ECN CE increase respects NewReno recovery period" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -66541,7 +66543,7 @@ test "processDatagram rejects ACK for packet number never sent" {
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
 }
 
 test "processDatagram queues ACK for ack-eliciting payloads" {
@@ -66576,7 +66578,7 @@ test "processDatagram queues ACK for ack-eliciting payloads" {
     try client.processDatagram(60, ack_payload);
     try std.testing.expectEqual(@as(usize, 0), client.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), client.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), client.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), client.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?[]u8, null), try client.pollTx(70, &datagram));
 }
 
@@ -66785,11 +66787,11 @@ test "path challenge timeout retries then records validation failure" {
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(u8, 1), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoMs() - 1));
+    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000) - 1);
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoMs()));
+    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.failedPathValidationCount());
@@ -66800,14 +66802,14 @@ test "path challenge timeout retries then records validation failure" {
     try std.testing.expectEqual(@as(u8, 2), conn.outstanding_path_challenges.items[0].transmissions);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(1000, conn.recovery_state.ptoMs()));
+    try conn.checkPathValidationTimeouts(saturatingAddMillis(1000, conn.recovery_state.ptoNs() / 1_000_000));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
 
     _ = (try conn.pollTx(2000, &out_buf)).?;
     try std.testing.expectEqual(@as(u8, 3), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(2000, conn.recovery_state.ptoMs()));
+    try conn.checkPathValidationTimeouts(saturatingAddMillis(2000, conn.recovery_state.ptoNs() / 1_000_000));
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.failedPathValidationCount());
@@ -66822,7 +66824,7 @@ test "pollTx automatically retries timed-out path challenge" {
 
     var out_buf: [64]u8 = undefined;
     _ = (try conn.pollTx(0, &out_buf)).?;
-    const retry_at = saturatingAddMillis(0, conn.recovery_state.ptoMs());
+    const retry_at = saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000);
     const retry_payload = (try conn.pollTx(retry_at, &out_buf)).?;
 
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
@@ -68537,7 +68539,7 @@ test "new congestion event allows one STREAM retransmission probe despite full c
 test "ACK_ECN CE congestion event allows one STREAM probe despite full cwnd" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -68622,7 +68624,7 @@ test "processDatagram rolls back STREAM retransmission requeue when payload is i
     try std.testing.expectEqual(@as(usize, 4), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
     try std.testing.expectEqual(bytes_in_flight, conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(usize, 0), conn.congestion_probe_count);
 }
 
@@ -68690,7 +68692,7 @@ test "processDatagram rolls back CRYPTO retransmission requeue when payload is i
     try std.testing.expectEqual(@as(usize, 4), conn.sentPacketCount(.handshake));
     try std.testing.expectEqual(@as(usize, 0), conn.handshake_packet_space.crypto_send_queue.items.len);
     try std.testing.expectEqual(bytes_in_flight, conn.bytesInFlight(.handshake));
-    try std.testing.expectEqual(@as(?u64, null), conn.handshake_packet_space.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.handshake_packet_space.recovery_state.latest_rtt_ns);
 }
 
 test "processDatagram rolls back ACK recovery state when payload is invalid" {
@@ -68716,7 +68718,7 @@ test "processDatagram rolls back ACK recovery state when payload is invalid" {
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
 }
 
 test "processDatagram and recvOnStream move stream data" {
@@ -70407,7 +70409,7 @@ test "closeApplication queues APPLICATION_CLOSE and closes after pollTx" {
 }
 
 test "local closing state expires after close timeout" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
 
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "bye");
@@ -70434,7 +70436,7 @@ test "local closing state expires after close timeout" {
 }
 
 test "remote close enters draining state until close timeout expires" {
-    var conn = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var conn = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer conn.deinit();
 
     var close_buf: [64]u8 = undefined;
@@ -70463,7 +70465,7 @@ test "remote close enters draining state until close timeout expires" {
 }
 
 test "remote close exposes peer close diagnostics" {
-    var transport = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 });
+    var transport = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 });
     defer transport.deinit();
 
     var close_buf: [64]u8 = undefined;
@@ -70568,7 +70570,7 @@ test "pollTx returns null when congestion window is full" {
 test "congestion admission accounts bytes in flight across packet spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .initial_congestion_window_packets = null,
     });
     defer conn.deinit();
@@ -70604,7 +70606,7 @@ test "congestion admission accounts bytes in flight across packet spaces" {
 test "available congestion window uses aggregate bytes in flight" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -70624,7 +70626,7 @@ test "available congestion window uses aggregate bytes in flight" {
 test "congestion window full query follows aggregate bytes in flight" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
     try conn.validatePeerAddress();
@@ -70646,7 +70648,7 @@ test "congestion window full query follows aggregate bytes in flight" {
 test "ack-eliciting send query combines congestion and anti-amplification limits" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -70668,7 +70670,7 @@ test "ack-eliciting send query combines congestion and anti-amplification limits
 test "ack-eliciting send budget reports effective send admission limit" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -70693,7 +70695,7 @@ test "ack-eliciting send budget reports effective send admission limit" {
 test "ack-eliciting send admission reports first blocking reason" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
 
@@ -72404,7 +72406,7 @@ test "processDatagramOrClose queues protocol violation close for ACK of unsent p
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
 
     var close_buf: [64]u8 = undefined;
@@ -72455,7 +72457,7 @@ test "processDatagramOrClose queues protocol violation close for ACK_ECN of unse
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
 
     var close_buf: [64]u8 = undefined;

@@ -36,7 +36,7 @@ pub fn main() !void {
     defer lifecycle.deinit();
 
     var endpoint_conn = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_idle_timeout_ms = 40,
     });
     defer endpoint_conn.deinit();

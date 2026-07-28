@@ -177,8 +177,8 @@ pub const State = struct {
         return .{
             .recovery_state = recovery.Recovery.init(.{
                 .max_datagram_size = config.max_datagram_size,
-                .initial_rtt_ms = config.initial_rtt_ms,
-                .max_ack_delay_ms = config.max_ack_delay_ms,
+                .initial_rtt_ns = config.initial_rtt_ns,
+                .max_ack_delay_ns = config.max_ack_delay_ns,
             }),
         };
     }

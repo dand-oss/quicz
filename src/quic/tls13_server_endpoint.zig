@@ -7586,7 +7586,7 @@ test "Tls13ServerEndpoint pairs due recovery output with committed route path" {
     }
     record.* = .{
         .handle = 82,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;
@@ -8595,7 +8595,7 @@ test "Tls13ServerEndpoint pairs Initial due recovery output with committed route
     }
     record.* = .{
         .handle = 83,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;
@@ -8778,7 +8778,7 @@ test "Tls13ServerEndpoint drains Initial due recovery output without route metad
     }
     record.* = .{
         .handle = 84,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;
@@ -9216,7 +9216,7 @@ test "Tls13ServerEndpoint receive step reports key discard while reporting input
     }
     record.* = .{
         .handle = 88,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;
@@ -9383,7 +9383,7 @@ test "Tls13ServerEndpoint services key discard deadline without input" {
     }
     record.* = .{
         .handle = 89,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;
@@ -9517,7 +9517,7 @@ test "Tls13ServerEndpoint drains key discard deadline without route path" {
     }
     record.* = .{
         .handle = 90,
-        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ms = 100 }),
+        .connection = try Connection.init(std.testing.allocator, .server, .{ .initial_rtt_ns = 100 }),
         .backend = empty_backend.backend(),
     };
     record_initialized = true;

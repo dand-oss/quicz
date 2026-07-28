@@ -395,13 +395,13 @@ pub fn main(init: std.process.Init) !void {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     // ─── Connection + Tls13Backend（client + server） ───
-    // initial_rtt_ms=100 使 PTO deadline 可预测（约 300ms），事件循环能快速推进触发。
+    // initial_rtt_ns=100 使 PTO deadline 可预测（约 300ms），事件循环能快速推进触发。
     const initial_max_streams_bidi: u64 = if (testcase == .stream_limit) 1 else 8;
     var client = try Connection.init(allocator, .client, .{
         .initial_max_data = 8192,
         .initial_max_stream_data = 2048,
         .initial_max_streams_bidi = initial_max_streams_bidi,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         // Keep the RFC 9002 minimum window below the initial window so the
         // congestion testcases can observe a genuine RFC 9002 reduction.
         .max_datagram_size = 1200,
@@ -411,7 +411,7 @@ pub fn main(init: std.process.Init) !void {
         .initial_max_data = 8192,
         .initial_max_stream_data = 2048,
         .initial_max_streams_bidi = initial_max_streams_bidi,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .max_datagram_size = 1200,
     });
     defer server.deinit();

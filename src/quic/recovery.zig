@@ -30,8 +30,8 @@ fn saturatingCeilMulDivU64(value: u64, numerator: u64, denominator: u64) u64 {
 /// Configuration for the simplified loss recovery and congestion state.
 pub const Config = struct {
     max_datagram_size: u16,
-    initial_rtt_ms: u32,
-    max_ack_delay_ms: u32 = 25,
+    initial_rtt_ns: u64,
+    max_ack_delay_ns: u64 = 25_000_000, // 25ms
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
 };
 
@@ -42,11 +42,11 @@ pub const Config = struct {
 /// modeled yet; callers supply byte counts when packets are sent, acked, or lost.
 pub const Recovery = struct {
     max_datagram_size: usize,
-    max_ack_delay_ms: u64,
-    latest_rtt_ms: ?u64 = null,
-    min_rtt_ms: ?u64 = null,
-    smoothed_rtt_ms: u64,
-    rttvar_ms: u64,
+    max_ack_delay_ns: u64,
+    latest_rtt_ns: ?u64 = null,
+    min_rtt_ns: ?u64 = null,
+    smoothed_rtt_ns: u64,
+    rttvar_ns: u64,
     pto_count: u8 = 0,
     bytes_in_flight: usize = 0,
     congestion_window: usize,
@@ -65,13 +65,13 @@ pub const Recovery = struct {
 
     /// Initialize recovery state with RFC 9002-style initial RTT and window.
     pub fn init(config: Config) Recovery {
-        const initial_rtt = @as(u64, config.initial_rtt_ms);
+        const initial_rtt = @as(u64, config.initial_rtt_ns);
         const max_datagram_size = @as(usize, config.max_datagram_size);
         return .{
             .max_datagram_size = max_datagram_size,
-            .max_ack_delay_ms = config.max_ack_delay_ms,
-            .smoothed_rtt_ms = initial_rtt,
-            .rttvar_ms = initial_rtt / 2,
+            .max_ack_delay_ns = config.max_ack_delay_ns,
+            .smoothed_rtt_ns = initial_rtt,
+            .rttvar_ns = initial_rtt / 2,
             .congestion_window = initialCongestionWindow(max_datagram_size),
             .congestion_algorithm = config.congestion_algorithm,
         };
@@ -99,10 +99,10 @@ pub const Recovery = struct {
         self: *Recovery,
         bytes: usize,
         sent_time_millis: i64,
-        latest_rtt_ms: u64,
+        latest_rtt_ns: u64,
         ack_delay_ms: u64,
     ) void {
-        self.onPacketAckedWithUtilization(bytes, sent_time_millis, latest_rtt_ms, ack_delay_ms, true);
+        self.onPacketAckedWithUtilization(bytes, sent_time_millis, latest_rtt_ns, ack_delay_ms, true);
     }
 
     /// Record an acknowledged packet, with explicit congestion-window utilization.
@@ -115,12 +115,12 @@ pub const Recovery = struct {
         self: *Recovery,
         bytes: usize,
         sent_time_millis: i64,
-        latest_rtt_ms: u64,
+        latest_rtt_ns: u64,
         ack_delay_ms: u64,
         congestion_window_utilized: bool,
     ) void {
         self.removeBytesInFlight(bytes);
-        self.updateRtt(latest_rtt_ms, ack_delay_ms);
+        self.updateRtt(latest_rtt_ns, ack_delay_ms);
         self.onAckedBytesForCongestion(bytes, sent_time_millis, congestion_window_utilized);
     }
 
@@ -198,7 +198,7 @@ pub const Recovery = struct {
         // Prevents rapid-fire cwnd reductions on very low RTT paths (loopback)
         // where many losses are detected within microseconds.
         if (self.congestion_recovery_start_time_millis) |prev_start| {
-            const pto: i64 = @intCast(self.smoothed_rtt_ms + 4 * self.rttvar_ms + self.max_ack_delay_ms);
+            const pto: i64 = @intCast(self.smoothed_rtt_ns + 4 * self.rttvar_ns + self.max_ack_delay_ns);
             if (now_millis - prev_start < @max(pto, 1)) return;
         }
         self.congestion_recovery_start_time_millis = now_millis;
@@ -238,8 +238,8 @@ pub const Recovery = struct {
     }
 
     /// Current Probe Timeout in milliseconds.
-    pub fn ptoMs(self: Recovery) u64 {
-        return self.backedOffPtoMs(true);
+    pub fn ptoNs(self: Recovery) u64 {
+        return self.backedOffPtoNs(true);
     }
 
     /// Apply a changed maximum datagram size to congestion-control math.
@@ -272,37 +272,36 @@ pub const Recovery = struct {
     /// RFC 9002 sets `max_ack_delay` to zero for Initial and Handshake packet
     /// number spaces because those acknowledgments are not intentionally
     /// delayed.
-    pub fn ptoMsWithoutMaxAckDelay(self: Recovery) u64 {
-        return self.backedOffPtoMs(false);
+    pub fn ptoNsWithoutMaxAckDelay(self: Recovery) u64 {
+        return self.backedOffPtoNs(false);
     }
 
-    fn basePtoMs(self: Recovery, include_max_ack_delay: bool) u64 {
-        const variance_delay = @max(saturatingMulU64(4, self.rttvar_ms), timer_granularity_ms);
-        const ack_delay = if (include_max_ack_delay) self.max_ack_delay_ms else 0;
-        return saturatingAddU64(saturatingAddU64(self.smoothed_rtt_ms, variance_delay), ack_delay);
+    fn basePtoNs(self: Recovery, include_max_ack_delay: bool) u64 {
+        const variance_delay = @max(saturatingMulU64(4, self.rttvar_ns), timer_granularity_ms);
+        const ack_delay = if (include_max_ack_delay) self.max_ack_delay_ns else 0;
+        return saturatingAddU64(saturatingAddU64(self.smoothed_rtt_ns, variance_delay), ack_delay);
     }
 
-    fn backedOffPtoMs(self: Recovery, include_max_ack_delay: bool) u64 {
-        var timeout = self.basePtoMs(include_max_ack_delay);
-
+    fn backedOffPtoNs(self: Recovery, include_max_ack_delay: bool) u64 {
+        var timeout = self.basePtoNs(include_max_ack_delay);
         var count = self.pto_count;
         while (count != 0) : (count -= 1) {
-            timeout = std.math.mul(u64, timeout, 2) catch return std.math.maxInt(u64);
+            timeout *= 2;
         }
         return timeout;
     }
 
     /// Persistent congestion duration from RFC 9002 Section 7.6.1.
-    pub fn persistentCongestionDurationMs(self: Recovery) u64 {
-        return std.math.mul(u64, self.basePtoMs(true), persistent_congestion_threshold) catch std.math.maxInt(u64);
+    pub fn persistentCongestionDurationNs(self: Recovery) u64 {
+        return std.math.mul(u64, self.basePtoNs(true), persistent_congestion_threshold) catch std.math.maxInt(u64);
     }
 
     /// Initial/Handshake persistent congestion duration from RFC 9002.
     ///
     /// Initial and Handshake packet number spaces use a zero max_ack_delay for
     /// PTO, so their persistent-congestion period must use the same base PTO.
-    pub fn persistentCongestionDurationMsWithoutMaxAckDelay(self: Recovery) u64 {
-        return std.math.mul(u64, self.basePtoMs(false), persistent_congestion_threshold) catch std.math.maxInt(u64);
+    pub fn persistentCongestionDurationNsWithoutMaxAckDelay(self: Recovery) u64 {
+        return std.math.mul(u64, self.basePtoNs(false), persistent_congestion_threshold) catch std.math.maxInt(u64);
     }
 
     /// Apply the persistent congestion response by reducing cwnd to kMinimumWindow.
@@ -314,10 +313,10 @@ pub const Recovery = struct {
 
     /// Apply the persistent congestion response and refresh min_rtt when the
     /// same ACK produced the newest RTT sample.
-    pub fn onPersistentCongestionWithRttSample(self: *Recovery, latest_rtt_ms: ?u64) void {
+    pub fn onPersistentCongestionWithRttSample(self: *Recovery, latest_rtt_ns: ?u64) void {
         self.onPersistentCongestion();
-        if (latest_rtt_ms) |latest| {
-            self.min_rtt_ms = latest;
+        if (latest_rtt_ns) |latest| {
+            self.min_rtt_ns = latest;
         }
     }
 
@@ -378,33 +377,33 @@ pub const Recovery = struct {
 
     /// Minimum trackable RTT (1ms). Prevents zero-RTT samples from collapsing
     /// the estimator on loopback paths (s2n-quic uses 1μs; we use 1ms granularity).
-    pub const min_trackable_rtt_ms: u64 = 0; // 0 allows loopback RTT; pacer bypasses at srtt=0
+    pub const min_trackable_rtt_ns: u64 = 1_000; // 1μs (s2n-quic MIN_RTT) // 0 allows loopback RTT; pacer bypasses at srtt=0
 
-    pub fn updateRtt(self: *Recovery, latest_rtt_ms: u64, ack_delay_ms: u64) void {
-        const clamped_rtt = @max(latest_rtt_ms, min_trackable_rtt_ms);
-        const had_rtt_sample = self.latest_rtt_ms != null;
-        self.latest_rtt_ms = clamped_rtt;
-        self.min_rtt_ms = if (self.min_rtt_ms) |min_rtt| @min(min_rtt, clamped_rtt) else clamped_rtt;
+    pub fn updateRtt(self: *Recovery, latest_rtt_ns: u64, ack_delay_ms: u64) void {
+        const clamped_rtt = @max(latest_rtt_ns, min_trackable_rtt_ns);
+        const had_rtt_sample = self.latest_rtt_ns != null;
+        self.latest_rtt_ns = clamped_rtt;
+        self.min_rtt_ns = if (self.min_rtt_ns) |min_rtt| @min(min_rtt, clamped_rtt) else clamped_rtt;
 
-        const min_rtt = self.min_rtt_ms.?;
+        const min_rtt = self.min_rtt_ns.?;
         const adjusted_rtt = if (clamped_rtt > saturatingAddU64(min_rtt, ack_delay_ms))
             clamped_rtt - ack_delay_ms
         else
             clamped_rtt;
 
         if (!had_rtt_sample) {
-            self.smoothed_rtt_ms = adjusted_rtt;
-            self.rttvar_ms = adjusted_rtt / 2;
+            self.smoothed_rtt_ns = adjusted_rtt;
+            self.rttvar_ns = adjusted_rtt / 2;
             return;
         }
 
-        const rtt_delta = if (self.smoothed_rtt_ms > adjusted_rtt)
-            self.smoothed_rtt_ms - adjusted_rtt
+        const rtt_delta = if (self.smoothed_rtt_ns > adjusted_rtt)
+            self.smoothed_rtt_ns - adjusted_rtt
         else
-            adjusted_rtt - self.smoothed_rtt_ms;
+            adjusted_rtt - self.smoothed_rtt_ns;
 
-        self.rttvar_ms = saturatingAddU64(saturatingMulU64(3, self.rttvar_ms), rtt_delta) / 4;
-        self.smoothed_rtt_ms = saturatingAddU64(saturatingMulU64(7, self.smoothed_rtt_ms), adjusted_rtt) / 8;
+        self.rttvar_ns = saturatingAddU64(saturatingMulU64(3, self.rttvar_ns), rtt_delta) / 4;
+        self.smoothed_rtt_ns = saturatingAddU64(saturatingMulU64(7, self.smoothed_rtt_ns), adjusted_rtt) / 8;
     }
 };
 
@@ -423,8 +422,8 @@ pub fn minimumCongestionWindow(max_datagram_size: usize) usize {
 /// The current connection skeleton uses this for ACK-driven time-threshold
 /// loss detection. A future endpoint timer will use the same delay to arm the
 /// loss detection timer.
-pub fn timeThresholdLossDelayMs(latest_rtt_ms: ?u64, smoothed_rtt_ms: u64) u64 {
-    const rtt_basis = if (latest_rtt_ms) |latest_rtt| @max(latest_rtt, smoothed_rtt_ms) else smoothed_rtt_ms;
+pub fn timeThresholdLossDelayMs(latest_rtt_ns: ?u64, smoothed_rtt_ns: u64) u64 {
+    const rtt_basis = if (latest_rtt_ns) |latest_rtt| @max(latest_rtt, smoothed_rtt_ns) else smoothed_rtt_ns;
     const loss_delay = saturatingCeilMulDivU64(rtt_basis, time_threshold_numerator, time_threshold_denominator);
     return @max(loss_delay, timer_granularity_ms);
 }
@@ -447,7 +446,7 @@ test "time threshold loss delay follows RFC 9002 multiplier and granularity" {
 }
 
 test "sent acked and lost packets update bytes in flight and congestion window" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 333 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 333 });
     const initial_window = recovery.congestion_window;
 
     try std.testing.expect(recovery.canSend(1200));
@@ -466,7 +465,7 @@ test "sent acked and lost packets update bytes in flight and congestion window" 
 }
 
 test "available congestion window saturates at zero" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.congestion_window = 3600;
 
     try std.testing.expectEqual(@as(usize, 3600), recovery.availableCongestionWindow());
@@ -477,7 +476,7 @@ test "available congestion window saturates at zero" {
 }
 
 test "sent packet accounting saturates bytes in flight" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.bytes_in_flight = std.math.maxInt(usize) - 5;
 
     recovery.onPacketSent(10);
@@ -490,7 +489,7 @@ test "sent packet accounting saturates bytes in flight" {
 }
 
 test "NewReno slow start grows congestion window by acked bytes" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     const initial_window = recovery.congestion_window;
 
     recovery.onPacketSent(1200);
@@ -502,7 +501,7 @@ test "NewReno slow start grows congestion window by acked bytes" {
 }
 
 test "NewReno congestion avoidance grows by byte-counted cwnd credit" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.congestion_window = 12_000;
     recovery.ssthresh = 12_000;
 
@@ -524,7 +523,7 @@ test "NewReno congestion avoidance grows by byte-counted cwnd credit" {
 }
 
 test "NewReno congestion avoidance consumes multiple cwnd credits from batched ACKs" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.congestion_window = 12_000;
     recovery.ssthresh = 12_000;
 
@@ -537,7 +536,7 @@ test "NewReno congestion avoidance consumes multiple cwnd credits from batched A
 }
 
 test "max datagram size update resets cwnd on decrease and preserves cwnd on increase" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1400, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1400, .initial_rtt_ns = 100 });
     try std.testing.expectEqual(@as(usize, 14_000), recovery.congestion_window);
 
     recovery.congestion_window = 20_000;
@@ -566,7 +565,7 @@ test "max datagram size update resets cwnd on decrease and preserves cwnd on inc
 }
 
 test "underutilized ACK updates recovery accounting without growing congestion window" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     const initial_window = recovery.congestion_window;
 
     recovery.onPacketSent(1200);
@@ -575,13 +574,13 @@ test "underutilized ACK updates recovery accounting without growing congestion w
 
     try std.testing.expectEqual(@as(usize, 0), recovery.bytes_in_flight);
     try std.testing.expectEqual(@as(u8, 0), recovery.pto_count);
-    try std.testing.expectEqual(@as(?u64, 80), recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 80), recovery.smoothed_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 80), recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 80), recovery.smoothed_rtt_ns);
     try std.testing.expectEqual(initial_window, recovery.congestion_window);
 }
 
 test "ACK accounting can skip RTT sample while resetting PTO" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     const initial_window = recovery.congestion_window;
 
     recovery.onPacketSent(1200);
@@ -590,64 +589,64 @@ test "ACK accounting can skip RTT sample while resetting PTO" {
 
     try std.testing.expectEqual(@as(usize, 0), recovery.bytes_in_flight);
     try std.testing.expectEqual(@as(u8, 0), recovery.pto_count);
-    try std.testing.expectEqual(@as(?u64, null), recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 100), recovery.smoothed_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, null), recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 100), recovery.smoothed_rtt_ns);
     try std.testing.expectEqual(initial_window, recovery.congestion_window);
 }
 
 test "ACK delay does not reduce adjusted RTT below min RTT" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
 
     recovery.onPacketSent(1200);
     recovery.onPacketAcked(1200, 0, 100, 0);
-    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 100), recovery.smoothed_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 50), recovery.rttvar_ms);
+    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 100), recovery.smoothed_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 50), recovery.rttvar_ns);
 
     recovery.onPacketSent(1200);
     recovery.onPacketAcked(1200, 1, 110, 20);
-    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 110), recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 101), recovery.smoothed_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 40), recovery.rttvar_ms);
+    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 110), recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 101), recovery.smoothed_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 40), recovery.rttvar_ns);
 
     recovery.onPacketSent(1200);
     recovery.onPacketAcked(1200, 2, 150, 20);
-    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 150), recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 104), recovery.smoothed_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 37), recovery.rttvar_ms);
+    try std.testing.expectEqual(@as(?u64, 100), recovery.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 150), recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 104), recovery.smoothed_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 37), recovery.rttvar_ns);
 }
 
 test "pto uses rtt variance and exponential backoff" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100, .max_ack_delay_ms = 25 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100000000, .max_ack_delay_ns = 25 });
 
-    try std.testing.expectEqual(@as(u64, 325), recovery.ptoMs());
-    try std.testing.expectEqual(@as(u64, 300), recovery.ptoMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 325), recovery.ptoNs());
+    try std.testing.expectEqual(@as(u64, 300), recovery.ptoNsWithoutMaxAckDelay());
     recovery.onPtoExpired();
-    try std.testing.expectEqual(@as(u64, 650), recovery.ptoMs());
-    try std.testing.expectEqual(@as(u64, 600), recovery.ptoMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 650), recovery.ptoNs());
+    try std.testing.expectEqual(@as(u64, 600), recovery.ptoNsWithoutMaxAckDelay());
 
     recovery.onPacketAcked(0, 0, 80, 0);
     try std.testing.expectEqual(@as(u8, 0), recovery.pto_count);
-    try std.testing.expect(recovery.ptoMs() < 650);
+    try std.testing.expect(recovery.ptoNs() < 650);
 }
 
 test "pto expiration count saturates before overflowing" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.pto_count = std.math.maxInt(u8) - 1;
 
     recovery.onPtoExpired();
     try std.testing.expectEqual(std.math.maxInt(u8), recovery.pto_count);
-    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoMs());
+    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoNs());
 
     recovery.onPtoExpired();
     try std.testing.expectEqual(std.math.maxInt(u8), recovery.pto_count);
-    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoNsWithoutMaxAckDelay());
 }
 
 test "congestion recovery period avoids repeated loss reduction and ACK growth" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     const initial_window = recovery.congestion_window;
 
     recovery.onPacketSent(3600);
@@ -680,7 +679,7 @@ test "congestion recovery period avoids repeated loss reduction and ACK growth" 
 }
 
 test "ACK inside NewReno recovery updates accounting without congestion growth" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.congestion_window = 12_000;
     recovery.ssthresh = 12_000;
     recovery.congestion_avoidance_bytes_acked = 600;
@@ -696,8 +695,8 @@ test "ACK inside NewReno recovery updates accounting without congestion growth" 
     recovery.onPacketAcked(1200, 100, 80, 0);
     try std.testing.expectEqual(@as(usize, 10_800), recovery.bytes_in_flight);
     try std.testing.expectEqual(@as(u8, 0), recovery.pto_count);
-    try std.testing.expectEqual(@as(?u64, 80), recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(u64, 80), recovery.smoothed_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 80), recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(u64, 80), recovery.smoothed_rtt_ns);
     try std.testing.expectEqual(recovery_window, recovery.congestion_window);
     try std.testing.expectEqual(@as(usize, 0), recovery.congestion_avoidance_bytes_acked);
 
@@ -708,7 +707,7 @@ test "ACK inside NewReno recovery updates accounting without congestion growth" 
 }
 
 test "NewReno congestion event clamps cwnd without clamping ssthresh" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     recovery.congestion_window = 3_000;
 
     recovery.onCongestionEvent(10, 100);
@@ -718,7 +717,7 @@ test "NewReno congestion event clamps cwnd without clamping ssthresh" {
 }
 
 test "ECN congestion event enters recovery without removing bytes in flight" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
     const initial_window = recovery.congestion_window;
 
     recovery.onPacketSent(2400);
@@ -738,15 +737,15 @@ test "ECN congestion event enters recovery without removing bytes in flight" {
 }
 
 test "persistent congestion duration and response follow RFC 9002 bounds" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100, .max_ack_delay_ms = 25 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100000000, .max_ack_delay_ns = 25 });
 
-    try std.testing.expectEqual(@as(u64, 975), recovery.persistentCongestionDurationMs());
-    try std.testing.expectEqual(@as(u64, 900), recovery.persistentCongestionDurationMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975), recovery.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 900), recovery.persistentCongestionDurationNsWithoutMaxAckDelay());
     recovery.onPtoExpired();
     recovery.onPtoExpired();
-    try std.testing.expectEqual(@as(u64, 1300), recovery.ptoMs());
-    try std.testing.expectEqual(@as(u64, 975), recovery.persistentCongestionDurationMs());
-    try std.testing.expectEqual(@as(u64, 900), recovery.persistentCongestionDurationMsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 1300), recovery.ptoNs());
+    try std.testing.expectEqual(@as(u64, 975), recovery.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 900), recovery.persistentCongestionDurationNsWithoutMaxAckDelay());
 
     recovery.congestion_window = 12_000;
     recovery.ssthresh = 6_000;
@@ -766,20 +765,20 @@ test "persistent congestion duration and response follow RFC 9002 bounds" {
 }
 
 test "persistent congestion refreshes min RTT from newest sample when present" {
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
 
     recovery.onPacketSent(1200);
     recovery.onPacketAcked(1200, 0, 50, 0);
-    try std.testing.expectEqual(@as(?u64, 50), recovery.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 50), recovery.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), recovery.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50), recovery.latest_rtt_ns);
 
     recovery.onPacketSent(1200);
     recovery.onPacketAcked(1200, 100, 500, 0);
-    try std.testing.expectEqual(@as(?u64, 50), recovery.min_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 500), recovery.latest_rtt_ms);
+    try std.testing.expectEqual(@as(?u64, 50), recovery.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500), recovery.latest_rtt_ns);
 
-    recovery.onPersistentCongestionWithRttSample(recovery.latest_rtt_ms);
-    try std.testing.expectEqual(@as(?u64, 500), recovery.min_rtt_ms);
+    recovery.onPersistentCongestionWithRttSample(recovery.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500), recovery.min_rtt_ns);
     try std.testing.expectEqual(minimumCongestionWindow(1200), recovery.congestion_window);
 }
 
@@ -787,10 +786,10 @@ test "recovery arithmetic saturates at numeric extremes" {
     try std.testing.expectEqual(std.math.maxInt(usize), initialCongestionWindow(std.math.maxInt(usize)));
     try std.testing.expectEqual(std.math.maxInt(usize), minimumCongestionWindow(std.math.maxInt(usize)));
 
-    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ms = 100 });
-    recovery.smoothed_rtt_ms = std.math.maxInt(u64);
-    recovery.rttvar_ms = std.math.maxInt(u64);
-    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoMs());
+    var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100 });
+    recovery.smoothed_rtt_ns = std.math.maxInt(u64);
+    recovery.rttvar_ns = std.math.maxInt(u64);
+    try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoNs());
 
     recovery.max_datagram_size = std.math.maxInt(usize);
     recovery.congestion_window = 1;
@@ -803,7 +802,7 @@ test "recovery arithmetic saturates at numeric extremes" {
 test "CUBIC congestion control through Recovery interface" {
     var r = Recovery.init(.{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .congestion_algorithm = .cubic,
     });
 
@@ -829,7 +828,7 @@ test "CUBIC congestion control through Recovery interface" {
 test "NewReno still works when selected" {
     var r = Recovery.init(.{
         .max_datagram_size = 1200,
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
         .congestion_algorithm = .new_reno,
     });
 

@@ -306,11 +306,11 @@ pub fn main() !void {
     const secrets = try quicz.protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
     var server = try quicz.Connection.init(allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer server.deinit();
     try server.validatePeerAddress();
@@ -337,11 +337,11 @@ pub fn main() !void {
     const long_client_connection_id: u64 = 141;
     const long_server_connection_id: u64 = 151;
     var long_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer long_client.deinit();
     var long_server = try quicz.Connection.init(allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer long_server.deinit();
     try long_server.validatePeerAddress();
@@ -496,11 +496,11 @@ pub fn main() !void {
     const zero_rtt_client_connection_id: u64 = 241;
     const zero_rtt_server_connection_id: u64 = 251;
     var zero_rtt_client = try quicz.Connection.init(allocator, .client, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer zero_rtt_client.deinit();
     var zero_rtt_server = try quicz.Connection.init(allocator, .server, .{
-        .initial_rtt_ms = 100,
+        .initial_rtt_ns = 100000000,
     });
     defer zero_rtt_server.deinit();
     try zero_rtt_server.validatePeerAddress();
