@@ -8942,8 +8942,19 @@ pub const Connection = struct {
             elapsedMillis(largest_acked_packet.?.sent_time_millis, now_millis)
         else
             null;
-        if (latest_rtt_sample != null) {
+        if (latest_rtt_sample) |rtt_sample| {
             self.rememberFirstRttSampleSentTime(largest_acked_packet.?.sent_time_millis);
+            if (self.config.enable_rtt_update) {
+                // RFC 9002 §5.3: ignore ack_delay for Initial/Handshake;
+                // cap by peer max_ack_delay after handshake confirmation.
+                var ack_delay_ms: u64 = ack.ack_delay >> @as(u6, @intCast(self.peer_ack_delay_exponent));
+                if (space == .initial or space == .handshake) {
+                    ack_delay_ms = 0;
+                } else if (self.handshakeConfirmed()) {
+                    ack_delay_ms = @min(ack_delay_ms, self.config.max_ack_delay_ms);
+                }
+                packet_space.recovery_state.updateRtt(rtt_sample, ack_delay_ms);
+            }
         }
         if (acked_bytes != 0) {
             if (packet_space.largest_acknowledged.*) |previous_largest| {
@@ -15858,6 +15869,7 @@ test "connection ACK APIs reject ACK ranges that compute negative packet numbers
 
 test "ACK delay is ignored for Initial and Handshake RTT samples" {
     var initial_conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer initial_conn.deinit();
@@ -15879,6 +15891,7 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
     try std.testing.expectEqual(@as(u64, 102), initial_conn.smoothedRttMillis(.initial));
 
     var handshake_conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer handshake_conn.deinit();
@@ -15902,6 +15915,7 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
 
 test "RTT estimates are shared across packet number spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer conn.deinit();
@@ -15966,6 +15980,7 @@ test "RTT sharing rolls back when datagram payload is rejected" {
 
 test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer conn.deinit();
@@ -16006,6 +16021,7 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
 
 test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer conn.deinit();
@@ -16039,6 +16055,7 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
 
 test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer conn.deinit();
@@ -16074,7 +16091,8 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
 }
 
 test "duplicate ACK does not trigger loss detection without newly acknowledged packets" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 300, 100);
@@ -16141,7 +16159,8 @@ test "ACK marks time-threshold losses in the selected packet number space" {
 }
 
 test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 300, 100);
@@ -16169,7 +16188,8 @@ test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
 }
 
 test "loss detection timer reports loss-time before PTO across packet spaces" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 300, 100);
@@ -16270,6 +16290,7 @@ test "Application PTO is gated until handshake confirmation" {
 
 test "client no-in-flight Initial ACK arms anti-deadlock PTO" {
     var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer client.deinit();
@@ -16315,6 +16336,7 @@ test "client anti-deadlock PTO selects Handshake when keys are installed" {
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
     var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .initial_rtt_ms = 100,
     });
     defer client.deinit();
@@ -16457,7 +16479,8 @@ test "serviceLossDetectionTimer is no-op before aggregate deadline" {
 }
 
 test "serviceLossDetectionTimer handles loss-time before due PTO probes" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
@@ -16614,7 +16637,8 @@ test "EndpointLossDetectionTimers disarms connection after loss-time service" {
     var timers = EndpointLossDetectionTimers.init(std.testing.allocator);
     defer timers.deinit();
 
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 300, 100);
@@ -16823,6 +16847,7 @@ test "persistent congestion resets congestion window to minimum under controlled
 
 test "Application persistent congestion duration includes max_ack_delay" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
         .initial_congestion_window_packets = null,
@@ -18078,7 +18103,8 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34137,7 +34163,8 @@ test "EndpointConnectionLifecycle single due-deadline backend poll keeps separat
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34246,7 +34273,8 @@ test "EndpointConnectionLifecycle single due-deadline backend drain keeps separa
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34358,7 +34386,8 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend poll k
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34468,7 +34497,8 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend drain 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34743,7 +34773,8 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34861,7 +34892,8 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend poll ke
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -34980,7 +35012,8 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -35101,7 +35134,8 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend drain k
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var due_connection = try Connection.init(std.testing.allocator, .client, .{});
+    var due_connection = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
     try due_connection.installOneRttTrafficSecrets(.{
@@ -59316,7 +59350,8 @@ test "EndpointLossDetectionTimers services protected short loss-time retransmiss
     var timers = EndpointLossDetectionTimers.init(std.testing.allocator);
     defer timers.deinit();
 
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
 
     try client.sendCrypto("endpoint timer protected crypto");
@@ -59356,7 +59391,8 @@ test "loss detection timer expires protected short CRYPTO retransmission" {
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
 
     try client.sendCrypto("loss-timer protected crypto");
@@ -59497,6 +59533,7 @@ test "ACK-driven non-contiguous losses do not establish persistent congestion" {
 
 test "ACK-driven persistent congestion duration ignores PTO backoff" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
     });
@@ -59530,6 +59567,7 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
 
 test "ACK-driven persistent congestion refreshes min RTT from newest sample across spaces" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,
         .max_datagram_size = 1200,
         .initial_rtt_ms = 100,
     });
@@ -60254,7 +60292,8 @@ test "packet number spaces isolate ACK recovery state" {
 }
 
 test "discardPacketNumberSpace clears Initial recovery and prevents reuse" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.initial, 300, 100);
@@ -60543,7 +60582,8 @@ test "ACK-driven loss requeues protected Initial CRYPTO frame for retransmission
     const scid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
     const secrets = try protection.deriveInitialSecrets(.v1, &dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
 
     try client.sendCryptoInSpace(.initial, "lost protected initial");
@@ -61711,7 +61751,8 @@ test "ACK-driven loss requeues protected 0-RTT STREAM frame for retransmission" 
     const server_scid = [_]u8{ 0x55, 0x66, 0x77, 0x88 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
 
     const stream_id = try client.openStream();
@@ -64596,7 +64637,8 @@ test "ACK-driven loss requeues protected short CRYPTO frame for retransmission" 
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
 
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
 
     try client.sendCrypto("lost protected crypto");
@@ -67702,9 +67744,11 @@ test "duplicate resetStream does not queue duplicate RESET_STREAM" {
 }
 
 test "streamState reports FIN send and receive final-size snapshots" {
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer client.deinit();
-    var server = try Connection.init(std.testing.allocator, .server, .{});
+    var server = try Connection.init(std.testing.allocator, .server, .{
+        .enable_rtt_update = false,});
     defer server.deinit();
     try server.validatePeerAddress();
 
@@ -67749,7 +67793,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
     const client_acked = (try client.streamState(stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamSendState.data_acked, client_acked.send);
 
-    var split_client = try Connection.init(std.testing.allocator, .client, .{});
+    var split_client = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = false });
     defer split_client.deinit();
     const split_stream_id = try split_client.openStream();
     try split_client.sendOnStream(split_stream_id, "a", false);
@@ -67773,7 +67817,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
     const split_data_acked = (try split_client.streamState(split_stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamSendState.data_acked, split_data_acked.send);
 
-    var zero_client = try Connection.init(std.testing.allocator, .client, .{});
+    var zero_client = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = false });
     defer zero_client.deinit();
     var zero_server = try Connection.init(std.testing.allocator, .server, .{});
     defer zero_server.deinit();
@@ -68307,7 +68351,8 @@ test "pollTx keeps queued STREAM when pending ACK cannot fit output buffer" {
 }
 
 test "ACK ranges keep unacknowledged sent packets in flight" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -68341,7 +68386,8 @@ test "ACK ranges keep unacknowledged sent packets in flight" {
 }
 
 test "ACK-driven loss requeues STREAM frame for retransmission" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -68384,7 +68430,8 @@ test "ACK-driven loss requeues STREAM frame for retransmission" {
 }
 
 test "ACK-driven loss skips STREAM retransmission after RESET_STREAM" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -68443,7 +68490,8 @@ test "ACK-driven loss skips STREAM retransmission after RESET_STREAM" {
 }
 
 test "new congestion event allows one STREAM retransmission probe despite full cwnd" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -68579,7 +68627,8 @@ test "processDatagram rolls back STREAM retransmission requeue when payload is i
 }
 
 test "ACK-driven loss requeues CRYPTO frame for retransmission" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{
+        .enable_rtt_update = false,});
     defer conn.deinit();
 
     try conn.sendCryptoInSpace(.handshake, "lost crypto");

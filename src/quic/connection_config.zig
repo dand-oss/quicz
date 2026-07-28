@@ -198,6 +198,9 @@ pub const Config = struct {
     /// defenses (single-use PSK identities, address-validation tokens) outside
     /// the connection because 0-RTT is vulnerable to replay.
     accept_zero_rtt: bool = false,
+    /// Enable RTT estimate update from ACK processing (RFC 9002 §5.3).
+    /// Adapts smoothed_rtt to measured RTT for accurate loss detection and PTO.
+    enable_rtt_update: bool = true,
     /// Enable partial delivery of buffered data on reset streams.
     ///
     /// When true, recvOnStream delivers already-buffered data before returning

@@ -378,7 +378,7 @@ pub const Recovery = struct {
 
     /// Minimum trackable RTT (1ms). Prevents zero-RTT samples from collapsing
     /// the estimator on loopback paths (s2n-quic uses 1μs; we use 1ms granularity).
-    pub const min_trackable_rtt_ms: u64 = 1;
+    pub const min_trackable_rtt_ms: u64 = 0; // 0 allows loopback RTT; pacer bypasses at srtt=0
 
     pub fn updateRtt(self: *Recovery, latest_rtt_ms: u64, ack_delay_ms: u64) void {
         const clamped_rtt = @max(latest_rtt_ms, min_trackable_rtt_ms);
