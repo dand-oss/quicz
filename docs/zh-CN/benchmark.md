@@ -13,9 +13,9 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（64 MB） | **~1444 MB/s (1.94 GB/s)** | 线程化 client/server，CUBIC，std.Io 异步 |
-| 发送 datagram 数 | ~102K | 每个 1324 B，流水线 ACK 反馈 |
-| 总耗时 | ~44 ms | cwnd 增长至 1.2 MB |
+| 流上传（16 MB） | **~1.6-2.3 GB/s** | 线程化 client/server，CUBIC，ns RTT |
+| 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
+| 总耗时 | ~7-10 ms | cwnd 增长至 2.3 MB |
 
 ## 运行方式
 
@@ -37,7 +37,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 语言 | 吞吐量 | 平台 | 来源 |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.94 GB/s** | **macOS，无 GSO** | **本基准** |
+| **quicz** | **Zig** | **~1.6-2.3 GB/s** | **macOS，无 GSO** | **本基准** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -48,7 +48,8 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 语言 | P50 | P99 | 说明 |
 |---|---|---|---|---|
 | msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
-| **quicz** | **Zig** | **~19 μs** | **~55-69 μs** | **std.Io 线程化** |
+| **quicz** | **Zig** | **~18 μs** | **~46 μs** | **std.Io 线程化，ns RTT** |
+| s2n-quic | Rust | ~20-40 μs | ~80-150 μs | epoll 异步 |
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Go 运行时调度开销 |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | 单线程事件循环 |
 | quinn | Rust | ~50-100 μs | ~200-400 μs | tokio 异步运行时 |
@@ -58,7 +59,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 语言 | 4 流聚合 | 扩展性 | 说明 |
 |---|---|---|---|---|
 | msquic | C | ~2-4 GB/s | 近线性 | 每流工作线程 |
-| **quicz** | **Zig** | **~180-800 MB/s** | **共享 cwnd** | **单连接，CUBIC** |
+| **quicz** | **Zig** | **~1.6 GB/s** | **共享 cwnd** | **单连接，CUBIC，ns RTT** |
 | quic-go | Go | ~600-900 MB/s | 良好 | 每流 goroutine |
 | s2n-quic | Rust | ~800 MB/s-1.2 GB/s | 良好 | 异步 I/O |
 | quiche | Rust | ~300-500 MB/s | 有限 | 单线程 |
@@ -68,16 +69,16 @@ zig build-exe -OReleaseFast --dep quicz \
 | 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 恢复算法 |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | 保持 ~70-80% | 保持 ~40-50% | BBR2/CUBIC |
-| **quicz** | **~1350 MB/s** | **~497 MB/s (37%)** | **~314 MB/s (23%)** | **CUBIC** |
+| **quicz** | **~2.0 GB/s** | **~1.0+ GB/s (50%+)** | **~350-410 MB/s (17-20%)** | **CUBIC，ns RTT** |
 | quic-go | 400-600 MB/s | 保持 ~60-70% | 保持 ~30-40% | CUBIC/NewReno |
 | quiche | 300-500 MB/s | 保持 ~50-60% | 保持 ~25-35% | CUBIC |
 | quinn | 300-500 MB/s | 保持 ~55-65% | 保持 ~30-40% | CUBIC/NewReno |
 
 丢包恢复说明：
-- quicz 丢包恢复偏保守（CUBIC + 50% 利用率阈值）。
-- msquic 的 BBR2 通过带宽建模在丢包下维持更高吞吐。
-- quic-go 的 CUBIC 实现恢复更激进（更高利用率阈值）。
-- quicz 可通过调优 CUBIC 参数（恢复间隔、利用率阈值）改善丢包恢复。
+- ns RTT 精度迁移后 1% 丢包从 117 MB/s → 1.0+ GB/s（10x 提升）。
+- 5% 丢包从 67 MB/s → 350-410 MB/s（5-6x 提升）。
+- CUBIC 窗口增长修复后 cwnd 可恢复至 2.3 MB（之前永不增长）。
+- 5% 丢包保持率仍低于 s2n-quic/quic-go，后续通过 TLP + RACK 改善。
 
 说明：
 - 直接对比困难，因测量方法、平台、配置不同。
@@ -89,9 +90,9 @@ zig build-exe -OReleaseFast --dep quicz \
 
 | 百分位 | 延迟 | 说明 |
 |---|---|---|
-| P50 | **20.2 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
-| P99 | **62.1 μs** | |
-| P99.9 | **85.3 μs** | |
+| P50 | **17.6 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
+| P99 | **46.1 μs** | |
+| P99.9 | **65.0 μs** | |
 
 测试：5000 次迭代，macOS loopback，ReleaseFast。
 
@@ -104,17 +105,21 @@ zig build-exe -OReleaseFast --dep quicz \
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
 
-## 丢包恢复改善路径（5% 丢包：19% → 30-40% 目标）
+## 已完成：RTT ns 精度迁移 + CUBIC 修复
 
-当前 5% 丢包保留率（19%）低于 s2n-quic/quic-go（30-40%）。根因：
-1. Loopback RTT=0，CUBIC 无恢复时间
-2. 无 TLP（Tail Loss Probe）——丢包检测依赖包号阈值（3 个更新包被 ACK）
-3. 无 RACK——基于时间的丢包检测在低 RTT 路径更快
+**状态**：完成（2026-07-28）
 
-计划修复：
-- [ ] TLP（RFC 8985）：RTO 前发探测包，触发早期 ACK，加速重传
-- [ ] RACK：按接收时间戳判定丢包，非包号间隔
-- [ ] 重传 pacing：分散重传避免级联二次丢包
+- 所有 RTT 字段统一为 u64 纳秒
+- CUBIC 窗口增长修复（t=0 bug → 永不增长）
+- 拥塞事件最小间隔修复（ns vs ms 比较）
+- 1805/1805 测试通过
+
+## 丢包恢复改善路径（5% 丢包：17% → 30-40% 目标）
+
+后续计划：
+- [ ] TLP（Tail Loss Probe）：尾部丢包快速检测
+- [ ] RACK：基于时间戳的丢包判定
+- [ ] Pacer ns 精度：loopback 下 srtt 截断为 0 导致 pacer 绕过
 
 
 ## 决策：BBR2 不列入路线图

@@ -104,34 +104,33 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
 
-## Completed: RTT ns Precision Migration
+## Completed: RTT ns Precision Migration + CUBIC Fix
 
-**Status**: Complete (2026-07-28, commit 887a5be + 3ff8e85)
+**Status**: Complete (2026-07-28)
 
 All RTT fields migrated from milliseconds to nanoseconds (u64):
 - `smoothed_rtt_ns`, `rttvar_ns`, `min_rtt_ns`, `latest_rtt_ns`, `max_ack_delay_ns`
 - `timer_granularity_ns = 1_000_000` (RFC 9002 kGranularity = 1ms)
 - Cross-platform `clock.nanoTimestamp()` via `clock_gettime(CLOCK_MONOTONIC)`
 - RTT update enabled by default through `onPacketAckedWithUtilization`
+- CUBIC window growth fixed (t=0 bug prevented all growth)
+- Congestion event minimum-time guard fixed (ns vs ms comparison)
+- PTO retransmission timer integrated in benchmark
 - 1805/1805 tests pass
 
 Impact:
-- 1% loss: 117 → 764 MB/s (6.5x improvement)
-- 5% loss: 67 → 338 MB/s (5x improvement)
+- 1% loss: 117 → 1000+ MB/s (10x improvement)
+- 5% loss: 67 → 350-410 MB/s (5-6x improvement)
+- CUBIC cwnd grows to 2.3 MB (was stuck — never grew)
 - PTO adapts to actual RTT (was stuck at 333ms initial)
 - Time-threshold loss detection accurate at μs scale
 
-## Loss Recovery Improvement Path (5% loss: 19% → 30-40% target)
-
-Current 5% loss retention (19%) is below s2n-quic/quic-go (30-40%). Root causes:
-1. Loopback RTT=0 gives CUBIC no recovery time between loss events
-2. No TLP (Tail Loss Probe) — loss detection relies on packet threshold (3 newer ACKed)
-3. No RACK — time-based loss detection would be faster on low-RTT paths
+## Loss Recovery Improvement Path (5% loss: 17% → 30-40% target)
 
 Planned fixes:
-- [ ] TLP (RFC 8985): send probe before RTO, trigger early ACK, faster retransmission
-- [ ] RACK: declare loss by receive timestamp, not packet number gap
-- [ ] Retransmission pacing: space retransmits to avoid cascading secondary loss
+- [ ] TLP (Tail Loss Probe): faster tail loss detection
+- [ ] RACK: timestamp-based loss declaration
+- [ ] Pacer ns precision: loopback srtt truncates to 0ms, bypassing pacer
 
 
 ## Decision: BBR2 Not Planned
