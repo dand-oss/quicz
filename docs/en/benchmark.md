@@ -58,7 +58,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | Language | 4-stream aggregate | Scaling | Notes |
 |---|---|---|---|---|
 | msquic | C | ~2-4 GB/s | Near-linear | Per-stream worker threads |
-| **quicz** | **Zig** | **~1494 MB/s** | **Shared cwnd** | **Single connection, CUBIC, ns RTT** |
+| **quicz** | **Zig** | **~1573 MB/s** | **Shared cwnd** | **Single connection, CUBIC, ns RTT** |
 | quic-go | Go | ~600-900 MB/s | Good | Per-stream goroutines |
 | s2n-quic | Rust | ~800 MB/s-1.2 GB/s | Good | Async I/O |
 | quiche | Rust | ~300-500 MB/s | Limited | Single-threaded |
@@ -68,16 +68,16 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | 0% loss | 1% loss | 5% loss | Recovery algorithm |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | ~70-80% retained | ~40-50% retained | BBR2/CUBIC |
-| **quicz** | **~1485 MB/s** | **~764 MB/s (51%)** | **~338 MB/s (23%)** | **CUBIC, ns RTT** |
+| **quicz** | **~1573 MB/s** | **~1334 MB/s (85%)** | **~366 MB/s (23%)** | **CUBIC, ns RTT** |
 | quic-go | 400-600 MB/s | ~60-70% retained | ~30-40% retained | CUBIC/NewReno |
 | quiche | 300-500 MB/s | ~50-60% retained | ~25-35% retained | CUBIC |
 | quinn | 300-500 MB/s | ~55-65% retained | ~30-40% retained | CUBIC/NewReno |
 
 Notes on loss recovery:
-- quicz 1% loss recovery improved from 117 MB/s → 764 MB/s (6.5x) after ns RTT precision migration.
-- 5% loss improved from 67 MB/s → 338 MB/s (5x).
+- quicz 1% loss: 117 → 764 → 1334 MB/s (11.4x total) after ns RTT + HyStart++ + utilization fix.
+- 5% loss: 67 → 338 → 366 MB/s (5.5x).
 - Remaining gap vs msquic is due to BBR2 bandwidth modeling under loss.
-- Further CUBIC tuning (TLP, RACK) planned for additional improvement.
+- 1% loss retention (85%) now exceeds msquic (70-80%) and quic-go (60-70%).
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
@@ -89,9 +89,9 @@ Notes:
 
 | Percentile | Latency | Notes |
 |---|---|---|
-| P50 | **17.6 μs** | 1 KB full QUIC roundtrip (encrypt+send+recv+decrypt+echo) |
-| P99 | **49.0 μs** | |
-| P99.9 | **71.3 μs** | |
+| P50 | **18.9 μs** | 1 KB full QUIC roundtrip (encrypt+send+recv+decrypt+echo) |
+| P99 | **46.2 μs** | |
+| P99.9 | **68.7 μs** | |
 
 Test: 5000 iterations, macOS loopback, ReleaseFast.
 
@@ -128,8 +128,6 @@ Impact:
 ## Loss Recovery Improvement Path (5% loss: 17% → 30-40% target)
 
 Planned fixes:
-- [ ] TLP (Tail Loss Probe): faster tail loss detection
-- [ ] RACK: timestamp-based loss declaration
 - [ ] Pacer ns precision: loopback srtt truncates to 0ms, bypassing pacer
 
 

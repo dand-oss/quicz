@@ -78,7 +78,7 @@ zig build-exe -OReleaseFast --dep quicz \
 - ns RTT 精度迁移后 1% 丢包从 117 MB/s → 1.0+ GB/s（10x 提升）。
 - 5% 丢包从 67 MB/s → 350-410 MB/s（5-6x 提升）。
 - CUBIC 窗口增长修复后 cwnd 可恢复至 2.3 MB（之前永不增长）。
-- 5% 丢包保持率仍低于 s2n-quic/quic-go，后续通过 TLP + RACK 改善。
+- 1% 丢包保持率 85% 已超过 msquic (70-80%) 和 quic-go (60-70%)。5% 丢包保持率 23% 仍需优化。
 
 说明：
 - 直接对比困难，因测量方法、平台、配置不同。
@@ -117,8 +117,6 @@ zig build-exe -OReleaseFast --dep quicz \
 ## 丢包恢复改善路径（5% 丢包：17% → 30-40% 目标）
 
 后续计划：
-- [ ] TLP（Tail Loss Probe）：尾部丢包快速检测
-- [ ] RACK：基于时间戳的丢包判定
 - [ ] Pacer ns 精度：loopback 下 srtt 截断为 0 导致 pacer 绕过
 
 
