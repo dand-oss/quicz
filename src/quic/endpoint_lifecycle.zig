@@ -5938,29 +5938,6 @@ pub const EndpointConnectionLifecycle = struct {
         return progress;
     }
 
-    /// Drive one TLS backend across ordered packet number spaces and queue
-    /// CONNECTION_CLOSE on peer transport-parameter errors, then refresh the
-    /// endpoint's aggregate recovery timer snapshot.
-    ///
-    /// This preserves the success behavior of
-    /// `driveCryptoBackendAcrossSpacesAndArmConnection()` while routing malformed
-    /// or semantically invalid peer transport-parameter extension bytes through
-    /// the connection's close-on-error policy.
-    pub fn driveCryptoBackendAcrossSpacesOrCloseAndArmConnection(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-    ) Error!CryptoBackendProgress {
-        const progress = connection.driveCryptoBackendAcrossSpacesOrClose(spaces, backend, scratch) catch |err| {
-            self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
-            return err;
-        };
-        try self.armRecoveryTimerFromConnection(connection_id, connection);
-        return progress;
-    }
 
     /// Drive one TLS backend, then poll one caller-keyed long-header output.
     ///
@@ -7481,35 +7458,6 @@ pub const EndpointConnectionLifecycle = struct {
         return progress;
     }
 
-    /// Drive a compatible-version backend across ordered packet number spaces
-    /// under endpoint lifecycle ownership.
-    ///
-    /// This is the cross-space form of
-    /// `driveCryptoBackendInSpaceWithCompatibleVersionAndArmConnection()`. It
-    /// lets a socket loop service ordered Initial/Handshake backend progress
-    /// while still applying peer Version Information with RFC 9368-compatible
-    /// selection rules.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionAndArmConnection(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) Error!CryptoBackendProgress {
-        const progress = connection.driveCryptoBackendAcrossSpacesWithCompatibleVersion(
-            spaces,
-            backend,
-            scratch,
-            compatibilities,
-        ) catch |err| {
-            self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
-            return err;
-        };
-        try self.armRecoveryTimerFromConnection(connection_id, connection);
-        return progress;
-    }
 
     /// Drive compatible-version crypto backends across caller-owned connections.
     ///
