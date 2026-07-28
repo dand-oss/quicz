@@ -1,5 +1,5 @@
-//! Duration type with nanosecond precision (matching quic-go time.Duration,
-//! s2n-quic/Rust Duration, and quiche Duration).
+//! Duration type with nanosecond precision.
+//!
 //!
 //! Usage:
 //!   const rtt = Duration.fromMillis(333);
@@ -7,7 +7,7 @@
 //!   const timeout = Duration.fromSecs(30);
 
 /// Time duration with nanosecond precision (u64 nanoseconds internally).
-/// Compatible with quic-go (time.Duration), s2n-quic (Duration), quiche (Duration).
+/// Nanosecond-precision duration for RTT, PTO, and timing calculations.
 pub const Duration = struct {
     ns: u64,
 
@@ -136,7 +136,7 @@ test "Duration constructors and conversions" {
     try std.testing.expectEqual(@as(u64, 0), d.toSecs());
 }
 
-test "Duration fromMicros (s2n-quic MIN_RTT)" {
+test "Duration fromMicros (1μs MIN_RTT)" {
     const min_rtt = Duration.fromMicros(1);
     try std.testing.expectEqual(@as(u64, 1_000), min_rtt.toNanos());
 }

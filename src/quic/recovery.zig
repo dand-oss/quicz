@@ -40,7 +40,7 @@ pub const Config = struct {
     pto_jitter_percentage: u8 = 0,
 };
 
-/// Congestion controller state machine (s2n-quic style).
+/// Congestion controller state machine (RFC 9002 §7.3).
 ///
 /// - `slow_start`: cwnd grows by acked bytes (or HyStart++ increment).
 /// - `recovery`: cwnd was reduced; ALL congestion events blocked until
@@ -70,17 +70,17 @@ pub const Recovery = struct {
     /// Bytes acknowledged while in congestion avoidance but not yet converted
     /// into a full max-datagram-sized congestion-window increase.
     congestion_avoidance_bytes_acked: usize = 0,
-    /// Explicit congestion state machine (s2n-quic style).
+    /// Explicit congestion state machine (RFC 9002 §7.3).
     congestion_state: CongestionState = .slow_start,
     congestion_recovery_start_time_millis: ?i64 = null,
     /// Set when entering recovery; cleared after one packet is sent (fast retransmission).
     fast_retransmission_required: bool = false,
     /// Largest packet number sent (updated by Connection on each send).
     largest_sent_packet_number: u64 = 0,
-    /// Largest sent PN at the last cwnd cutback (quic-go style recovery).
+    /// Largest sent PN at the last cwnd cutback (RFC 6582 recovery).
     largest_sent_at_last_cutback: ?u64 = null,
     /// Largest acknowledged packet number (updated by Connection on each ACK).
-    /// Used for packet-number-based recovery detection (quic-go style).
+    /// Used for packet-number-based recovery detection (RFC 6582).
     largest_acked_packet_number: ?u64 = null,
     ssthresh: usize = std.math.maxInt(usize),
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
@@ -156,7 +156,7 @@ pub const Recovery = struct {
         } else {
             self.largest_acked_packet_number = pn;
         }
-        // s2n-quic style: recovery ends when ACK confirms a packet sent
+        // Recovery ends when ACK confirms a packet sent
         // after the cutback. Transition to congestion avoidance.
         if (self.congestion_state == .recovery) {
             if (self.largest_sent_at_last_cutback) |cutback| {
@@ -167,7 +167,7 @@ pub const Recovery = struct {
         }
     }
 
-    /// Packet-number-based recovery check (quic-go style).
+    /// Packet-number-based recovery check (RFC 6582).
     /// True when the largest ACKed packet was sent before or at the last
     /// cwnd cutback, meaning we are still in the recovery period.
     pub fn inRecoveryByPacketNumber(self: Recovery) bool {
@@ -245,7 +245,7 @@ pub const Recovery = struct {
             }
             return;
         }
-        // s2n-quic: no cwnd growth during recovery. Recovery ends when
+        // No cwnd growth during recovery. Recovery ends when
         // an ACK arrives for a packet sent after the recovery started.
         if (self.congestion_state == .recovery) {
             if (self.inCongestionRecovery(sent_time_millis)) return;
@@ -289,10 +289,10 @@ pub const Recovery = struct {
         self.onCongestionEventWithPacketNumber(sent_time_millis, now_millis, null);
     }
 
-    /// Packet-number-based congestion event (quic-go style).
+    /// Packet-number-based congestion event (RFC 6582).
     /// Losses for packets sent before the last cutback are a single event (RFC 6582).
     pub fn onCongestionEventWithPacketNumber(self: *Recovery, sent_time_millis: i64, now_millis: i64, lost_packet_number: ?u64) void {
-        // s2n-quic: once in recovery, block ALL congestion events.
+        // Once in recovery, block ALL congestion events (RFC 9002 §7.3.2).
         if (self.congestion_state == .recovery) return;
         // Fallback for connections without state tracking (tests).
         if (lost_packet_number) |pn| {
@@ -528,8 +528,8 @@ pub const Recovery = struct {
     }
 
     /// Minimum trackable RTT (1ms). Prevents zero-RTT samples from collapsing
-    /// the estimator on loopback paths (s2n-quic uses 1μs; we use 1ms granularity).
-    pub const min_trackable_rtt_ns: u64 = 1_000; // 1μs (s2n-quic MIN_RTT) // 0 allows loopback RTT; pacer bypasses at srtt=0
+    /// the estimator on loopback paths (1ms granularity per RFC 9002 kGranularity).
+    pub const min_trackable_rtt_ns: u64 = 1_000; // 1μs minimum trackable RTT
 
     pub fn updateRtt(self: *Recovery, latest_rtt_ns: u64, ack_delay_ns: u64) void {
         const clamped_rtt = @max(latest_rtt_ns, min_trackable_rtt_ns);

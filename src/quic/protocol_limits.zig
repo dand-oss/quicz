@@ -48,7 +48,7 @@ pub const default_max_ack_delay: Duration = Duration.fromMillis(25);
 /// "The RECOMMENDED value of the timer granularity is 1 millisecond."
 pub const timer_granularity: Duration = Duration.fromMillis(1);
 
-/// Minimum trackable RTT: 1μs (matching s2n-quic MIN_RTT).
+/// Minimum trackable RTT: 1μs.
 /// Prevents zero-RTT samples from collapsing the estimator on loopback.
 pub const min_trackable_rtt: Duration = Duration.fromMicros(1);
 

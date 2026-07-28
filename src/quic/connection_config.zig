@@ -216,7 +216,7 @@ pub const Config = struct {
     /// Override the initial congestion window in packets (RFC 9002 default: 10).
     /// Datacenter and loopback deployments commonly use 32-64 for faster startup.
     /// Null uses the RFC 9002 formula: min(10 * MDS, max(2 * MDS, 14720)).
-    /// Initial congestion window in packets. Default 32 (quic-go compatible).
+    /// Initial congestion window in packets. Default 32.
     /// Set null for RFC 9002 formula (10 packets) for strict compliance testing.
     initial_congestion_window_packets: ?usize = 32,
 };

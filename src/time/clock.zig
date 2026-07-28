@@ -1,5 +1,5 @@
 //! Cross-platform monotonic clock with nanosecond precision.
-//! Reference: endel/quic-zig sys.nanoTimestamp(), s2n-quic Timestamp.
+//! Cross-platform monotonic clock with nanosecond precision.
 //!
 //! Uses clock_gettime(CLOCK.MONOTONIC) on POSIX (Linux, macOS, iOS, FreeBSD...).
 //! Windows support pending (QueryPerformanceCounter).
