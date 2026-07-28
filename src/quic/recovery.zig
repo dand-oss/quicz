@@ -109,6 +109,22 @@ pub const Recovery = struct {
         return self.congestion_window - self.bytes_in_flight;
     }
 
+    /// True when the congestion window is sufficiently utilized to allow growth.
+    ///
+    /// Matches the production QUIC stack approach:
+    /// - Congestion limited (bytes_in_flight >= cwnd): always utilized.
+    /// - Slow start: utilized when at least half the window is in flight.
+    /// - Congestion avoidance: utilized unless available window exceeds
+    ///   3 × max_datagram_size (kMaxBurstBytes from Chromium).
+    pub fn isCongestionWindowUtilized(self: Recovery) bool {
+        if (self.bytes_in_flight >= self.congestion_window) return true;
+        if (self.inSlowStart()) {
+            return self.bytes_in_flight >= self.congestion_window / 2;
+        }
+        const available = self.congestion_window - self.bytes_in_flight;
+        return available <= self.max_datagram_size * 3;
+    }
+
     /// Record bytes for a sent ack-eliciting packet.
     pub fn onPacketSent(self: *Recovery, bytes: usize) void {
         self.bytes_in_flight = std.math.add(usize, self.bytes_in_flight, bytes) catch std.math.maxInt(usize);
