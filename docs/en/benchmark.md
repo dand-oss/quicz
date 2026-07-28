@@ -68,16 +68,16 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | 0% loss | 1% loss | 5% loss | Recovery algorithm |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | ~70-80% retained | ~40-50% retained | BBR2/CUBIC |
-| s2n-quic | 800 MB-1.2 GB/s | ~75-85% retained | ~30-40% retained | CUBIC+HyStart++ || **quicz** | **~1573 MB/s** | **~1334 MB/s (85%)** | **~366 MB/s (23%)** | **CUBIC, ns RTT** |
+| s2n-quic | 800 MB-1.2 GB/s | ~75-85% retained | ~30-40% retained | CUBIC+HyStart++ || **quicz** | **~1644 MB/s** | **~216 MB/s (13%)** | **~170 MB/s (10%)** | **CUBIC per-ACK, ns RTT** |
 | quic-go | 400-600 MB/s | ~60-70% retained | ~30-40% retained | CUBIC/NewReno |
 | quiche | 300-500 MB/s | ~50-60% retained | ~25-35% retained | CUBIC |
 | quinn | 300-500 MB/s | ~55-65% retained | ~30-40% retained | CUBIC/NewReno |
 
 Notes on loss recovery:
-- quicz 1% loss: 117 → 764 → 1334 MB/s (11.4x total) after ns RTT + HyStart++ + utilization fix.
-- 5% loss: 67 → 338 → 366 MB/s (5.5x).
-- Remaining gap vs msquic is due to BBR2 bandwidth modeling under loss.
-- 1% loss retention (85%) now exceeds msquic (70-80%) and quic-go (60-70%).
+- quicz uses random packet loss (xorshift PRNG), 4 MB transfer, loopback UDP.
+- 1% loss: cwnd recovers to 18-19 KB; 5% loss: cwnd recovers to 7 KB.
+- Loopback RTT ~20μs limits CUBIC per-RTT growth; real-network retention would be higher.
+- Remaining gap vs msquic is due to BBR2 bandwidth modeling under loss.- 1% loss retention (85%) now exceeds msquic (70-80%) and quic-go (60-70%).
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
