@@ -948,6 +948,8 @@ pub fn EndpointConnectionRegistry(
     };
 }
 
+const duration_mod = @import("../time/duration.zig");
+const ms = duration_mod.ns_per_ms;
 test "EndpointConnectionRegistry owns records and exposes lifecycle views" {
     const TestRecord = struct {
         handle: u64,
@@ -1403,7 +1405,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
         .connection = try root.Connection.init(std.testing.allocator, .server, .{ .max_idle_timeout_ms = 10 }),
     };
     record_initialized = true;
-    record.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    record.connection.last_packet_activity_nanos = 10 * ms;
 
     const path = root.endpoint.Udp4Tuple{
         .local = root.endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
@@ -1417,7 +1419,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
     const idle_deadline = (try registry.nextDeadline(&lifecycle, std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, idle_deadline.kind);
     try std.testing.expectEqual(@as(u64, 42), idle_deadline.connection_id);
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), idle_deadline.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 20 * ms), idle_deadline.deadline_nanos);
 
     var empty_deadline_views: [0]root.EndpointConnectionView = .{};
     try std.testing.expectError(
@@ -1429,7 +1431,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
     try std.testing.expectEqual(idle_deadline, storage_deadline);
     const scratch_deadline = (try registry.nextDeadlineWithScratch(&lifecycle)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(idle_deadline, scratch_deadline);
-    const scratch_pending_before_deadline = try registry.processPendingWorkWithScratch(&lifecycle, 19 * 1_000_000);
+    const scratch_pending_before_deadline = try registry.processPendingWorkWithScratch(&lifecycle, 19 * ms);
     try std.testing.expectEqual(@as(usize, 0), scratch_pending_before_deadline.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), scratch_pending_before_deadline.close_retired_count);
     try std.testing.expectEqual(@as(usize, 0), scratch_pending_before_deadline.recovery_serviced_count);
@@ -1442,16 +1444,16 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
     var dynamic_registry = Registry.init(std.testing.allocator);
     defer dynamic_registry.deinit();
     try std.testing.expectError(error.BufferTooSmall, dynamic_registry.nextDeadlineWithScratch(&lifecycle));
-    try std.testing.expectError(error.BufferTooSmall, dynamic_registry.processPendingWorkWithScratch(&lifecycle, 19 * 1_000_000));
+    try std.testing.expectError(error.BufferTooSmall, dynamic_registry.processPendingWorkWithScratch(&lifecycle, 19 * ms));
     try std.testing.expectError(error.BufferTooSmall, dynamic_registry.processPendingWorkAndSelectNextDeadlineWithScratch(
         &lifecycle,
-        19 * 1_000_000,
+        19 * ms,
     ));
 
     var out: [1]root.EndpointPolledDatagramResult = undefined;
     try std.testing.expectError(error.BufferTooSmall, dynamic_registry.processDueDeadlineAndDrainDatagramsWithScratch(
         &lifecycle,
-        19 * 1_000_000,
+        19 * ms,
         &out,
         TestRecord.destinationConnectionId,
         TestRecord.sourceConnectionId,
@@ -1468,7 +1470,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
 
     const due = (try registry.processDueDeadlineAndDrainDatagramsWithScratch(
         &lifecycle,
-        20 * 1_000_000,
+        20 * ms,
         &out,
         TestRecord.destinationConnectionId,
         TestRecord.sourceConnectionId,
@@ -1540,7 +1542,7 @@ test "EndpointConnectionRegistry retire removes lifecycle state and record toget
     errdefer if (lifecycle_registered) {
         _ = lifecycle.retireConnection(record_handle);
     };
-    _ = try record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(record_handle, &record.connection);
     try registry.adopt(record_handle, record);
     record_owned = false;
@@ -1618,7 +1620,7 @@ test "EndpointConnectionRegistry pending sweep retires lifecycle for already clo
     errdefer if (lifecycle_registered) {
         _ = lifecycle.retireConnection(record_handle);
     };
-    _ = try record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(record_handle, &record.connection);
     try registry.adopt(record_handle, record);
     record_owned = false;
@@ -1708,7 +1710,7 @@ test "EndpointConnectionRegistry output polling skips and retires closed records
     errdefer if (closed_lifecycle_registered) {
         _ = lifecycle.retireConnection(closed_handle);
     };
-    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(closed_handle, &closed_record.connection);
     try registry.adopt(closed_handle, closed_record);
     closed_owned = false;
@@ -1947,7 +1949,7 @@ test "EndpointConnectionRegistry output polling retires records closed by poll t
     errdefer if (expired_lifecycle_registered) {
         _ = lifecycle.retireConnection(expired_handle);
     };
-    _ = try expired_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try expired_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(expired_handle, &expired_record.connection);
     expired_record.connection.state = .closing;
     expired_record.connection.close_deadline_nanos = 10;
@@ -2074,7 +2076,7 @@ test "EndpointConnectionRegistry next deadline retires closed records before sel
     errdefer if (closed_lifecycle_registered) {
         _ = lifecycle.retireConnection(closed_handle);
     };
-    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(closed_handle, &closed_record.connection);
     try registry.adopt(closed_handle, closed_record);
     closed_owned = false;
@@ -2094,7 +2096,7 @@ test "EndpointConnectionRegistry next deadline retires closed records before sel
     };
     const live_handle = live_record.handle;
     live_initialized = true;
-    live_record.connection.last_packet_activity_nanos = 5 * 1_000_000;
+    live_record.connection.last_packet_activity_nanos = 5 * ms;
     try registry.adopt(live_handle, live_record);
     live_owned = false;
 
@@ -2110,7 +2112,7 @@ test "EndpointConnectionRegistry next deadline retires closed records before sel
     closed_lifecycle_registered = false;
     try std.testing.expectEqual(@as(u64, live_handle), deadline.connection_id);
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 35 * 1_000_000), deadline.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 35 * ms), deadline.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), registry.count());
     try std.testing.expect(registry.get(closed_handle) == null);
     try std.testing.expect(registry.get(live_handle) != null);
@@ -2177,7 +2179,7 @@ test "EndpointConnectionRegistry due drain retires closed records before servici
     errdefer if (closed_lifecycle_registered) {
         _ = lifecycle.retireConnection(closed_handle);
     };
-    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try closed_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(closed_handle, &closed_record.connection);
     try registry.adopt(closed_handle, closed_record);
     closed_owned = false;
@@ -2197,7 +2199,7 @@ test "EndpointConnectionRegistry due drain retires closed records before servici
     };
     const live_handle = live_record.handle;
     live_initialized = true;
-    live_record.connection.last_packet_activity_nanos = 5 * 1_000_000;
+    live_record.connection.last_packet_activity_nanos = 5 * ms;
     try registry.adopt(live_handle, live_record);
     live_owned = false;
 
@@ -2210,7 +2212,7 @@ test "EndpointConnectionRegistry due drain retires closed records before servici
     const due = (try registry.processDueDeadlineAndDrainDatagrams(
         &lifecycle,
         no_allocation_allocator.allocator(),
-        35 * 1_000_000,
+        35 * ms,
         &out,
         TestRecord.destinationConnectionId,
         TestRecord.sourceConnectionId,
@@ -2287,7 +2289,7 @@ test "EndpointConnectionRegistry installed-key feed retires closed records befor
     errdefer if (lifecycle_registered) {
         _ = lifecycle.retireConnection(record.handle);
     };
-    _ = try record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(record.handle, &record.connection);
     try registry.adopt(record.handle, record);
     record_owned = false;
@@ -2305,7 +2307,7 @@ test "EndpointConnectionRegistry installed-key feed retires closed records befor
         &lifecycle,
         no_allocation_allocator.allocator(),
         path,
-        20 * 1_000_000,
+        20 * ms,
         &datagram,
         .{
             .space = .application,

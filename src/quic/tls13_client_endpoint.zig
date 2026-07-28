@@ -990,6 +990,8 @@ fn isVersionNegotiationDatagram(datagram: []const u8) bool {
         std.mem.readInt(u32, datagram[1..5], .big) == 0;
 }
 
+const duration_mod = @import("../time/duration.zig");
+const ms = duration_mod.ns_per_ms;
 test "Tls13ClientEndpoint registers its client route before begin" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
@@ -1165,7 +1167,7 @@ test "Tls13ClientEndpoint polls application output with committed route path" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const stream_id = try client.openStream();
@@ -1242,7 +1244,7 @@ test "Tls13ClientEndpoint route-bound application poll fails before consuming ou
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     try client.transport.connection.sendPing();
     _ = client.lifecycle.retireConnection(client.connection_id);
@@ -1337,7 +1339,7 @@ test "Tls13ClientEndpoint receive returns route-bound close on frame error" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1409,7 +1411,7 @@ test "Tls13ClientEndpoint receive close drain reports zero output capacity" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1508,7 +1510,7 @@ test "Tls13ClientEndpoint receive step reports zero receive output capacity" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     var plaintext: [32]u8 = [_]u8{0} ** 32;
     var plaintext_writer = buffer.fixedWriter(&plaintext);
@@ -1589,7 +1591,7 @@ test "Tls13ClientEndpoint receive drains route-bound close on frame error" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1654,7 +1656,7 @@ test "Tls13ClientEndpoint receive reports closed state without close output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
@@ -1713,7 +1715,7 @@ test "Tls13ClientEndpoint receive does not drain queued application output on ro
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const decoy_datagram = [_]u8{ 0x40, 0xd1, 0xd2, 0xd3, 0xd4, 0x00 };
@@ -1922,7 +1924,7 @@ test "Tls13ClientEndpoint services due recovery with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -1992,7 +1994,7 @@ test "Tls13ClientEndpoint drains due recovery with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -2085,7 +2087,7 @@ test "Tls13ClientEndpoint receive step drains due recovery with committed route 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -2174,7 +2176,7 @@ test "Tls13ClientEndpoint receive step reports key discard while reporting input
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    client.transport.connection.last_packet_activity_nanos = 10 * ms;
 
     try client.transport.connection.initiateOneRttKeyUpdate();
     var scratch: [128]u8 = undefined;
@@ -2232,7 +2234,7 @@ test "Tls13ClientEndpoint services key discard deadline without input" {
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    client.transport.connection.last_packet_activity_nanos = 10 * ms;
     try client.transport.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), client.transport.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), client.transport.connection.localOneRttRetainsKeyGeneration(0));
@@ -2276,7 +2278,7 @@ test "Tls13ClientEndpoint drains key discard deadline without input" {
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    client.transport.connection.last_packet_activity_nanos = 10 * ms;
     try client.transport.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), client.transport.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), client.transport.connection.localOneRttRetainsKeyGeneration(0));
@@ -2555,9 +2557,9 @@ test "Tls13ClientEndpoint receive enters draining on active stateless reset" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.confirmHandshake();
-    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
+    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * ms, 64);
     try client.lifecycle.armRecoveryTimerFromConnection(client.connection_id, &client.transport.connection);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.recoveryTimerCount());
 
@@ -2612,9 +2614,9 @@ test "Tls13ClientEndpoint receive step reports active stateless reset and close 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     try client.transport.connection.confirmHandshake();
-    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
+    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * ms, 64);
     try client.lifecycle.armRecoveryTimerFromConnection(client.connection_id, &client.transport.connection);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.recoveryTimerCount());
 
@@ -2668,17 +2670,17 @@ test "Tls13ClientEndpoint retires its route when idle deadline closes the client
         client_scid,
     );
     defer client.deinit();
-    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    client.transport.connection.last_packet_activity_nanos = 10 * ms;
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
+    try std.testing.expectEqual(@as(i64, 20 * ms), deadline.deadline());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
-    try std.testing.expect((try client.serviceDueDeadline(19 * 1_000_000)) == null);
+    try std.testing.expect((try client.serviceDueDeadline(19 * ms)) == null);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
-    const serviced = (try client.serviceDueDeadline(20 * 1_000_000)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadline(20 * ms)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .idle_timeout);
     try std.testing.expectEqual(@as(usize, 0), client.lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 0), client.lifecycle.recoveryTimerCount());
@@ -2703,11 +2705,11 @@ test "Tls13ClientEndpoint receive step retires idle route while reporting input"
         client_scid,
     );
     defer client.deinit();
-    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    client.transport.connection.last_packet_activity_nanos = 10 * ms;
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
+    try std.testing.expectEqual(@as(i64, 20 * ms), deadline.deadline());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
     const malformed_short = [_]u8{ 0x40, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x00 };
@@ -2775,7 +2777,7 @@ test "Tls13ClientEndpoint closes with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
@@ -2874,7 +2876,7 @@ test "Tls13ClientEndpoint drains route-bound stream controls without preflight m
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const send_stream_id = try client.openStream();
@@ -2960,7 +2962,7 @@ test "Tls13ClientEndpoint drains close output with committed route and deadline"
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     var zero_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
@@ -3022,7 +3024,7 @@ test "Tls13ClientEndpoint drains application close output with committed route" 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     var zero_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
@@ -3089,7 +3091,7 @@ test "Tls13ClientEndpoint retires its route when close deadline elapses" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
@@ -3144,7 +3146,7 @@ test "Tls13ClientEndpoint receive step retires close route while reporting input
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);

@@ -3962,6 +3962,8 @@ pub fn Tls13ServerEndpoint(
     };
 }
 
+const duration_mod = @import("../time/duration.zig");
+const ms = duration_mod.ns_per_ms;
 test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     const TestRecord = struct {
         handle: u64,
@@ -4518,7 +4520,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     try std.testing.expectError(error.UnknownConnectionId, endpoint_owner.resetStream(99, server_unidirectional_stream, 41));
     try std.testing.expectError(error.UnknownConnectionId, endpoint_owner.stopSending(99, server_bidirectional_stream, 42));
     try record.connection.sendPing();
-    const one_rtt = (try endpoint_owner.pollOneRttDatagram(record_handle, 1 * 1_000_000)) orelse return error.TestUnexpectedResult;
+    const one_rtt = (try endpoint_owner.pollOneRttDatagram(record_handle, 1 * ms)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(one_rtt);
     try std.testing.expect(one_rtt.len != 0);
     _ = try endpoint_owner.retireRecord(record_handle);
@@ -4526,7 +4528,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     try std.testing.expect(endpoint_owner.hasConnectionCapacity());
     try std.testing.expectEqual(@as(usize, 0), endpoint_owner.activeConnectionCount());
     try std.testing.expectEqual(@as(usize, 0), (try endpoint_owner.activeConnectionIds(&active_ids)).len);
-    try std.testing.expectError(error.UnknownConnectionId, endpoint_owner.pollOneRttDatagram(record_handle, 2 * 1_000_000));
+    try std.testing.expectError(error.UnknownConnectionId, endpoint_owner.pollOneRttDatagram(record_handle, 2 * ms));
 
     const retry_record = try std.testing.allocator.create(TestRecord);
     var retry_record_initialized = false;
@@ -4583,7 +4585,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     try retry_record.connection.validatePeerAddress();
     try retry_record.connection.confirmHandshake();
     try retry_record.connection.recordPeerAddressBytesReceived(1);
-    _ = try retry_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try retry_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try endpoint_owner.lifecycle.armRecoveryTimerFromConnection(retry_record.handle, &retry_record.connection);
     try std.testing.expectEqual(@as(usize, 1), endpoint_owner.lifecycle.recoveryTimerCount());
     var backend_scratch: [1]u8 = undefined;
@@ -5049,7 +5051,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
         .backend = empty_backend.backend(),
     };
     deadline_record_initialized = true;
-    deadline_record.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    deadline_record.connection.last_packet_activity_nanos = 10 * ms;
     try deadline_endpoint.records.adopt(deadline_record.handle, deadline_record);
     deadline_record_owned = false;
 
@@ -5059,7 +5061,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     const storage_deadline = (try deadline_endpoint.nextDeadlineWithStorage(&deadline_views)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, storage_deadline.kind);
     try std.testing.expectEqual(deadline_record.handle, storage_deadline.connection_id);
-    try std.testing.expectEqual(@as(i64, 30 * 1_000_000), storage_deadline.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 30 * ms), storage_deadline.deadline_nanos);
 }
 
 test "Tls13ServerEndpoint drive backend route path resolves route before pulling backend output" {
@@ -5552,7 +5554,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
     try client.confirmHandshake();
     try record.connection.confirmHandshake();
     try client.sendPing();
-    const short_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(5 * 1_000_000, &server_cid)) orelse return error.TestUnexpectedResult;
+    const short_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(5 * ms, &server_cid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(short_datagram);
     const short_dispatch = try endpoint_owner.processDatagramWithRoutePath(
         path,
@@ -5588,7 +5590,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
     }
 
     try client.sendPing();
-    const draining_short_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * 1_000_000, &server_cid)) orelse return error.TestUnexpectedResult;
+    const draining_short_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * ms, &server_cid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(draining_short_datagram);
     const migrated_path = endpoint.Udp4Tuple{
         .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
@@ -6450,7 +6452,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
         .peer = secrets.server.secret,
     });
     try client.sendPing();
-    const datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(datagram);
 
     var dynamic_out: [64]u8 = undefined;
@@ -6487,7 +6489,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(feed_deadline.next_deadline == null);
 
     try client.sendPing();
-    const pending_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(3 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const pending_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(3 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(pending_datagram);
     try std.testing.expectError(error.BufferTooSmall, dynamic_endpoint.feedDatagramWithInstalledKeysAndProcessPendingWorkAndSelectNextDeadlineWithScratch(
         path,
@@ -6522,7 +6524,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(feed_pending_deadline.next_deadline == null);
 
     try client.sendPing();
-    const drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(5 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(5 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(drain_datagram);
     var route_drain_out: [1]TestEndpoint.DatagramPathResult = undefined;
     try std.testing.expectError(error.BufferTooSmall, dynamic_endpoint.feedDatagramWithInstalledKeysAndProcessPendingWorkAndDrainDatagramsWithRoutePathWithScratch(
@@ -6565,7 +6567,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(feed_pending_drain.next_deadline == null);
 
     try client.sendPing();
-    const poll_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const poll_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(poll_datagram);
     try std.testing.expectError(error.BufferTooSmall, dynamic_endpoint.feedDatagramWithInstalledKeysAndProcessPendingWorkAndPollDatagramWithRoutePathWithScratch(
         path,
@@ -6604,7 +6606,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(feed_pending_poll.next_deadline == null);
 
     try client.sendPing();
-    const route_poll_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(9 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const route_poll_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(9 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(route_poll_datagram);
     try std.testing.expectError(error.BufferTooSmall, dynamic_endpoint.feedInstalledKeyDatagramWithRoutePathWithScratch(
         path,
@@ -6642,7 +6644,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(route_poll.next_deadline == null);
 
     try client.sendPing();
-    const route_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(11 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const route_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(route_drain_datagram);
     var route_drain_scratch_out: [1]TestEndpoint.DatagramPathResult = undefined;
     try std.testing.expectError(error.BufferTooSmall, dynamic_endpoint.feedInstalledKeyDatagramAndDrainWithRoutePathWithScratch(
@@ -6684,7 +6686,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(route_drain.next_deadline == null);
 
     try client.sendPing();
-    const routed_dispatch_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(13 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const routed_dispatch_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(13 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(routed_dispatch_datagram);
     const dispatch_route = try endpoint_owner.routeDatagram(path, routed_dispatch_datagram);
     var process_scratch: [64]u8 = undefined;
@@ -6724,7 +6726,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(routed_dispatch_short.next_deadline == null);
 
     try client.sendPing();
-    const routed_dispatch_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(15 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const routed_dispatch_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(15 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(routed_dispatch_drain_datagram);
     const dispatch_drain_route = try endpoint_owner.routeDatagram(path, routed_dispatch_drain_datagram);
     var process_installed_key_out: [1]TestEndpoint.DatagramPathResult = undefined;
@@ -6764,7 +6766,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(routed_dispatch_drain_short.next_deadline == null);
 
     try client.sendPing();
-    const classified_dispatch_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(17 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const classified_dispatch_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(17 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(classified_dispatch_datagram);
     const classified_dispatch = try endpoint_owner.processDatagramWithRoutePathWithScratch(
         path,
@@ -6805,7 +6807,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(classified_dispatch_short.next_deadline == null);
 
     try client.sendPing();
-    const classified_dispatch_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(19 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const classified_dispatch_drain_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(19 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(classified_dispatch_drain_datagram);
     var classified_installed_key_out: [1]TestEndpoint.DatagramPathResult = undefined;
     const classified_dispatch_drain = try endpoint_owner.processDatagramAndDrainWithRoutePathWithScratch(
@@ -6849,7 +6851,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     try std.testing.expect(classified_dispatch_drain_short.next_deadline == null);
 
     try client.sendPing();
-    const receive_step_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(21 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const receive_step_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(21 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(receive_step_datagram);
     var receive_step_installed_out: [1]TestEndpoint.DatagramPathResult = undefined;
     var receive_step_pending_out: [1]TestEndpoint.DatagramPathResult = undefined;
@@ -6935,7 +6937,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     admission_record_initialized = true;
 
     try client.sendPing();
-    const admission_step_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(23 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const admission_step_datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(23 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(admission_step_datagram);
     var admission_step_installed_out: [1]TestEndpoint.DatagramPathResult = undefined;
     var admission_step_pending_out: [1]TestEndpoint.DatagramPathResult = undefined;
@@ -7602,7 +7604,7 @@ test "Tls13ServerEndpoint pairs due recovery output with committed route path" {
     record_owned = false;
 
     try record.connection.sendPing();
-    const first = (try endpoint_owner.pollOneRttDatagram(record.handle, 10 * 1_000_000)) orelse return error.TestUnexpectedResult;
+    const first = (try endpoint_owner.pollOneRttDatagram(record.handle, 10 * ms)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     const deadline = (try endpoint_owner.nextDeadline(std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -7806,7 +7808,7 @@ test "Tls13ServerEndpoint route preflight reclaims closed records before route e
     const live_handle = live_record.handle;
     try endpoint_owner.lifecycle.registerConnectionId(live_handle, live_record.local_id, live_path, .{});
     errdefer _ = endpoint_owner.lifecycle.retireConnection(live_handle);
-    _ = try live_record.connection.recordPacketSentInSpace(.application, 10 * 1_000_000, 100);
+    _ = try live_record.connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try endpoint_owner.lifecycle.armRecoveryTimerFromConnection(live_handle, &live_record.connection);
     const live_deadline = live_record.connection.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try endpoint_owner.records.adopt(live_handle, live_record);
@@ -8933,7 +8935,7 @@ test "Tls13ServerEndpoint retires record when idle deadline closes server" {
     const record_handle = record.handle;
 
     try record.connection.sendPing();
-    const first = (try endpoint_owner.pollOneRttDatagram(record_handle, 10 * 1_000_000)) orelse return error.TestUnexpectedResult;
+    const first = (try endpoint_owner.pollOneRttDatagram(record_handle, 10 * ms)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     try std.testing.expectEqual(@as(usize, 1), endpoint_owner.lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), endpoint_owner.lifecycle.recoveryTimerCount());
@@ -8941,14 +8943,14 @@ test "Tls13ServerEndpoint retires record when idle deadline closes server" {
     const idle_deadline = (try endpoint_owner.nextDeadline(std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, idle_deadline.kind);
     try std.testing.expectEqual(record_handle, idle_deadline.connection_id);
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), idle_deadline.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 20 * ms), idle_deadline.deadline_nanos);
 
     var no_allocation_storage: [0]u8 = .{};
     var no_allocation_allocator = std.heap.FixedBufferAllocator.init(&no_allocation_storage);
     var out: [1]root.EndpointPolledDatagramResult = undefined;
     try std.testing.expect((try endpoint_owner.processDueDeadlineAndDrainDatagrams(
         no_allocation_allocator.allocator(),
-        19 * 1_000_000,
+        19 * ms,
         &out,
     )) == null);
     try std.testing.expect(endpoint_owner.records.get(record_handle) != null);
@@ -8956,7 +8958,7 @@ test "Tls13ServerEndpoint retires record when idle deadline closes server" {
 
     const due = (try endpoint_owner.processDueDeadlineAndDrainDatagrams(
         no_allocation_allocator.allocator(),
-        20 * 1_000_000,
+        20 * ms,
         &out,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, due.deadline.kind);
@@ -9069,7 +9071,7 @@ test "Tls13ServerEndpoint receive step retires idle record while reporting input
     const record_handle = record.handle;
 
     try record.connection.sendPing();
-    const first = (try endpoint_owner.pollOneRttDatagram(record_handle, 10 * 1_000_000)) orelse return error.TestUnexpectedResult;
+    const first = (try endpoint_owner.pollOneRttDatagram(record_handle, 10 * ms)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     const idle_deadline = (try endpoint_owner.nextDeadline(std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, idle_deadline.kind);
@@ -9228,7 +9230,7 @@ test "Tls13ServerEndpoint receive step reports key discard while reporting input
         .local = local_secret,
         .peer = peer_secret,
     });
-    record.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    record.connection.last_packet_activity_nanos = 10 * ms;
     try record.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?bool, true), record.connection.localOneRttRetainsKeyGeneration(0));
     try endpoint_owner.lifecycle.registerConnectionId(record.handle, server_dcid, path, .{});
@@ -9395,7 +9397,7 @@ test "Tls13ServerEndpoint services key discard deadline without input" {
         .local = local_secret,
         .peer = peer_secret,
     });
-    record.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    record.connection.last_packet_activity_nanos = 10 * ms;
     try record.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), record.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), record.connection.localOneRttRetainsKeyGeneration(0));
@@ -9529,7 +9531,7 @@ test "Tls13ServerEndpoint drains key discard deadline without route path" {
         .local = local_secret,
         .peer = peer_secret,
     });
-    record.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    record.connection.last_packet_activity_nanos = 10 * ms;
     try record.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), record.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), record.connection.localOneRttRetainsKeyGeneration(0));
@@ -9639,7 +9641,7 @@ test "Tls13ServerEndpoint sweeps pending work and keeps next live deadline" {
     defer dynamic_endpoint.deinit();
     try std.testing.expectError(
         error.BufferTooSmall,
-        dynamic_endpoint.processPendingWorkAndSelectNextDeadlineWithScratch(20 * 1_000_000),
+        dynamic_endpoint.processPendingWorkAndSelectNextDeadlineWithScratch(20 * ms),
     );
 
     var empty_backend = EmptyBackend{};
@@ -9675,7 +9677,7 @@ test "Tls13ServerEndpoint sweeps pending work and keeps next live deadline" {
     });
     try idle_record.connection.sendPing();
     const idle_first = (try idle_record.connection.pollProtectedShortDatagramWithInstalledKeys(
-        10 * 1_000_000,
+        10 * ms,
         idle_record.destination_connection_id,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(idle_first);
@@ -9715,7 +9717,7 @@ test "Tls13ServerEndpoint sweeps pending work and keeps next live deadline" {
     });
     try live_record.connection.sendPing();
     const live_first = (try live_record.connection.pollProtectedShortDatagramWithInstalledKeys(
-        10 * 1_000_000,
+        10 * ms,
         live_record.destination_connection_id,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(live_first);
@@ -9733,9 +9735,9 @@ test "Tls13ServerEndpoint sweeps pending work and keeps next live deadline" {
     const first_deadline = (try endpoint_owner.nextDeadline(std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(idle_record.handle, first_deadline.connection_id);
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, first_deadline.kind);
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), first_deadline.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 20 * ms), first_deadline.deadline_nanos);
 
-    const swept = try endpoint_owner.processPendingWorkAndSelectNextDeadlineWithScratch(20 * 1_000_000);
+    const swept = try endpoint_owner.processPendingWorkAndSelectNextDeadlineWithScratch(20 * ms);
     try std.testing.expectEqual(@as(usize, 1), swept.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), swept.pending_work.close_retired_count);
     try std.testing.expect(endpoint_owner.records.get(91) == null);
@@ -9744,7 +9746,7 @@ test "Tls13ServerEndpoint sweeps pending work and keeps next live deadline" {
     const next = swept.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 92), next.connection_id);
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(@as(i64, 110 * 1_000_000), next.deadline_nanos);
+    try std.testing.expectEqual(@as(i64, 110 * ms), next.deadline_nanos);
 }
 
 test "Tls13ServerEndpoint closes with route output and retires record at close deadline" {
@@ -10564,7 +10566,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     };
 
     try client.sendPing();
-    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(migrated_ping);
     const ping_result = try endpoint_owner.feedDatagramWithInstalledKeysAndUpdatePathOrCloseAndPollDatagram(
         new_path,
@@ -10578,8 +10580,8 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     defer std.testing.allocator.free(challenge_packet.datagram);
     try std.testing.expectEqual(record.handle, challenge_packet.connection_id);
 
-    try client.processProtectedShortDatagramWithInstalledKeys(3 * 1_000_000, client_dcid.len, challenge_packet.datagram);
-    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(4 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    try client.processProtectedShortDatagramWithInstalledKeys(3 * ms, client_dcid.len, challenge_packet.datagram);
+    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(4 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
     const validation_result = try endpoint_owner.feedDatagramWithInstalledKeysAndUpdatePathOrCloseAndPollDatagram(
         new_path,
@@ -10602,7 +10604,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     try std.testing.expect(committed_output.datagram.len != 0);
 
     try client.sendPing();
-    const routed_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * 1_000_000, server_dcid)) orelse return error.TestUnexpectedResult;
+    const routed_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(7 * ms, server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(routed_ping);
     const routed_result = try endpoint_owner.feedInstalledKeyDatagramWithRoutePath(
         new_path,
@@ -10667,7 +10669,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     const close_next_deadline = error_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(record.handle, close_next_deadline.connection_id);
     try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.close_timeout, close_next_deadline.kind);
-    try client.processProtectedShortDatagramWithInstalledKeys(12 * 1_000_000, client_dcid.len, close_output.datagram);
+    try client.processProtectedShortDatagramWithInstalledKeys(12 * ms, client_dcid.len, close_output.datagram);
     try std.testing.expectEqual(connection_module.ConnectionState.draining, client.connectionState());
 }
 
@@ -11090,10 +11092,10 @@ test "Tls13ServerEndpoint bounded receive reports active stateless reset and ret
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try record.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try record.connection.processDatagram(0 * ms, writer.getWritten());
     try record.connection.validatePeerAddress();
     try record.connection.confirmHandshake();
-    _ = try record.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
+    _ = try record.connection.recordPacketSentInSpace(.application, 1 * ms, 64);
     try endpoint_owner.lifecycle.registerConnectionId(record.handle, server_dcid, path, .{});
     errdefer _ = endpoint_owner.lifecycle.retireConnection(record.handle);
     try endpoint_owner.records.adopt(record.handle, record);
@@ -11273,10 +11275,10 @@ test "Tls13ServerEndpoint receive step reports active stateless reset and close 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try record.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try record.connection.processDatagram(0 * ms, writer.getWritten());
     try record.connection.validatePeerAddress();
     try record.connection.confirmHandshake();
-    _ = try record.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
+    _ = try record.connection.recordPacketSentInSpace(.application, 1 * ms, 64);
     try endpoint_owner.lifecycle.registerConnectionId(record.handle, server_dcid, path, .{});
     errdefer _ = endpoint_owner.lifecycle.retireConnection(record.handle);
     try endpoint_owner.records.adopt(record.handle, record);

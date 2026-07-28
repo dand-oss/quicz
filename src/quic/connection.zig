@@ -378,7 +378,7 @@ const LossDetectionResult = struct {
             .initial, .handshake => recovery_state.persistentCongestionDurationWithoutMaxAckDelay(),
             .application => recovery_state.persistentCongestionDuration(),
         };
-        return elapsedNanos(self.pc_first_sent_time_nanos, self.pc_last_sent_time_nanos) >=
+        return elapsed(self.pc_first_sent_time_nanos, self.pc_last_sent_time_nanos) >=
             duration_ns;
     }
 };
@@ -387,7 +387,7 @@ fn saturatingMulU64(a: u64, b: u64) u64 {
     return std.math.mul(u64, a, b) catch std.math.maxInt(u64);
 }
 
-fn saturatingAddNanos(now_nanos: i64, duration_nanos: u64) i64 {
+fn saturatingAdd(now_nanos: i64, duration_nanos: u64) i64 {
     const duration_i64 = std.math.cast(i64, duration_nanos) orelse return std.math.maxInt(i64);
     return std.math.add(i64, now_nanos, duration_i64) catch std.math.maxInt(i64);
 }
@@ -412,7 +412,7 @@ fn ptoDeadlineFor(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddNanos(sent_time, pto_ns);
+    return saturatingAdd(sent_time, pto_ns);
 }
 
 fn ptoDeadlineFromStart(
@@ -427,7 +427,7 @@ fn ptoDeadlineFromStart(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddNanos(start_nanos, pto_ns);
+    return saturatingAdd(start_nanos, pto_ns);
 }
 
 fn saturatingAddU64(a: u64, b: u64) u64 {
@@ -449,7 +449,7 @@ fn deinitPeerClose(close: *PeerClose, allocator: std.mem.Allocator) void {
 }
 
 
-fn elapsedNanos(sent_time_nanos: i64, now_nanos: i64) u64 {
+fn elapsed(sent_time_nanos: i64, now_nanos: i64) u64 {
     if (now_nanos <= sent_time_nanos) return 0;
     const delta = std.math.sub(i64, now_nanos, sent_time_nanos) catch return std.math.maxInt(u64);
     return @intCast(delta);
@@ -1099,7 +1099,7 @@ pub const Connection = struct {
     pub fn idleTimeoutDeadline(self: Connection) ?i64 {
         const idle_timeout = self.effectiveIdleTimeout() orelse return null;
         const last_activity = self.last_packet_activity_nanos orelse return null;
-        return saturatingAddNanos(last_activity, @intCast(duration_mod.millisToNanos(@intCast(idle_timeout))));
+        return saturatingAdd(last_activity, @intCast(duration_mod.millisToNanos(@intCast(idle_timeout))));
     }
 
     /// Return whether the peer disabled active connection migration.
@@ -3073,7 +3073,7 @@ pub const Connection = struct {
     }
 
     fn closeStateDeadline(self: Connection, now_nanos: i64) i64 {
-        return saturatingAddNanos(now_nanos, self.closeStateTimeout());
+        return saturatingAdd(now_nanos, self.closeStateTimeout());
     }
 
     fn clearPendingCloseFrame(self: *Connection) void {
@@ -8957,7 +8957,7 @@ pub const Connection = struct {
 
         const latest_rtt_sample = if (largest_acked_packet != null and
             largest_acked_packet.?.packet_number == ack.largest_acknowledged)
-            elapsedNanos(largest_acked_packet.?.sent_time_nanos, now_nanos)
+            elapsed(largest_acked_packet.?.sent_time_nanos, now_nanos)
         else
             null;
         if (latest_rtt_sample) |rtt_sample| {
@@ -9454,7 +9454,7 @@ pub const Connection = struct {
         const retry_after = self.recovery_state.ptoNs();
         var retry_count: usize = 0;
         for (self.outstanding_path_challenges.items) |challenge| {
-            if (elapsedNanos(challenge.sent_time_nanos, now_nanos) < retry_after) continue;
+            if (elapsed(challenge.sent_time_nanos, now_nanos) < retry_after) continue;
             if (challenge.transmissions < max_path_challenge_transmissions) retry_count += 1;
         }
         if (retry_count != 0) {
@@ -9464,7 +9464,7 @@ pub const Connection = struct {
         var i: usize = 0;
         while (i < self.outstanding_path_challenges.items.len) {
             const challenge = self.outstanding_path_challenges.items[i];
-            if (elapsedNanos(challenge.sent_time_nanos, now_nanos) < retry_after) {
+            if (elapsed(challenge.sent_time_nanos, now_nanos) < retry_after) {
                 i += 1;
                 continue;
             }
@@ -66798,11 +66798,11 @@ test "path challenge timeout retries then records validation failure" {
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(u8, 1), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddNanos(0, conn.recovery_state.ptoNs()) - 1);
+    try conn.checkPathValidationTimeouts(saturatingAdd(0, conn.recovery_state.ptoNs()) - 1);
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
 
-    try conn.checkPathValidationTimeouts(saturatingAddNanos(0, conn.recovery_state.ptoNs()));
+    try conn.checkPathValidationTimeouts(saturatingAdd(0, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.failedPathValidationCount());
@@ -66813,14 +66813,14 @@ test "path challenge timeout retries then records validation failure" {
     try std.testing.expectEqual(@as(u8, 2), conn.outstanding_path_challenges.items[0].transmissions);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
 
-    try conn.checkPathValidationTimeouts(saturatingAddNanos(1000 * ms, conn.recovery_state.ptoNs()));
+    try conn.checkPathValidationTimeouts(saturatingAdd(1000 * ms, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
 
     _ = (try conn.pollTx(2000 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(u8, 3), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddNanos(2000 * ms, conn.recovery_state.ptoNs()));
+    try conn.checkPathValidationTimeouts(saturatingAdd(2000 * ms, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.failedPathValidationCount());
@@ -66835,7 +66835,7 @@ test "pollTx automatically retries timed-out path challenge" {
 
     var out_buf: [64]u8 = undefined;
     _ = (try conn.pollTx(0 * ms, &out_buf)).?;
-    const retry_at = saturatingAddNanos(0, conn.recovery_state.ptoNs());
+    const retry_at = saturatingAdd(0, conn.recovery_state.ptoNs());
     const retry_payload = (try conn.pollTx(retry_at, &out_buf)).?;
 
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());

@@ -302,6 +302,8 @@ fn selectEarlierDeadline(
     return candidate;
 }
 
+const duration_mod = @import("../time/duration.zig");
+const ms = duration_mod.ns_per_ms;
 test "Tls13ServerTransport owns server connection and TLS backend" {
     var transport = try Tls13ServerTransport.init(std.testing.allocator, .{}, .{});
     defer transport.deinit();
@@ -377,13 +379,13 @@ test "Tls13ServerTransport services idle lifecycle deadline" {
         .{ .alpn = &alpn },
     );
     defer transport.deinit();
-    transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
+    transport.connection.last_packet_activity_nanos = 10 * ms;
 
     const deadline = transport.nextDeadline() orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
+    try std.testing.expectEqual(@as(i64, 20 * ms), deadline.deadline());
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expect((try transport.serviceDueDeadline(19 * 1_000_000)) == null);
-    const serviced = try transport.serviceDueDeadline(20 * 1_000_000) orelse return error.TestUnexpectedResult;
+    try std.testing.expect((try transport.serviceDueDeadline(19 * ms)) == null);
+    const serviced = try transport.serviceDueDeadline(20 * ms) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .idle_timeout);
     try std.testing.expectEqual(transport_types.ConnectionState.closed, transport.connection.connectionState());
 }
@@ -409,7 +411,7 @@ test "Tls13ServerTransport sends to the newest peer connection ID" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try transport.connection.processDatagram(0 * ms, writer.getWritten());
     try transport.connection.sendPing();
 
     const datagram = (try transport.pollApplicationDatagram(1)) orelse return error.TestUnexpectedResult;
@@ -446,7 +448,7 @@ test "Tls13ServerTransport closes with protected application output and deadline
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
+    try transport.connection.processDatagram(0 * ms, writer.getWritten());
 
     const datagram = (try transport.close(88, 0, "server close", 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(datagram);

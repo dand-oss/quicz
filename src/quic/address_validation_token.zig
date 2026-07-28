@@ -269,7 +269,7 @@ pub fn validateForVersion(
     }
 
     if (now_nanos < issued_nanos) return error.TokenNotYetValid;
-    const expires_at = expiresAtMillis(issued_nanos, lifetime_nanos) orelse return error.InvalidToken;
+    const expires_at = expiresAt(issued_nanos, lifetime_nanos) orelse return error.InvalidToken;
     if (now_nanos > expires_at) return error.TokenExpired;
 
     return .{
@@ -383,7 +383,7 @@ fn validateContext(context: Context) Error!void {
     if (context.peer_address.len == 0 or context.peer_address.len > std.math.maxInt(u16)) {
         return error.InvalidToken;
     }
-    _ = expiresAtMillis(context.issued_nanos, context.lifetime_nanos) orelse return error.InvalidToken;
+    _ = expiresAt(context.issued_nanos, context.lifetime_nanos) orelse return error.InvalidToken;
 }
 
 fn validateTokenVersion(version: packet.Version) Error!void {
@@ -391,7 +391,7 @@ fn validateTokenVersion(version: packet.Version) Error!void {
     if (packet.isReservedVersion(version)) return error.InvalidToken;
 }
 
-fn expiresAtMillis(issued_nanos: i64, lifetime_nanos: u64) ?i64 {
+fn expiresAt(issued_nanos: i64, lifetime_nanos: u64) ?i64 {
     if (issued_nanos < 0) return null;
     const max_lifetime: u64 = @intCast(std.math.maxInt(i64) - issued_nanos);
     if (lifetime_nanos > max_lifetime) return null;

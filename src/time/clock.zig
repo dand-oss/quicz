@@ -43,7 +43,7 @@ pub fn nanoTimestamp() u64 {
 }
 
 /// Compute elapsed nanoseconds between two timestamps.
-pub fn elapsedNanos(start_ns: u64, end_ns: u64) u64 {
+pub fn elapsed(start_ns: u64, end_ns: u64) u64 {
     if (end_ns <= start_ns) return 0;
     return end_ns - start_ns;
 }
@@ -66,7 +66,7 @@ test "nanoTimestamp is monotonic" {
     try std.testing.expect(t2 >= t1);
 }
 
-test "elapsedNanos computes difference" {
-    try std.testing.expectEqual(@as(u64, 100), elapsedNanos(50, 150));
-    try std.testing.expectEqual(@as(u64, 0), elapsedNanos(150, 50)); // underflow → 0
+test "elapsed computes difference" {
+    try std.testing.expectEqual(@as(u64, 100), elapsed(50, 150));
+    try std.testing.expectEqual(@as(u64, 0), elapsed(150, 50)); // underflow → 0
 }
