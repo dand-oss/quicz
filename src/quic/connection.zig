@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../time/clock.zig");
 
 pub const packet = @import("packet.zig");
 pub const frame = @import("frame.zig");
@@ -3482,6 +3483,7 @@ pub const Connection = struct {
         packet_space.recovery_state.largest_sent_packet_number = self.next_packet_number;
         packet_space.recovery_state.onPacketSent(bytes);
         packet_space.recovery_state.fast_retransmission_required = false;
+        packet_space.recovery_state.last_sent_time_millis = @intCast(clock.nanoTimestamp() / 1_000_000);
         self.anti_deadlock_pto_start_millis = null;
         if (packet_space.pto_probe_count.* != 0) {
             packet_space.pto_probe_count.* -= 1;

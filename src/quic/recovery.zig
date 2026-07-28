@@ -2,6 +2,7 @@ const std = @import("std");
 const cubic_module = @import("cubic.zig");
 const bbr_module = @import("bbr.zig");
 const connection_config = @import("connection_config.zig");
+const hystart_module = @import("hybrid_slow_start.zig");
 
 pub const timer_granularity_ns: u64 = 1_000_000; // kGranularity = 1ms (RFC 9002)
 pub const time_threshold_numerator: u64 = 9;
@@ -68,6 +69,12 @@ pub const Recovery = struct {
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
     bbr: bbr_module.BbrState = .{},
+    /// HyStart++ slow start controller. Monitors RTT increases to exit
+    /// slow start before overshooting available bandwidth.
+    hystart: hystart_module.HybridSlowStart,
+    /// Timestamp of the most recently sent ack-eliciting packet (millis).
+    /// Set by Connection on each send; used by HyStart++ for RTT round detection.
+    last_sent_time_millis: i64 = 0,
     /// PTO jitter percentage (0–50). 0 = deterministic (test default).
     pto_jitter_percentage: u8 = 0,
     /// PRNG for PTO jitter. Seeded from init; deterministic seed keeps
@@ -86,6 +93,7 @@ pub const Recovery = struct {
             .congestion_window = initialCongestionWindow(max_datagram_size),
             .congestion_algorithm = config.congestion_algorithm,
             .pto_jitter_percentage = config.pto_jitter_percentage,
+            .hystart = hystart_module.HybridSlowStart.init(config.max_datagram_size),
         };
     }
 
@@ -133,6 +141,15 @@ pub const Recovery = struct {
     ) void {
         self.removeBytesInFlight(bytes);
         self.updateRtt(latest_rtt_ns, ack_delay_ns);
+        // Feed HyStart++ with RTT samples during slow start
+        if (self.inSlowStart()) {
+            self.hystart.onRttUpdate(
+                @floatFromInt(self.congestion_window),
+                sent_time_millis,
+                self.last_sent_time_millis,
+                latest_rtt_ns,
+            );
+        }
         self.onAckedBytesForCongestion(bytes, sent_time_millis, congestion_window_utilized);
     }
 
@@ -168,8 +185,11 @@ pub const Recovery = struct {
         }
         if (self.inCongestionRecovery(sent_time_millis)) return;
 
-        if (self.congestion_window < self.ssthresh) {
-            self.congestion_window = std.math.add(usize, self.congestion_window, bytes) catch std.math.maxInt(usize);
+        if (self.inSlowStart()) {
+            // HyStart++ may reduce growth rate during CSS phase
+            const increment = self.hystart.cwndIncrement(bytes);
+            const inc_usize: usize = @intFromFloat(@ceil(increment));
+            self.congestion_window = std.math.add(usize, self.congestion_window, inc_usize) catch std.math.maxInt(usize);
             self.congestion_avoidance_bytes_acked = 0;
             return;
         }
@@ -227,6 +247,7 @@ pub const Recovery = struct {
             .new_reno => {
                 self.ssthresh = self.congestion_window / 2;
                 self.congestion_window = @max(self.ssthresh, minimumCongestionWindow(self.max_datagram_size));
+                self.hystart.onCongestionEvent(@floatFromInt(self.ssthresh));
             },
             .cubic => {
                 self.congestion_window = self.cubic.onCongestionEvent(
@@ -235,10 +256,12 @@ pub const Recovery = struct {
                     now_millis,
                 );
                 self.ssthresh = self.congestion_window;
+                self.hystart.onCongestionEvent(@floatFromInt(self.ssthresh));
             },
             .bbr => {
                 self.bbr.onPacketLost(now_millis, self.max_datagram_size);
                 self.ssthresh = self.congestion_window;
+                self.hystart.onCongestionEvent(@floatFromInt(self.ssthresh));
             },
         }
     }
@@ -368,6 +391,16 @@ pub const Recovery = struct {
         if (latest_rtt_ns) |latest| {
             self.min_rtt_ns = latest;
         }
+    }
+
+    /// True when the sender is in slow start (cwnd below both ssthresh and
+    /// the HyStart++ threshold).
+    pub fn inSlowStart(self: Recovery) bool {
+        if (self.congestion_window >= self.ssthresh) return false;
+        if (self.hystart.thresholdFound()) {
+            return @as(f32, @floatFromInt(self.congestion_window)) < self.hystart.threshold;
+        }
+        return true;
     }
 
     fn inCongestionRecovery(self: Recovery, sent_time_millis: i64) bool {
