@@ -94,6 +94,20 @@ pub const CubicState = struct {
         return w_cubic_bytes;
     }
 
+    /// TCP-friendly window estimate (RFC 9438 §4.2).
+    /// W_est(t) = W_max * β + 3(1-β)/(1+β) × (t / RTT)
+    /// Returns the estimate in segments (floating point).
+
+    /// W_cubic(t) = C * (t - K)^3 + W_max, in segments (RFC 9438 §4.1).
+    pub fn wCubicSegments(self: CubicState, t_sec: f64) f64 {
+        const diff = t_sec - self.k;
+        return C * diff * diff * diff + self.w_max;
+    }
+    pub fn wEst(self: CubicState, t_sec: f64, rtt_sec: f64) f64 {
+        if (rtt_sec <= 0) return self.w_max * beta;
+        return self.w_max * beta + (3.0 * (1.0 - beta) / (1.0 + beta)) * (t_sec / rtt_sec);
+    }
+
     /// Reset CUBIC state (e.g., after persistent congestion or timeout).
     pub fn reset(self: *CubicState) void {
         self.w_max = 0;

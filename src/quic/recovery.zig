@@ -506,37 +506,32 @@ pub const Recovery = struct {
     }
 
     fn growCongestionAvoidanceCubic(self: *Recovery, bytes: usize, now_nanos: i64) void {
-        if (self.congestion_recovery_start_time_nanos == null) return;
+        const epoch_start = self.congestion_recovery_start_time_nanos orelse return;
         const mds_f: f64 = @floatFromInt(self.max_datagram_size);
         const cwnd_f: f64 = @floatFromInt(self.congestion_window);
-        const rtt_ns: i64 = @intCast(self.smoothed_rtt_ns);
-
-        // RFC 9438 §4: compute W_cubic(t+RTT) as the per-RTT target.
-        const target = self.cubic.cubicWindow(
-            self.congestion_window,
-            self.max_datagram_size,
-            now_nanos + rtt_ns,
-        );
-        const target_f: f64 = @floatFromInt(target);
+        const rtt_sec: f64 = @as(f64, @floatFromInt(self.smoothed_rtt_ns)) / @as(f64, @floatFromInt(duration.ns_per_s));
+        const t_sec: f64 = @as(f64, @floatFromInt(now_nanos - epoch_start)) / @as(f64, @floatFromInt(duration.ns_per_s));
 
         // Limit increase to half the acked bytes (Linux CUBIC behavior).
         const max_cwnd = cwnd_f + @as(f64, @floatFromInt(bytes)) / 2.0;
 
-        if (target_f <= cwnd_f) {
-            // TCP-friendly region (RFC 9438 §4.2): grow by bytes_acked / cwnd
-            // per ACK, equivalent to NewReno CA increment.
-            const increment = @as(f64, @floatFromInt(bytes)) * mds_f / cwnd_f;
-            const inc_usize: usize = @intFromFloat(@max(increment, 1.0));
-            self.congestion_window = @min(
-                self.congestion_window + inc_usize,
-                @as(usize, @intFromFloat(max_cwnd)),
-            );
+        // RFC 9438 §4.1-4.2: compare W_cubic(t) with W_est(t).
+        const w_cubic = self.cubic.wCubicSegments(t_sec);
+        const w_est = self.cubic.wEst(t_sec, rtt_sec);
+
+        if (w_cubic < w_est) {
+            // TCP-friendly region (RFC 9438 §4.2): set cwnd to W_est directly.
+            const w_est_bytes: usize = @intFromFloat(w_est * mds_f);
+            self.congestion_window = @min(w_est_bytes, @as(usize, @intFromFloat(max_cwnd)));
             return;
         }
 
-        // Concave/Convex region (RFC 9438 §4.3-4.4): per-ACK increment
-        // = (target - cwnd) / cwnd * mds.
-        const rate = (target_f - cwnd_f) / cwnd_f;
+        // Concave/Convex region (RFC 9438 §4.3-4.4):
+        // target = W_cubic(t + RTT), per-ACK increment = (target - cwnd) / cwnd * mds.
+        const w_cubic_target = self.cubic.wCubicSegments(t_sec + rtt_sec);
+        const target_bytes = w_cubic_target * mds_f;
+        if (cwnd_f >= target_bytes) return;
+        const rate = (target_bytes - cwnd_f) / cwnd_f;
         const increment = rate * mds_f;
         const inc_usize: usize = @intFromFloat(@max(increment, 1.0));
         self.congestion_window = @min(
