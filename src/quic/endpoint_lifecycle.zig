@@ -2040,33 +2040,8 @@ pub const EndpointConnectionLifecycle = struct {
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-                    backend_space,
-                    drive_views,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{});
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then select a wakeup.
@@ -2111,6 +2086,71 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Unified feedDatagram + pending work + crypto backend drive step
+    // -----------------------------------------------------------------------
+
+    /// Unified feed + pending-work + crypto backend drive + deadline selection.
+    ///
+    /// Replaces all feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWork
+    /// AndDriveCryptoBackends*AndSelectNextDeadline variants.
+    ///
+    /// Crypto drive is conditional: only runs when the feed routed a datagram
+    /// and pending work did not retire the connection.
+    pub fn feedStepWithPendingWorkCryptoDeadline(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        deadline_connections: []const EndpointConnectionView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
+        );
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            receive_connections,
+            now_nanos,
+        );
+        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
+        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
+            switch (feed) {
+                .routed => {
+                    var sweep = EndpointCryptoBackendDriveSweepResult{};
+                    for (drive_views) |view| {
+                        const progress = self.driveCryptoBackendStepInner(
+                            view.connection_id, view.connection, spaces,
+                            view.backend, view.scratch, crypto_opts, compatibilities,
+                        ) catch |err| {
+                            self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                            return err;
+                        };
+                        try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+                        accumulateCryptoBackendProgress(&sweep, progress);
+                    }
+                    backend = sweep;
+                },
+                else => {},
+            }
+        }
+        return .{
+            .feed = feed,
+            .pending_work = pending_work,
+            .backend = backend,
+            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
+        };
+    }
+
+
     /// Feed an installed-key datagram, process pending work, drive backends
     /// across ordered packet number spaces, then select a wakeup.
     ///
@@ -2132,33 +2172,8 @@ pub const EndpointConnectionLifecycle = struct {
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-                    backend_spaces,
-                    drive_views,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{}, &.{});
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend
@@ -2225,33 +2240,8 @@ pub const EndpointConnectionLifecycle = struct {
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-                    backend_spaces,
-                    drive_views,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{ .close_on_error = true }, &.{});
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend
@@ -2314,33 +2304,8 @@ pub const EndpointConnectionLifecycle = struct {
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceOrCloseAndArmConnections(
-                    backend_space,
-                    drive_views,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{});
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one close-propagating backend, then select a wakeup.
@@ -2402,34 +2367,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-                    backend_space,
-                    drive_views,
-                    compatibilities,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities);
+    
     }
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then select a wakeup.
     ///
@@ -2448,34 +2387,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndArmConnections(
-                    backend_space,
-                    drive_views,
-                    compatibilities,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version close path, then select a wakeup.
@@ -2540,34 +2453,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
-                    backend_spaces,
-                    drive_views,
-                    compatibilities,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities);
+    
     }
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path across ordered spaces, then select a wakeup.
     ///
@@ -2586,34 +2473,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveSweepResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndArmConnections(
-                    backend_spaces,
-                    drive_views,
-                    compatibilities,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version close path across ordered spaces, then select a wakeup.
