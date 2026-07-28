@@ -3652,11 +3652,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                deadline_connections,
-            ),
+            .backend = try self.driveCryptoBackendStep(&.{backend_space}, drive_views, .{ .output = .select_deadline }, &.{}, deadline_connections),
         };
     }
     /// Feed an installed-key datagram, drive close-propagating backends, then select a wakeup.
@@ -3688,11 +3684,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                deadline_connections,
-            ),
+            .backend = try self.driveCryptoBackendStep(&.{backend_space}, drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, deadline_connections),
         };
     }
 
@@ -4726,12 +4718,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                compatibilities,
-                deadline_connections,
-            ),
+            .backend = try self.driveCryptoBackendStep(&.{backend_space}, drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections),
         };
     }
 
@@ -4805,12 +4792,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                compatibilities,
-                deadline_connections,
-            ),
+            .backend = try self.driveCryptoBackendStep(&.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections),
         };
     }
 
@@ -6899,26 +6881,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Drive crypto backends, then select the next endpoint-visible deadline.
-    ///
-    /// This is the no-output backend-drive step for socket loops. Backend
-    /// progress is applied and recovery timer snapshots are refreshed before
-    /// the lifecycle recomputes the next wakeup from the caller-owned
-    /// scheduling view.
-    pub fn driveCryptoBackendsInSpaceAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(
-            &.{space},
-            drive_views,
-            .{ .output = .select_deadline },
-            &.{},
-            deadline_connections,
-        );
-    }
 
     /// Drive one backend, then select the next endpoint-visible deadline.
     ///
@@ -6942,11 +6904,7 @@ pub const EndpointConnectionLifecycle = struct {
             .connection_id = connection_id,
             .connection = connection,
         }};
-        return self.driveCryptoBackendsInSpaceAndSelectNextDeadline(
-            space,
-            &drive_views,
-            &deadline_connections,
-        );
+        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .output = .select_deadline }, &.{}, &deadline_connections);
     }
 
     /// Drive crypto backends, then poll installed-key output across connections.
@@ -7249,18 +7207,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Drive close-propagating crypto backends, then select the next deadline.
-    ///
-    /// Peer transport-parameter errors queue CONNECTION_CLOSE and return the
-    /// current deadline selection, matching the no-output close-queue boundary.
-    pub fn driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, deadline_connections);
-    }
 
     /// Drive one close-propagating backend, then select the next deadline.
     ///
@@ -7284,11 +7230,7 @@ pub const EndpointConnectionLifecycle = struct {
             .connection_id = connection_id,
             .connection = connection,
         }};
-        return self.driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-            space,
-            &drive_views,
-            &deadline_connections,
-        );
+        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, &deadline_connections);
     }
 
     /// Drive close-propagating crypto backends, then poll installed-key output.
@@ -7597,17 +7539,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
 
-    /// Drive compatible-version backends across ordered packet number spaces,
-    /// then select the next deadline.
-    pub fn driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(spaces, drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
-    }
 
     /// Drive one compatible-version backend across ordered packet number
     /// spaces, then select the next deadline.
@@ -7630,12 +7561,7 @@ pub const EndpointConnectionLifecycle = struct {
             .connection_id = connection_id,
             .connection = connection,
         }};
-        return self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-            spaces,
-            &drive_views,
-            compatibilities,
-            &deadline_connections,
-        );
+        return self.driveCryptoBackendStep(spaces, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
     }
 
     /// Drive compatible-version backends across ordered packet number spaces,
@@ -7733,20 +7659,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Drive compatible-version backends, then select the next deadline.
-    ///
-    /// This is the no-output RFC 9368-compatible backend-drive step for socket
-    /// loops that want backend progress and timer recomputation without polling
-    /// installed-key output in the same iteration.
-    pub fn driveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
-    }
 
     /// Drive one compatible-version backend, then select the next deadline.
     pub fn driveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
@@ -7768,12 +7680,7 @@ pub const EndpointConnectionLifecycle = struct {
             .connection_id = connection_id,
             .connection = connection,
         }};
-        return self.driveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-            space,
-            &drive_views,
-            compatibilities,
-            &deadline_connections,
-        );
+        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
     }
 
     /// Drive compatible-version backends, then poll installed-key output.
@@ -8179,19 +8086,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Drive compatible-version close-propagating backends, then select a deadline.
-    ///
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return the
-    /// current deadline selection, matching the no-output close-queue boundary.
-    pub fn driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
-    }
 
     /// Drive one compatible-version close path, then select the next deadline.
     pub fn driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
@@ -8213,12 +8107,7 @@ pub const EndpointConnectionLifecycle = struct {
             .connection_id = connection_id,
             .connection = connection,
         }};
-        return self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-            space,
-            &drive_views,
-            compatibilities,
-            &deadline_connections,
-        );
+        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
     }
 
     /// Drive compatible-version close-propagating backends, then poll output.
