@@ -1,6 +1,6 @@
 ## Feature comparison with other QUIC implementations
 
-Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compliance tracking.
+Updated: 2026-07-28. Sources: project READMEs, source code inspection, RFC compliance tracking.
 
 | Feature | RFC | quic-go | quiche | s2n-quic | quicz | Gap |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -26,6 +26,10 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
 | CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
 | BBR | — | ✅ | ✅ | ✅ | ✅ | — |
+| HyStart++ | draft | ❌ | ❌ | ✅ | ✅ | 慢启动 RTT 监测提前退出 |
+| PTO jitter | 9002 | ❌ | ❌ | ✅ | ✅ | 防止超时同步化 |
+| Fast retransmission | 9002 | ✅ | ✅ | ✅ | ✅ | — |
+| App-limited (RFC 8312 §5.8) | 8312 | ✅ | ✅ | ✅ | ✅ | 3×MTU 阈值 |
 | Packet pacing | 9002 | ✅ | ✅ | ✅ | ✅ | — |
 | AES-128-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
@@ -48,11 +52,11 @@ Updated: 2026-07-24. Sources: project READMEs, source code inspection, RFC compl
 | Metric | quic-go | quiche | s2n-quic | quicz |
 | --- | --- | --- | --- | --- |
 | Transport (19 items) | 19/19 | 14/19 | 14/19 | 19/19 |
-| Congestion (4 items) | 4/4 | 4/4 | 3/4 | 4/4 |
+| Congestion (8 items) | 6/8 | 6/8 | 7/8 | 8/8 |
 | Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
 | Application layer (6 items) | 6/6 | 3/6 | 0/6 | 6/6 |
 | Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
-| **Total (37 items)** | **36/37** | **26/37** | **23/37** | **36/37** |
+| **Total (41 items)** | **38/41** | **28/41** | **27/41** | **41/41** |
 
 ### Gap analysis
 
