@@ -161,7 +161,7 @@ pub const Recovery = struct {
             return;
         }
 
-        self.growCongestionAvoidance(bytes);
+        self.growCongestionAvoidance(bytes, sent_time_millis);
     }
 
     /// Record packet loss and start a congestion recovery period if needed.
@@ -198,8 +198,8 @@ pub const Recovery = struct {
         // Prevents rapid-fire cwnd reductions on very low RTT paths (loopback)
         // where many losses are detected within microseconds.
         if (self.congestion_recovery_start_time_millis) |prev_start| {
-            const pto: i64 = @intCast(self.smoothed_rtt_ns + 4 * self.rttvar_ns + self.max_ack_delay_ns);
-            if (now_millis - prev_start < @max(pto, 1)) return;
+            const pto_ms: i64 = @intCast((self.smoothed_rtt_ns + 4 * self.rttvar_ns + self.max_ack_delay_ns) / 1_000_000);
+            if (now_millis - prev_start < @max(pto_ms, 1)) return;
         }
         self.congestion_recovery_start_time_millis = now_millis;
         self.largest_sent_at_last_cutback = self.largest_sent_packet_number;
@@ -329,10 +329,10 @@ pub const Recovery = struct {
         self.bytes_in_flight = if (bytes >= self.bytes_in_flight) 0 else self.bytes_in_flight - bytes;
     }
 
-    fn growCongestionAvoidance(self: *Recovery, bytes: usize) void {
+    fn growCongestionAvoidance(self: *Recovery, bytes: usize, now_millis: i64) void {
         switch (self.congestion_algorithm) {
             .new_reno => self.growCongestionAvoidanceNewReno(bytes),
-            .cubic => self.growCongestionAvoidanceCubic(bytes),
+            .cubic => self.growCongestionAvoidanceCubic(bytes, now_millis),
             .bbr => self.growCongestionAvoidanceBbr(bytes),
         }
     }
@@ -353,11 +353,12 @@ pub const Recovery = struct {
         }
     }
 
-    fn growCongestionAvoidanceCubic(self: *Recovery, bytes: usize) void {
+    fn growCongestionAvoidanceCubic(self: *Recovery, bytes: usize, now_millis: i64) void {
         _ = bytes;
         // CUBIC uses time-based window growth via the cubic function.
         // The window is updated based on elapsed time since the last loss.
-        const now_ms = self.congestion_recovery_start_time_millis orelse return;
+        if (self.congestion_recovery_start_time_millis == null) return;
+        const now_ms = now_millis;
         const target = self.cubic.cubicWindow(
             self.congestion_window,
             self.max_datagram_size,

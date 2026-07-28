@@ -518,6 +518,8 @@ pub fn main() !void {
                     const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                     _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
                 }
+                // Service loss detection timer (PTO retransmission for undetected losses)
+                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime() / 1_000_000)) catch {};
             }
             var loss_w: usize = 0;
             while (loss_recv.load(.monotonic) < loss_transfer and loss_w < 5_000_000) : (loss_w += 1) {
@@ -531,6 +533,7 @@ pub fn main() !void {
                     const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                     _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
                 }
+                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime() / 1_000_000)) catch {};
             }
             const loss_el = nanoTime() - loss_t0;
             loss_done.store(true, .release);

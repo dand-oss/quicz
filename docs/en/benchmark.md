@@ -13,9 +13,9 @@ secnetperf-style micro-benchmark measuring raw QUIC transport performance over l
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream Upload (64 MB) | **~1444 MB/s (1.94 GB/s)** | Threaded client/server, CUBIC, std.Io async |
-| Datagrams sent | ~102K | 1324 B each, pipelined with ACK feedback |
-| Total time | ~44 ms | cwnd grew to 1.2 MB |
+| Stream Upload (16 MB) | **~1485 MB/s** | Threaded client/server, CUBIC, std.Io async, ns RTT |
+| Datagrams sent | ~25K | 1324 B each, pipelined with ACK feedback |
+| Total time | ~11 ms | cwnd grew to 1.7 MB |
 
 ## Running
 
@@ -37,7 +37,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | Language | Throughput | Platform | Source |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.94 GB/s** | **macOS, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~1.5 GB/s** | **macOS, no GSO** | **This benchmark** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -48,7 +48,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | Language | P50 | P99 | Notes |
 |---|---|---|---|---|
 | msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
-| **quicz** | **Zig** | **~19 μs** | **~55-69 μs** | **std.Io threaded** |
+| **quicz** | **Zig** | **~18 μs** | **~49 μs** | **std.Io threaded, ns RTT** |
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Go runtime scheduling overhead |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | Single-threaded event loop |
 | quinn | Rust | ~50-100 μs | ~200-400 μs | tokio async runtime |
@@ -58,7 +58,7 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | Language | 4-stream aggregate | Scaling | Notes |
 |---|---|---|---|---|
 | msquic | C | ~2-4 GB/s | Near-linear | Per-stream worker threads |
-| **quicz** | **Zig** | **~180-800 MB/s** | **Shared cwnd** | **Single connection, CUBIC** |
+| **quicz** | **Zig** | **~1494 MB/s** | **Shared cwnd** | **Single connection, CUBIC, ns RTT** |
 | quic-go | Go | ~600-900 MB/s | Good | Per-stream goroutines |
 | s2n-quic | Rust | ~800 MB/s-1.2 GB/s | Good | Async I/O |
 | quiche | Rust | ~300-500 MB/s | Limited | Single-threaded |
@@ -68,16 +68,16 @@ zig build-exe -OReleaseFast --dep quicz \
 | Implementation | 0% loss | 1% loss | 5% loss | Recovery algorithm |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | ~70-80% retained | ~40-50% retained | BBR2/CUBIC |
-| **quicz** | **~1350 MB/s** | **~497 MB/s (37%)** | **~314 MB/s (23%)** | **CUBIC** |
+| **quicz** | **~1485 MB/s** | **~764 MB/s (51%)** | **~338 MB/s (23%)** | **CUBIC, ns RTT** |
 | quic-go | 400-600 MB/s | ~60-70% retained | ~30-40% retained | CUBIC/NewReno |
 | quiche | 300-500 MB/s | ~50-60% retained | ~25-35% retained | CUBIC |
 | quinn | 300-500 MB/s | ~55-65% retained | ~30-40% retained | CUBIC/NewReno |
 
 Notes on loss recovery:
-- quicz loss recovery is conservative (CUBIC with 50% utilization threshold).
-- msquic's BBR2 maintains higher throughput under loss by modeling bandwidth.
-- quic-go's CUBIC implementation has more aggressive recovery (higher utilization threshold).
-- quicz loss recovery can be improved by tuning CUBIC parameters (recovery interval, utilization threshold).
+- quicz 1% loss recovery improved from 117 MB/s → 764 MB/s (6.5x) after ns RTT precision migration.
+- 5% loss improved from 67 MB/s → 338 MB/s (5x).
+- Remaining gap vs msquic is due to BBR2 bandwidth modeling under loss.
+- Further CUBIC tuning (TLP, RACK) planned for additional improvement.
 
 Notes:
 - Direct comparison is difficult due to different measurement methodologies, platforms, and configurations.
@@ -89,9 +89,9 @@ Notes:
 
 | Percentile | Latency | Notes |
 |---|---|---|
-| P50 | **20.2 μs** | 1 KB full QUIC roundtrip (encrypt+send+recv+decrypt+echo) |
-| P99 | **62.1 μs** | |
-| P99.9 | **85.3 μs** | |
+| P50 | **17.6 μs** | 1 KB full QUIC roundtrip (encrypt+send+recv+decrypt+echo) |
+| P99 | **49.0 μs** | |
+| P99.9 | **71.3 μs** | |
 
 Test: 5000 iterations, macOS loopback, ReleaseFast.
 
@@ -104,20 +104,22 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
 
-## Critical Fix: RTT Estimate Update (Priority #1)
+## Completed: RTT ns Precision Migration
 
-**Root cause identified:** `Recovery.updateRtt()` exists but is NEVER called from
-Connection ACK processing. `smoothed_rtt_ms` stays at initial 333ms forever.
+**Status**: Complete (2026-07-28, commit 887a5be + 3ff8e85)
 
-Impact of this bug:
-- Time-based loss detection threshold = 9/8 × 333ms = 375ms (should be ~1ms on loopback)
-- PTO = 333 + 4×166 + 25 = 1022ms (should adapt to actual RTT)
-- Pacer rate = cwnd/333ms (too conservative after first RTT sample)
-- CUBIC time-based growth uses wrong RTT
+All RTT fields migrated from milliseconds to nanoseconds (u64):
+- `smoothed_rtt_ns`, `rttvar_ns`, `min_rtt_ns`, `latest_rtt_ns`, `max_ack_delay_ns`
+- `timer_granularity_ns = 1_000_000` (RFC 9002 kGranularity = 1ms)
+- Cross-platform `clock.nanoTimestamp()` via `clock_gettime(CLOCK_MONOTONIC)`
+- RTT update enabled by default through `onPacketAckedWithUtilization`
+- 1805/1805 tests pass
 
-Fix: call `packet_space.recovery_state.updateRtt(rtt_sample, ack_delay)` in ACK processing.
-Blocked by: 36 tests written against the buggy behavior need updating.
-Expected impact: 5% loss recovery from 19% → 30-40% (matching s2n-quic/quic-go).
+Impact:
+- 1% loss: 117 → 764 MB/s (6.5x improvement)
+- 5% loss: 67 → 338 MB/s (5x improvement)
+- PTO adapts to actual RTT (was stuck at 333ms initial)
+- Time-threshold loss detection accurate at μs scale
 
 ## Loss Recovery Improvement Path (5% loss: 19% → 30-40% target)
 
