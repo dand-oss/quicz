@@ -53,6 +53,7 @@ comptime {
     _ = qlog;
     _ = cubic;
     _ = @import("quic/connection_tests.zig");
+    _ = @import("quic/tls13_server_endpoint_tests.zig");
     _ = pacer;
     _ = duration;
     _ = pmtu;
