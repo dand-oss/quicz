@@ -48,6 +48,8 @@ pub const Recovery = struct {
     smoothed_rtt_ns: u64,
     rttvar_ns: u64,
     pto_count: u8 = 0,
+    /// TLP probes sent since last ACK (max 1 per RTT).
+    tlp_count: u8 = 0,
     bytes_in_flight: usize = 0,
     congestion_window: usize,
     /// Bytes acknowledged while in congestion avoidance but not yet converted
@@ -147,6 +149,7 @@ pub const Recovery = struct {
         congestion_window_utilized: bool,
     ) void {
         self.pto_count = 0;
+        self.tlp_count = 0;
         if (!congestion_window_utilized) return;
         if (self.inCongestionRecovery(sent_time_millis)) return;
 
@@ -237,9 +240,20 @@ pub const Recovery = struct {
         }
     }
 
-    /// Current Probe Timeout in milliseconds.
+    /// Current Probe Timeout in nanoseconds.
     pub fn ptoNs(self: Recovery) u64 {
         return self.backedOffPtoNs(true);
+    }
+
+    /// Tail Loss Probe timeout in nanoseconds (RFC 8985).
+    ///
+    /// TLP fires before PTO to trigger an ACK that enables packet-threshold
+    /// loss detection for tail packets. Limited to 1 probe per RTT.
+    pub fn tlpNs(self: Recovery, include_max_ack_delay: bool) u64 {
+        const two_srtt = saturatingMulU64(2, self.smoothed_rtt_ns);
+        const base = @max(two_srtt, timer_granularity_ns);
+        const ack_delay = if (include_max_ack_delay) self.max_ack_delay_ns else 0;
+        return saturatingAddU64(base, ack_delay);
     }
 
     /// Apply a changed maximum datagram size to congestion-control math.

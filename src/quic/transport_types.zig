@@ -227,6 +227,8 @@ pub const PacketNumberSpace = enum {
 pub const LossDetectionTimerKind = enum {
     /// Time-threshold loss detection is pending.
     loss_time,
+    /// Tail Loss Probe is pending (fires before PTO).
+    tlp,
     /// Probe Timeout is pending for ack-eliciting data in flight.
     pto,
 };
