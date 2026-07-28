@@ -1383,35 +1383,6 @@ pub const Connection = struct {
         };
     }
 
-    /// Return the modeled TLP deadline for one packet number space.
-    ///
-    /// TLP fires before PTO to trigger an ACK for tail loss detection.
-    /// Limited to 1 probe per RTT (tlp_count < 1).
-    pub fn tlpDeadlineMillis(self: Connection, space: PacketNumberSpace) ?i64 {
-        // TLP only for application data after handshake confirmation.
-        if (!self.config.enable_tlp) return null;
-        if (space != .application or !self.handshake_confirmed) return null;
-        if (!self.ptoAllowedInSpace(space)) return null;
-        const recovery_state = switch (space) {
-            .initial => self.initial_packet_space.recovery_state,
-            .handshake => self.handshake_packet_space.recovery_state,
-            .application => self.recovery_state,
-        };
-        if (recovery_state.tlp_count >= 1) return null;
-        const sent_packets = switch (space) {
-            .initial => self.initial_packet_space.sent_packets.items,
-            .handshake => self.handshake_packet_space.sent_packets.items,
-            .application => self.sent_packets.items,
-        };
-        var latest_sent_time: ?i64 = null;
-        for (sent_packets) |sp| {
-            latest_sent_time = if (latest_sent_time) |cur| @max(cur, sp.sent_time_millis) else sp.sent_time_millis;
-        }
-        const sent_time = latest_sent_time orelse return null;
-        const include_ack = space == .application;
-        const tlp_ns = recovery_state.tlpNs(include_ack);
-        return saturatingAddMillis(sent_time, (tlp_ns + 999_999) / 1_000_000);
-    }
 
     /// Return the modeled PTO deadline for one packet number space.
     ///
@@ -1457,19 +1428,6 @@ pub const Connection = struct {
         }
         if (loss_deadline) |deadline| return deadline;
 
-        // TLP fires before PTO for tail loss detection.
-        var tlp_deadline: ?LossDetectionTimerDeadline = null;
-        for (spaces) |space| {
-            const deadline = self.tlpDeadlineMillis(space) orelse continue;
-            if (tlp_deadline == null or deadline < tlp_deadline.?.deadline_millis) {
-                tlp_deadline = .{
-                    .space = space,
-                    .kind = .tlp,
-                    .deadline_millis = deadline,
-                };
-            }
-        }
-
         var pto_deadline: ?LossDetectionTimerDeadline = null;
         for (spaces) |space| {
             const deadline = self.ptoDeadlineMillis(space) orelse continue;
@@ -1481,11 +1439,7 @@ pub const Connection = struct {
                 };
             }
         }
-        // Return earliest of TLP and PTO.
-        if (tlp_deadline != null and pto_deadline != null) {
-            return if (tlp_deadline.?.deadline_millis <= pto_deadline.?.deadline_millis) tlp_deadline else pto_deadline;
-        }
-        return tlp_deadline orelse pto_deadline;
+        return pto_deadline;
     }
 
     /// Service the aggregate modeled QUIC loss detection timer if it is due.
@@ -1502,7 +1456,6 @@ pub const Connection = struct {
 
         switch (deadline.kind) {
             .loss_time => try self.checkLossDetectionTimeouts(now_millis),
-            .tlp => self.fireTlpProbe(deadline.space),
             .pto => try self.checkPtoTimeouts(now_millis),
         }
         return deadline;
@@ -3505,14 +3458,6 @@ pub const Connection = struct {
         }
     }
 
-    /// Fire a Tail Loss Probe: arm a PING probe without PTO backoff.
-    fn fireTlpProbe(self: *Connection, space: PacketNumberSpace) void {
-        const packet_space = self.packetNumberSpace(space);
-        packet_space.recovery_state.tlp_count += 1;
-        if (packet_space.pto_probe_count.* == 0) {
-            packet_space.pto_probe_count.* = 1;
-        }
-    }
 
     fn armCongestionProbeInSpace(self: *Connection, space: PacketNumberSpace) void {
         const packet_space = self.packetNumberSpace(space);

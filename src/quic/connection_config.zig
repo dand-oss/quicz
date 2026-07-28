@@ -201,8 +201,6 @@ pub const Config = struct {
     /// Enable RTT estimate update from ACK processing (RFC 9002 §5.3).
     /// Adapts smoothed_rtt to measured RTT for accurate loss detection and PTO.
     enable_rtt_update: bool = true,
-    /// Enable Tail Loss Probe (RFC 8985) for faster tail loss detection.
-    enable_tlp: bool = false,
     /// Enable partial delivery of buffered data on reset streams.
     ///
     /// When true, recvOnStream delivers already-buffered data before returning
