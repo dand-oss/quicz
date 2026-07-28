@@ -7557,6 +7557,125 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
+    // -----------------------------------------------------------------------
+    // Unified crypto backend drive step
+    // -----------------------------------------------------------------------
+
+    /// Unified crypto backend drive replacing combinatorial variant explosion.
+    ///
+    /// Replaces all driveCryptoBackend{InSpace,AcrossSpaces}{OrClose,}
+    /// {WithCompatibleVersion,}And{ArmConnection,SelectNextDeadline} variants
+    /// and their multi-connection driveCryptoBackends* counterparts.
+    ///
+    /// `spaces` controls single-space vs across-spaces: pass a one-element
+    /// slice for InSpace, multiple for AcrossSpaces.
+    ///
+    /// Callers migrate from:
+    ///   lifecycle.driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(space, views, deadline_conns)
+    /// to:
+    ///   lifecycle.driveCryptoBackendStep(&.{space}, views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, deadline_conns)
+    pub fn driveCryptoBackendStep(
+        self: *EndpointConnectionLifecycle,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        deadline_connections: []const EndpointConnectionView,
+    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
+        const closing_before = if (opts.close_on_error) closingDriveViewCount(drive_views) else 0;
+        var sweep = EndpointCryptoBackendDriveSweepResult{};
+        for (drive_views) |view| {
+            const progress = self.driveCryptoBackendStepInner(
+                view.connection_id,
+                view.connection,
+                spaces,
+                view.backend,
+                view.scratch,
+                opts,
+                compatibilities,
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                if (opts.close_on_error and err == error.InvalidPacket and
+                    closingDriveViewCount(drive_views) > closing_before)
+                {
+                    return .{
+                        .backend = sweep,
+                        .next_deadline = if (opts.output == .select_deadline)
+                            self.nextDeadlineAcrossConnections(deadline_connections)
+                        else
+                            null,
+                    };
+                }
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+            accumulateCryptoBackendProgress(&sweep, progress);
+        }
+        const next_deadline: ?EndpointConnectionDeadline = if (opts.output == .select_deadline)
+            self.nextDeadlineAcrossConnections(deadline_connections)
+        else
+            null;
+        return .{
+            .backend = sweep,
+            .next_deadline = next_deadline,
+        };
+    }
+
+    /// Inner single-connection dispatch for driveCryptoBackendStep.
+    /// Selects the Connection method based on options.
+    fn driveCryptoBackendStepInner(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        spaces: []const PacketNumberSpace,
+        backend: CryptoBackend,
+        scratch: []u8,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+    ) Error!CryptoBackendProgress {
+        _ = self;
+        _ = connection_id;
+        const single = spaces.len == 1;
+        if (opts.compatible_version) {
+            if (opts.close_on_error) {
+                if (single) {
+                    return connection.driveCryptoBackendInSpaceWithCompatibleVersionOrClose(
+                        spaces[0], backend, scratch, compatibilities,
+                    );
+                }
+                return connection.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrClose(
+                    spaces, backend, scratch, compatibilities,
+                );
+            }
+            if (single) {
+                return connection.driveCryptoBackendInSpaceWithCompatibleVersion(
+                    spaces[0], backend, scratch, compatibilities,
+                );
+            }
+            return connection.driveCryptoBackendAcrossSpacesWithCompatibleVersion(
+                spaces, backend, scratch, compatibilities,
+            );
+        }
+        if (opts.close_on_error) {
+            if (single) {
+                return connection.driveCryptoBackendInSpaceOrClose(
+                    spaces[0], backend, scratch,
+                );
+            }
+            return connection.driveCryptoBackendAcrossSpacesOrClose(
+                spaces, backend, scratch,
+            );
+        }
+        if (single) {
+            return connection.driveCryptoBackendInSpace(
+                spaces[0], backend, scratch,
+            );
+        }
+        return connection.driveCryptoBackendAcrossSpaces(
+            spaces, backend, scratch,
+        );
+    }
+
     /// Drive crypto backends, then select the next endpoint-visible deadline.
     ///
     /// This is the no-output backend-drive step for socket loops. Backend
@@ -7569,14 +7688,13 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-            space,
+        return self.driveCryptoBackendStep(
+            &.{space},
             drive_views,
+            .{ .output = .select_deadline },
+            &.{},
+            deadline_connections,
         );
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
     }
 
     /// Drive crypto backends across ordered packet number spaces, then select
@@ -7592,14 +7710,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(spaces, drive_views, .{ .output = .select_deadline }, &.{}, deadline_connections);
     }
     /// Drive close-propagating crypto backends across ordered packet number
     /// spaces, then select the next endpoint-visible deadline.
@@ -7612,21 +7723,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const closing_before = closingDriveViewCount(drive_views);
-        const backend = self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-            spaces,
-            drive_views,
-        ) catch |err| {
-            if (err != error.InvalidPacket or closingDriveViewCount(drive_views) <= closing_before) return err;
-            return .{
-                .backend = .{},
-                .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-            };
-        };
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(spaces, drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, deadline_connections);
     }
     /// Drive one backend, then select the next endpoint-visible deadline.
     ///
@@ -8225,21 +8322,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const closing_before = closingDriveViewCount(drive_views);
-        const backend = self.driveCryptoBackendsInSpaceOrCloseAndArmConnections(
-            space,
-            drive_views,
-        ) catch |err| {
-            if (err != error.InvalidPacket or closingDriveViewCount(drive_views) <= closing_before) return err;
-            return .{
-                .backend = .{},
-                .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-            };
-        };
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, deadline_connections);
     }
 
     /// Drive one close-propagating backend, then select the next deadline.
@@ -8762,15 +8845,7 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
-            spaces,
-            drive_views,
-            compatibilities,
-        );
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(spaces, drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
     }
 
     /// Drive one compatible-version backend across ordered packet number
@@ -8948,15 +9023,7 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        );
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
     }
 
     /// Drive one compatible-version backend, then select the next deadline.
@@ -9388,22 +9455,7 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const closing_before = closingDriveViewCount(drive_views);
-        const backend = self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndArmConnections(
-            spaces,
-            drive_views,
-            compatibilities,
-        ) catch |err| {
-            if (err != error.InvalidPacket or closingDriveViewCount(drive_views) <= closing_before) return err;
-            return .{
-                .backend = .{},
-                .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-            };
-        };
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(spaces, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
     }
 
     /// Drive one compatible-version close-propagating backend across ordered
@@ -9533,22 +9585,7 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const closing_before = closingDriveViewCount(drive_views);
-        const backend = self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        ) catch |err| {
-            if (err != error.InvalidPacket or closingDriveViewCount(drive_views) <= closing_before) return err;
-            return .{
-                .backend = .{},
-                .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-            };
-        };
-        return .{
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
-        };
+        return self.driveCryptoBackendStep(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
     }
 
     /// Drive one compatible-version close path, then select the next deadline.

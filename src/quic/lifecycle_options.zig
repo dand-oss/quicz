@@ -112,12 +112,12 @@ pub const FeedAction = enum {
 
 /// Migration progress tracker for the 571-variant consolidation.
 pub const MigrationProgress = struct {
-    /// Total variants identified in the audit.
-    total_variants: usize = 571,
+    /// Total variants identified in the audit (updated after dead-code removal).
+    total_variants: usize = 521,
     /// Variants migrated to unified interface.
     migrated: usize = 0,
     /// Variants remaining.
-    remaining: usize = 571,
+    remaining: usize = 521,
 
     /// Record a migrated variant.
     pub fn recordMigration(self: *MigrationProgress) void {
@@ -134,20 +134,20 @@ pub const MigrationProgress = struct {
 
 test "MigrationProgress tracks consolidation" {
     var progress = MigrationProgress{};
-    try std.testing.expectEqual(@as(usize, 571), progress.total_variants);
+    try std.testing.expectEqual(@as(usize, 521), progress.total_variants);
     try std.testing.expectEqual(@as(usize, 0), progress.migrated);
     try std.testing.expectEqual(@as(f64, 0.0), progress.completionPercent());
 
     progress.recordMigration();
     try std.testing.expectEqual(@as(usize, 1), progress.migrated);
-    try std.testing.expectEqual(@as(usize, 570), progress.remaining);
+    try std.testing.expectEqual(@as(usize, 520), progress.remaining);
 
     // Simulate 50% migration
     var i: usize = 0;
-    while (i < 284) : (i += 1) {
+    while (i < 259) : (i += 1) {
         progress.recordMigration();
     }
-    try std.testing.expectEqual(@as(usize, 285), progress.migrated);
+    try std.testing.expectEqual(@as(usize, 260), progress.migrated);
     try std.testing.expect(progress.completionPercent() > 49.0);
     try std.testing.expect(progress.completionPercent() < 51.0);
 }
@@ -158,4 +158,43 @@ test "UnifiedFeedResult defaults" {
     try std.testing.expectEqual(@as(usize, 0), result.drained_count);
     try std.testing.expect(!result.close_triggered);
     try std.testing.expect(result.next_deadline_ms == null);
+}
+
+// ---------------------------------------------------------------------------
+// Crypto backend drive options — replaces 79 driveCryptoBackend* variants.
+// ---------------------------------------------------------------------------
+
+/// Output action after driving crypto backends.
+/// Replaces AndArmConnection/AndSelectNextDeadline/AndPollDatagram/AndDrainDatagrams suffixes.
+pub const CryptoDriveOutputAction = enum {
+    /// Arm recovery timer only, return progress (replaces AndArmConnection).
+    arm,
+    /// Arm + select next deadline (replaces AndSelectNextDeadline).
+    select_deadline,
+    /// Arm + poll one datagram (replaces AndPollDatagram).
+    poll,
+    /// Arm + drain datagrams into caller buffer (replaces AndDrainDatagrams).
+    drain,
+};
+
+/// Options for the unified driveCryptoBackendStep method.
+/// Replaces the combinatorial explosion of:
+///   driveCryptoBackend{InSpace,AcrossSpaces}{OrClose,}{WithCompatibleVersion,}And{ArmConnection,SelectNextDeadline,PollDatagram,DrainDatagrams}
+///   driveCryptoBackends{InSpace,AcrossSpaces}{OrClose,}{WithCompatibleVersion,}And{ArmConnections,SelectNextDeadline,PollDatagram,DrainDatagrams}
+pub const CryptoDriveStepOptions = struct {
+    /// Queue CONNECTION_CLOSE on peer transport-parameter errors
+    /// (replaces OrClose suffix).
+    close_on_error: bool = false,
+    /// Apply RFC 9368 compatible version handling during backend drive
+    /// (replaces WithCompatibleVersion suffix).
+    compatible_version: bool = false,
+    /// Post-drive output action (replaces AndArmConnection/AndSelectNextDeadline/AndPollDatagram/AndDrainDatagrams).
+    output: CryptoDriveOutputAction = .arm,
+};
+
+test "CryptoDriveStepOptions defaults match base arm behavior" {
+    const opts = CryptoDriveStepOptions{};
+    try std.testing.expect(!opts.close_on_error);
+    try std.testing.expect(!opts.compatible_version);
+    try std.testing.expectEqual(CryptoDriveOutputAction.arm, opts.output);
 }
