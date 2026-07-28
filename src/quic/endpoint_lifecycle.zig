@@ -11693,6 +11693,108 @@ pub const EndpointConnectionLifecycle = struct {
         return timer.space == options.recoveryPacketNumberSpace();
     }
 
+    // -----------------------------------------------------------------------
+    // Unified processDueDeadline + crypto backend drive steps
+    // -----------------------------------------------------------------------
+
+    /// Unified due-deadline processing + crypto backend drive + deadline selection.
+    ///
+    /// Replaces all processDueDeadlineAcrossConnectionsAndDriveCryptoBackends*
+    /// AndSelectNextDeadline variants.
+    pub fn processDueDeadlineStepWithCryptoDeadline(
+        self: *EndpointConnectionLifecycle,
+        due_connections: []const EndpointConnectionReceiveView,
+        now_nanos: i64,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        deadline_connections: []const EndpointConnectionView,
+    ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
+        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
+            due_connections,
+            deadline_connections,
+            now_nanos,
+        )) orelse return null;
+        if (due_work.pending_work.idle_retired != null or
+            due_work.pending_work.close_retired != null)
+        {
+            return .{ .due_work = due_work };
+        }
+        return .{
+            .due_work = due_work,
+            .backend = try self.driveCryptoBackendStep(
+                spaces, drive_views,
+                .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline },
+                compatibilities, deadline_connections,
+            ),
+        };
+    }
+
+    /// Unified due-deadline processing + crypto backend drive + poll output.
+    pub fn processDueDeadlineStepWithCryptoPoll(
+        self: *EndpointConnectionLifecycle,
+        due_connections: []const EndpointConnectionReceiveView,
+        now_nanos: i64,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+    ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
+        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
+            due_connections,
+            &.{},
+            now_nanos,
+        )) orelse return null;
+        if (due_work.pending_work.idle_retired != null or
+            due_work.pending_work.close_retired != null)
+        {
+            return .{ .due_work = due_work };
+        }
+        return .{
+            .due_work = due_work,
+            .backend = try self.driveCryptoBackendStepWithPoll(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, poll_space,
+            ),
+        };
+    }
+
+    /// Unified due-deadline processing + crypto backend drive + drain output.
+    pub fn processDueDeadlineStepWithCryptoDrain(
+        self: *EndpointConnectionLifecycle,
+        due_connections: []const EndpointConnectionReceiveView,
+        now_nanos: i64,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+        out: []EndpointPolledDatagramResult,
+    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
+        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
+            due_connections,
+            &.{},
+            now_nanos,
+        )) orelse return null;
+        if (due_work.pending_work.idle_retired != null or
+            due_work.pending_work.close_retired != null)
+        {
+            return .{ .due_work = due_work };
+        }
+        return .{
+            .due_work = due_work,
+            .backend = try self.driveCryptoBackendStepWithDrain(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, poll_space, out,
+            ),
+        };
+    }
+
+
     /// Process a due recovery deadline with caller-selected installed-key output.
     ///
     /// Use this when Application recovery should poll 0-RTT output instead of
@@ -12128,24 +12230,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, &.{backend_space}, drive_views, .{}, &.{}, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive close-propagating backends, then select a deadline.
@@ -12163,24 +12249,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive backends across ordered packet
@@ -12196,24 +12266,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-                backend_spaces,
-                drive_views,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, backend_spaces, drive_views, .{}, &.{}, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive close-propagating backends
@@ -12229,24 +12283,8 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
-                backend_spaces,
-                drive_views,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, backend_spaces, drive_views, .{ .close_on_error = true }, &.{}, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive compatible-version backends, then select a deadline.
@@ -12264,25 +12302,8 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                compatibilities,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive compatible-version backends
@@ -12299,25 +12320,8 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-                backend_spaces,
-                drive_views,
-                compatibilities,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities, deadline_connections);
+    
     }
 
     /// Process the earliest due deadline, drive compatible-version close path, then select a deadline.
@@ -12336,25 +12340,8 @@ pub const EndpointConnectionLifecycle = struct {
         compatibilities: []const VersionCompatibility,
         deadline_connections: []const EndpointConnectionView,
     ) Error!?EndpointDueWorkCryptoBackendNextDeadlineResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
-            due_connections,
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-                backend_space,
-                drive_views,
-                compatibilities,
-                deadline_connections,
-            ),
-        };
+        return self.processDueDeadlineStepWithCryptoDeadline(due_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, deadline_connections);
+    
     }
     fn processDueDeadlineAndPollDatagramForBackendOutput(
         self: *EndpointConnectionLifecycle,
