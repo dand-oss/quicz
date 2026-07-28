@@ -18,6 +18,10 @@ pub const CubicState = struct {
     tcp_cwnd: f64 = 0,
     /// Last ACK time in the current epoch.
     last_ack_ms: ?i64 = null,
+    /// When app-limited period started (RFC 8312 §5.8).
+    app_limited_start_ms: ?i64 = null,
+    /// When the window was last increased.
+    window_increase_ms: ?i64 = null,
 
     /// CUBIC constant C (default 0.4 per RFC 9438).
     pub const C: f64 = 0.4;
@@ -46,12 +50,31 @@ pub const CubicState = struct {
         return @max(new_cwnd, 2 * max_datagram_size);
     }
 
+    /// Mark the start of an application-limited period (RFC 8312 §5.8).
+    pub fn onAppLimited(self: *CubicState, now_ms: i64) void {
+        if (self.app_limited_start_ms == null) {
+            self.app_limited_start_ms = now_ms;
+        }
+    }
+
     /// Compute the CUBIC congestion window for the current time.
     /// Returns the target cwnd in bytes.
-    pub fn cubicWindow(self: *const CubicState, cwnd: usize, max_datagram_size: usize, now_ms: i64) usize {
+    pub fn cubicWindow(self: *CubicState, cwnd: usize, max_datagram_size: usize, now_ms: i64) usize {
         const epoch_start = self.epoch_start_ms orelse return cwnd;
+
+        // RFC 8312 §5.8: exclude app-limited periods from t
+        if (self.app_limited_start_ms) |al_start| {
+            const al_duration = now_ms - al_start;
+            if (al_duration > 0) {
+                self.epoch_start_ms = epoch_start + al_duration;
+            }
+            self.app_limited_start_ms = null;
+            self.window_increase_ms = now_ms;
+        }
+
+        const adjusted_epoch = self.epoch_start_ms orelse return cwnd;
         const mds_f: f64 = @floatFromInt(max_datagram_size);
-        const t: f64 = @floatFromInt(now_ms - epoch_start);
+        const t: f64 = @floatFromInt(now_ms - adjusted_epoch);
         const t_sec = t / 1000.0;
 
         // W(t) = C * (t - K)^3 + W_max  (in segments)
@@ -76,6 +99,8 @@ pub const CubicState = struct {
         self.epoch_start_ms = null;
         self.tcp_cwnd = 0;
         self.last_ack_ms = null;
+        self.app_limited_start_ms = null;
+        self.window_increase_ms = null;
     }
 };
 

@@ -1499,6 +1499,16 @@ pub const Connection = struct {
         return self.handshake_confirmed;
     }
 
+    /// Returns true when a fast retransmission should be prioritized.
+    ///
+    /// Set upon entering congestion recovery; cleared after one packet is sent.
+    /// Callers should retransmit lost frames before sending new data.
+    pub fn requiresFastRetransmission(self: Connection) bool {
+        return self.recovery_state.fast_retransmission_required or
+            self.initial_packet_space.recovery_state.fast_retransmission_required or
+            self.handshake_packet_space.recovery_state.fast_retransmission_required;
+    }
+
     /// Return the modeled QUIC handshake progress state.
     pub fn handshakeState(self: Connection) HandshakeState {
         return self.handshake_state;
@@ -3470,6 +3480,7 @@ pub const Connection = struct {
         const packet_space = self.packetNumberSpace(space);
         packet_space.recovery_state.largest_sent_packet_number = self.next_packet_number;
         packet_space.recovery_state.onPacketSent(bytes);
+        packet_space.recovery_state.fast_retransmission_required = false;
         self.anti_deadlock_pto_start_millis = null;
         if (packet_space.pto_probe_count.* != 0) {
             packet_space.pto_probe_count.* -= 1;

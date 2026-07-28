@@ -54,6 +54,8 @@ pub const Recovery = struct {
     /// into a full max-datagram-sized congestion-window increase.
     congestion_avoidance_bytes_acked: usize = 0,
     congestion_recovery_start_time_millis: ?i64 = null,
+    /// Set when entering recovery; cleared after one packet is sent (fast retransmission).
+    fast_retransmission_required: bool = false,
     /// Largest packet number sent (updated by Connection on each send).
     largest_sent_packet_number: u64 = 0,
     /// Largest sent PN at the last cwnd cutback (quic-go style recovery).
@@ -147,7 +149,13 @@ pub const Recovery = struct {
         congestion_window_utilized: bool,
     ) void {
         self.pto_count = 0;
-        if (!congestion_window_utilized) return;
+        if (!congestion_window_utilized) {
+            // RFC 8312 §5.8: signal app-limited to CUBIC epoch
+            if (self.congestion_algorithm == .cubic) {
+                self.cubic.onAppLimited(sent_time_millis);
+            }
+            return;
+        }
         if (self.inCongestionRecovery(sent_time_millis)) return;
 
         if (self.congestion_window < self.ssthresh) {
@@ -202,6 +210,7 @@ pub const Recovery = struct {
             if (now_millis - prev_start < @max(pto_ms, 1)) return;
         }
         self.congestion_recovery_start_time_millis = now_millis;
+        self.fast_retransmission_required = true;
         self.largest_sent_at_last_cutback = self.largest_sent_packet_number;
         self.congestion_avoidance_bytes_acked = 0;
         switch (self.congestion_algorithm) {
@@ -310,6 +319,7 @@ pub const Recovery = struct {
         self.congestion_window = minimumCongestionWindow(self.max_datagram_size);
         self.congestion_avoidance_bytes_acked = 0;
         self.congestion_recovery_start_time_millis = null;
+        self.fast_retransmission_required = false;
     }
 
     /// Apply the persistent congestion response and refresh min_rtt when the
