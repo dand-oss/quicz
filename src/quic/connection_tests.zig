@@ -21936,7 +21936,7 @@ test "EndpointConnectionLifecycle feed then close-propagating backend stops befo
     try std.testing.expect(server.pending_close != null);
 }
 
-test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalledKeyOptions emits PTO probe" {
+test "EndpointConnectionLifecycle processPendingWorkAndPollDatagram emits PTO probe" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
@@ -21985,7 +21985,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalled
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
-    const due = try lifecycle.processPendingWorkAndPollDatagramWithInstalledKeyOptions(
+    const due = try lifecycle.processPendingWorkAndPollDatagram(
         63,
         &client,
         recovery_timer.deadline_nanos,
@@ -22024,7 +22024,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalled
     }
 }
 
-test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagramsWithInstalledKeyOptions drains PTO probe" {
+test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagrams drains PTO probe" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xee };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
@@ -22074,7 +22074,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagramsWithInstall
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     var due_out: [1]EndpointPolledDatagramResult = undefined;
-    const due = try lifecycle.processPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
+    const due = try lifecycle.processPendingWorkAndDrainDatagrams(
         65,
         &client,
         recovery_timer.deadline_nanos,
@@ -52499,7 +52499,7 @@ test "EndpointConnectionLifecycle single explicit pending-work poll reports key 
         .source_connection_id = &[_]u8{},
     };
     const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
-    const result = try lifecycle.processPendingWorkAndPollDatagramWithInstalledKeyOptions(
+    const result = try lifecycle.processPendingWorkAndPollDatagram(
         84,
         &conn,
         discard_deadline,
@@ -52593,7 +52593,7 @@ test "EndpointConnectionLifecycle single explicit pending-work drain reports key
     };
     const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
+    const result = try lifecycle.processPendingWorkAndDrainDatagrams(
         85,
         &conn,
         discard_deadline,

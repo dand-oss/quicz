@@ -12129,22 +12129,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Process pending work and poll with explicit installed-key output options.
-    ///
-    /// This is the single-connection counterpart of
-    /// `processPendingWorkAcrossConnectionsAndPollDatagramWithInstalledKeyOptions()`.
-    /// It keeps the existing pending-work ordering while making the
-    /// caller-selected Handshake, 0-RTT, or 1-RTT output path explicit.
-    pub fn processPendingWorkAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointPendingWorkDatagramResult {
-        return self.processPendingWorkAndPollDatagram(connection_id, connection, now_nanos, options);
-    }
-
     /// Process pending work and drain installed-key datagrams caused by recovery.
     ///
     /// This is the bounded-output form of `processPendingWorkAndPollDatagram()`.
@@ -12182,21 +12166,6 @@ pub const EndpointConnectionLifecycle = struct {
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
-    }
-
-    /// Process pending work and drain explicit installed-key output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkDatagramDrainResult {
-        return self.processPendingWorkAndDrainDatagrams(connection_id, connection, now_nanos, options, out);
     }
 
     fn installedKeyOptionsMatchRecoveryDeadline(
