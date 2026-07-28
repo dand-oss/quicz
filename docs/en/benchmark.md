@@ -104,6 +104,21 @@ Test: 5000 iterations, macOS loopback, ReleaseFast.
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peers)
 
+## Critical Fix: RTT Estimate Update (Priority #1)
+
+**Root cause identified:** `Recovery.updateRtt()` exists but is NEVER called from
+Connection ACK processing. `smoothed_rtt_ms` stays at initial 333ms forever.
+
+Impact of this bug:
+- Time-based loss detection threshold = 9/8 × 333ms = 375ms (should be ~1ms on loopback)
+- PTO = 333 + 4×166 + 25 = 1022ms (should adapt to actual RTT)
+- Pacer rate = cwnd/333ms (too conservative after first RTT sample)
+- CUBIC time-based growth uses wrong RTT
+
+Fix: call `packet_space.recovery_state.updateRtt(rtt_sample, ack_delay)` in ACK processing.
+Blocked by: 36 tests written against the buggy behavior need updating.
+Expected impact: 5% loss recovery from 19% → 30-40% (matching s2n-quic/quic-go).
+
 ## Loss Recovery Improvement Path (5% loss: 19% → 30-40% target)
 
 Current 5% loss retention (19%) is below s2n-quic/quic-go (30-40%). Root causes:

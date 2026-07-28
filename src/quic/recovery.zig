@@ -376,16 +376,21 @@ pub const Recovery = struct {
         self.congestion_window = self.bbr.currentCwnd();
     }
 
-    fn updateRtt(self: *Recovery, latest_rtt_ms: u64, ack_delay_ms: u64) void {
+    /// Minimum trackable RTT (1ms). Prevents zero-RTT samples from collapsing
+    /// the estimator on loopback paths (s2n-quic uses 1μs; we use 1ms granularity).
+    pub const min_trackable_rtt_ms: u64 = 1;
+
+    pub fn updateRtt(self: *Recovery, latest_rtt_ms: u64, ack_delay_ms: u64) void {
+        const clamped_rtt = @max(latest_rtt_ms, min_trackable_rtt_ms);
         const had_rtt_sample = self.latest_rtt_ms != null;
-        self.latest_rtt_ms = latest_rtt_ms;
-        self.min_rtt_ms = if (self.min_rtt_ms) |min_rtt| @min(min_rtt, latest_rtt_ms) else latest_rtt_ms;
+        self.latest_rtt_ms = clamped_rtt;
+        self.min_rtt_ms = if (self.min_rtt_ms) |min_rtt| @min(min_rtt, clamped_rtt) else clamped_rtt;
 
         const min_rtt = self.min_rtt_ms.?;
-        const adjusted_rtt = if (latest_rtt_ms > saturatingAddU64(min_rtt, ack_delay_ms))
-            latest_rtt_ms - ack_delay_ms
+        const adjusted_rtt = if (clamped_rtt > saturatingAddU64(min_rtt, ack_delay_ms))
+            clamped_rtt - ack_delay_ms
         else
-            latest_rtt_ms;
+            clamped_rtt;
 
         if (!had_rtt_sample) {
             self.smoothed_rtt_ms = adjusted_rtt;
