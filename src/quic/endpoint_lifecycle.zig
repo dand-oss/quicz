@@ -2150,6 +2150,102 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
+    /// Unified feed + pending-work + crypto backend drive + poll output.
+    ///
+    /// Replaces all feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWork
+    /// AndDriveCryptoBackends*AndPollDatagram variants.
+    pub fn feedStepWithPendingWorkCryptoPoll(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
+        );
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            receive_connections,
+            now_nanos,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
+        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
+            switch (feed) {
+                .routed => backend = try self.driveCryptoBackendStepWithPoll(
+                    spaces, drive_views, crypto_opts, compatibilities,
+                    poll_views, now_nanos, poll_space,
+                ),
+                else => {},
+            }
+        }
+        return .{
+            .feed = feed,
+            .pending_work = pending_work,
+            .backend = backend,
+            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
+        };
+    }
+
+    /// Unified feed + pending-work + crypto backend drive + drain output.
+    ///
+    /// Replaces all feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWork
+    /// AndDriveCryptoBackends*AndDrainDatagrams variants.
+    pub fn feedStepWithPendingWorkCryptoDrain(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+        out: []EndpointPolledDatagramResult,
+    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
+        );
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            receive_connections,
+            now_nanos,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
+        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
+            switch (feed) {
+                .routed => backend = try self.driveCryptoBackendStepWithDrain(
+                    spaces, drive_views, crypto_opts, compatibilities,
+                    poll_views, now_nanos, poll_space, out,
+                ),
+                else => {},
+            }
+        }
+        return .{
+            .feed = feed,
+            .pending_work = pending_work,
+            .backend = backend,
+            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
+        };
+    }
+
+
 
     /// Feed an installed-key datagram, process pending work, drive backends
     /// across ordered packet number spaces, then select a wakeup.
@@ -2891,36 +2987,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionPollView,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceAndPollDatagram(
-                    backend_space,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends
@@ -2943,36 +3011,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionPollView,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagram(
-                    backend_spaces,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoPoll(receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{}, &.{}, poll_views, poll_space);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend
@@ -3311,35 +3351,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionPollView,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-                    backend_space,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-        };
+        return self.feedStepWithPendingWorkCryptoPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, poll_space);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one close-propagating backend, then poll output.
@@ -3490,37 +3503,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-                    backend_spaces,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                    out,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDrain(receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{}, &.{}, poll_views, poll_space, out);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend
@@ -3784,36 +3768,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagrams(
-                    backend_spaces,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                    out,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-        };
+        return self.feedStepWithPendingWorkCryptoDrain(receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{ .close_on_error = true }, &.{}, poll_views, poll_space, out);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one
@@ -3883,37 +3839,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                    backend_space,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                    poll_space,
-                    out,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
+        return self.feedStepWithPendingWorkCryptoDrain(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then drain output.
