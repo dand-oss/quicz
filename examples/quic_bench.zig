@@ -412,9 +412,11 @@ pub fn main() !void {
     // --- Benchmark 5: Loss recovery (simulated 1% and 5% packet loss) ---
     std.debug.print("\n  --- Loss Recovery (simulated packet loss) ---\n", .{});
     {
-        const loss_rates = [_]struct { pct: usize, label: []const u8 }{
-            .{ .pct = 1, .label = "1% loss" },
-            .{ .pct = 5, .label = "5% loss" },
+        const loss_rates = [_]struct { pct: usize, rtt_us: u64, label: []const u8 }{
+            .{ .pct = 1, .rtt_us = 0, .label = "1% loss (loopback)" },
+            .{ .pct = 5, .rtt_us = 0, .label = "5% loss (loopback)" },
+            .{ .pct = 1, .rtt_us = 100, .label = "1% loss (100us RTT)" },
+            .{ .pct = 5, .rtt_us = 100, .label = "5% loss (100us RTT)" },
         };
         const loss_transfer: usize = 4 * 1024 * 1024; // 4 MB per run
 
@@ -451,13 +453,14 @@ pub fn main() !void {
                 cnt: *std.atomic.Value(usize),
                 peer: std.Io.net.IpAddress,
                 drop_pct: usize,
+                rtt_us: u64,
                 rng_state: *u64,
             };
             var rng_state: u64 = 0xDEADBEEF;
             var loss_ctx = LossCtx{
                 .sock = &loss_srv_sock, .io_r = io, .srv = &loss_srv,
                 .flag = &loss_done, .cnt = &loss_recv, .peer = loss_addr,
-                .drop_pct = lr.pct, .rng_state = &rng_state,
+                .drop_pct = lr.pct, .rtt_us = lr.rtt_us, .rng_state = &rng_state,
             };
 
             const loss_fn = struct {
@@ -473,6 +476,7 @@ pub fn main() !void {
                             // Simulate random packet loss (xorshift PRNG)
                             c.rng_state.* ^= c.rng_state.* << 13; c.rng_state.* ^= c.rng_state.* >> 7; c.rng_state.* ^= c.rng_state.* << 17;
                             if (c.rng_state.* % 100 < c.drop_pct) continue; // random drop
+                            if (c.rtt_us > 0) { const deadline = nanoTime() + c.rtt_us * 500; while (nanoTime() < deadline) {} }
                             _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                             got = true;
                         }
