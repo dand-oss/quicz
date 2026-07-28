@@ -2074,16 +2074,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{}, &.{});
+    
     }
 
     // -----------------------------------------------------------------------
@@ -2375,16 +2367,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{}, &.{});
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends
@@ -2444,16 +2428,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{ .close_on_error = true }, &.{});
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then select a wakeup.
@@ -2506,16 +2482,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{});
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then select a wakeup.
@@ -2590,17 +2558,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends across ordered spaces, then select a wakeup.
@@ -2676,17 +2635,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndSelectNextDeadline(
-            &receive_connections,
-            &deadline_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            compatibilities,
-        );
+        return self.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then poll output.
@@ -2745,17 +2695,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .compatible_version = true }, compatibilities, poll_views);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then poll output.
@@ -2814,17 +2755,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then drain output.
@@ -2885,18 +2817,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .compatible_version = true }, compatibilities, poll_views, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then drain output.
@@ -3007,17 +2929,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-        );
+        return self.feedStepWithPendingWorkCryptoPoll(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{}, &.{}, &poll_views, poll_options.space);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends
@@ -3080,16 +2993,8 @@ pub const EndpointConnectionLifecycle = struct {
             .connection = connection,
             .poll_options = poll_options,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then poll output.
@@ -3125,17 +3030,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-        );
+        return self.feedStepWithPendingWorkCryptoPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{}, &.{}, &poll_views, poll_options.space);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends, then poll explicit output.
@@ -3184,16 +3080,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{}, &.{}, poll_views);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version close path, then drain explicit output.
@@ -3225,18 +3113,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then poll output.
@@ -3293,17 +3171,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-        );
+        return self.feedStepWithPendingWorkCryptoPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, poll_options.space);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then poll explicit output.
@@ -3352,16 +3221,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, poll_views);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends
@@ -3421,18 +3282,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoDrain(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{}, &.{}, &poll_views, poll_options.space, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends
@@ -3490,17 +3341,8 @@ pub const EndpointConnectionLifecycle = struct {
             .connection = connection,
             .poll_options = poll_options,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{}, &.{}, &poll_views, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive
@@ -3560,17 +3402,8 @@ pub const EndpointConnectionLifecycle = struct {
             .connection = connection,
             .poll_options = poll_options,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive
@@ -3632,18 +3465,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_spaces,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoDrain(&receive_connections, path, now_nanos, datagram, feed_options, backend_spaces, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, poll_options.space, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends, then drain output.
@@ -3723,17 +3546,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, poll_views, out);
+    
     }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then drain output.
@@ -3770,18 +3584,8 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoDrain(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{}, &.{}, &poll_views, poll_options.space, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, drive backends, then drain explicit output.
@@ -3832,17 +3636,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = backend,
             .scratch = scratch,
         }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-            out,
-        );
+        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, &drive_views, .{}, &.{}, poll_views, out);
+    
     }
 
     /// Feed an installed-key datagram, process pending work, then poll output.
