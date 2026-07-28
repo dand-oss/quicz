@@ -101,25 +101,8 @@ Notes:
 - Methodology: 64 MB single-stream upload, threaded client/server, CUBIC, cwnd grew to 1.2 MB.
 - Run: `zig build run-quic-bench`
 
-## Production Tuning Recommendations
+## Production Tuning
 
-| Parameter | Default | Recommended (production) | Notes |
-| --- | --- | --- | --- |
-| `pto_jitter_percentage` | 0 | 20–30 | Prevents synchronized PTO timeouts across many concurrent connections. Range 0–50. Default 0 matches upstream QUIC stacks; enable for servers with 100+ concurrent connections. |
-| `congestion_algorithm` | `.new_reno` | `.cubic` | CUBIC (RFC 9438) with HyStart++ provides better throughput on high-BDP paths. |
-| `initial_rtt_ns` | 333 ms | Per-environment | Data center: 1–5 ms; WAN: 50–100 ms. Lower values speed up initial window growth. |
-| `max_ack_delay_ns` | 25 ms | 25 ms | RFC 9000 default; do not change unless peer negotiates differently. |
-
-### PTO Jitter Detail
-
-PTO jitter adds ±percentage random variation to the base Probe Timeout before
-exponential backoff. This decorrelates timeout storms when many connections
-share a path (e.g., behind a NAT or load balancer).
-
-- **0% (default):** Deterministic PTO. Suitable for single connections, tests,
-  and environments where timeout synchronization is not a concern.
-- **20–30% (recommended for servers):** Sufficient to break synchronization
-  without meaningfully delaying loss recovery.
-- **50% (maximum):** Aggressive jitter; may delay loss recovery on lossy paths.
-
-The result is always clamped to the RFC 9002 kGranularity floor (1 ms).
+See [Production Tuning Guide](production_tuning.md) for recommended
+configuration values, PTO jitter guidance, congestion control selection,
+and initial RTT tuning per deployment environment.
