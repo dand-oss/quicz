@@ -20,20 +20,20 @@ fn recvTimeout() std.Io.Timeout {
     } };
 }
 
-fn recvTimeoutForDeadline(io: std.Io, deadline_millis: ?i64) std.Io.Timeout {
-    const now_millis = std.Io.Clock.awake.now(io).toMilliseconds();
-    const timeout_millis = if (deadline_millis) |deadline|
-        @max(@as(i64, 0), deadline - now_millis)
+fn recvTimeoutForDeadline(io: std.Io, deadline_nanos: ?i64) std.Io.Timeout {
+    const now_nanos = std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
+    const timeout_nanos = if (deadline_nanos) |deadline|
+        @max(@as(i64, 0), deadline - now_nanos)
     else
-        2_000;
+        2_000_000_000; // 2s in ns
     return .{ .duration = .{
         .clock = .awake,
-        .raw = std.Io.Duration.fromMilliseconds(timeout_millis),
+        .raw = std.Io.Duration.fromMilliseconds(@intCast(timeout_nanos / 1_000_000)),
     } };
 }
 
 fn nowMillis(io: std.Io) i64 {
-    return std.Io.Clock.awake.now(io).toMilliseconds();
+    return std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
 }
 
 fn require(condition: bool) !void {
@@ -155,7 +155,7 @@ pub fn main(init: std.process.Init) !void {
     var recovery_timer_services: usize = 0;
     while (received_packets < 16 and recovery_timer_services < 4) {
         const next_deadline = if (client_endpoint.nextDeadline()) |deadline|
-            deadline.deadlineMillis()
+            deadline.deadline()
         else
             null;
         const received = active_socket.receiveTimeout(io, &receive_buffer, recvTimeoutForDeadline(io, next_deadline)) catch |err| switch (err) {
@@ -220,7 +220,7 @@ pub fn main(init: std.process.Init) !void {
     const close_packet = (try client_endpoint.close(0, 0, "process echo complete", nowMillis(io))) orelse return error.UnexpectedState;
     defer allocator.free(close_packet);
     try active_socket.send(io, &server_address, close_packet);
-    const client_close_deadline = client_endpoint.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const client_close_deadline = client_endpoint.closeDeadline() orelse return error.UnexpectedState;
     const client_retired = (try client_endpoint.retireAtCloseDeadline(client_close_deadline)) orelse return error.UnexpectedState;
     try require(client_retired.routes_retired > 0);
     try require(client_endpoint.transport.connection.connectionState() == .closed);

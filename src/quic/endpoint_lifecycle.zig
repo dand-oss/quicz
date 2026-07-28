@@ -386,7 +386,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         path: endpoint.Udp4Tuple,
         token: []const u8,
     ) EndpointAddressValidationError!EndpointAddressValidationResult {
@@ -399,7 +399,7 @@ pub const EndpointConnectionLifecycle = struct {
         const validation = try policy.validateTokenForPathForVersion(
             expected_kind,
             expected_originating_version,
-            now_millis,
+            now_nanos,
             path,
             token,
         );
@@ -408,7 +408,7 @@ pub const EndpointConnectionLifecycle = struct {
 
         return .{
             .validation = validation,
-            .recovery_timer = connection.lossDetectionTimerDeadlineMillis(),
+            .recovery_timer = connection.lossDetectionTimerDeadline(),
         };
     }
 
@@ -425,7 +425,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         path: endpoint.Udp4Tuple,
         token: []const u8,
     ) EndpointAddressValidationError!EndpointAddressValidationResult {
@@ -439,14 +439,14 @@ pub const EndpointConnectionLifecycle = struct {
         _ = try policy.validateTokenForPathWithoutReplayForVersion(
             .retry,
             expected_originating_version,
-            now_millis,
+            now_nanos,
             path,
             token,
         );
         const validation = try policy.validateTokenForPathForVersion(
             .retry,
             expected_originating_version,
-            now_millis,
+            now_nanos,
             path,
             token,
         );
@@ -455,7 +455,7 @@ pub const EndpointConnectionLifecycle = struct {
 
         return .{
             .validation = validation,
-            .recovery_timer = connection.lossDetectionTimerDeadlineMillis(),
+            .recovery_timer = connection.lossDetectionTimerDeadline(),
         };
     }
 
@@ -529,7 +529,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -541,14 +541,14 @@ pub const EndpointConnectionLifecycle = struct {
         ) catch return error.InvalidPacket;
 
         const processed_packets = connection.processProtectedLongDatagram(
-            now_millis,
+            now_nanos,
             .{ .initial = initial_secrets.client },
             datagram,
         ) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
-        _ = connection.recordPeerAddressDatagramReceived(now_millis, datagram.len) catch |err| {
+        _ = connection.recordPeerAddressDatagramReceived(now_nanos, datagram.len) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -580,7 +580,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -592,7 +592,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -608,7 +608,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             .initial,
-            now_millis,
+            now_nanos,
             accepted_initial.initial_accept.source_connection_id,
             server_source_connection_id,
             &[_]u8{},
@@ -633,7 +633,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -644,7 +644,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -668,7 +668,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 .initial,
-                now_millis,
+                now_nanos,
                 accepted_initial.initial_accept.source_connection_id,
                 server_source_connection_id,
                 &[_]u8{},
@@ -688,7 +688,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -699,7 +699,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -729,7 +729,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -741,7 +741,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -765,7 +765,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 .initial,
-                now_millis,
+                now_nanos,
                 accepted_initial.initial_accept.source_connection_id,
                 server_source_connection_id,
                 &[_]u8{},
@@ -789,7 +789,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -800,7 +800,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -825,7 +825,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .response_datagram = try self.pollProtectedLongDatagram(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     accepted_initial.initial_accept.source_connection_id,
                     server_source_connection_id,
                     &[_]u8{},
@@ -841,7 +841,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 .initial,
-                now_millis,
+                now_nanos,
                 accepted_initial.initial_accept.source_connection_id,
                 server_source_connection_id,
                 &[_]u8{},
@@ -862,7 +862,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -873,7 +873,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -913,7 +913,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_accept: endpoint.InitialAcceptResult,
         server_source_connection_id: []const u8,
         datagram: []const u8,
@@ -925,7 +925,7 @@ pub const EndpointConnectionLifecycle = struct {
         const accepted_initial = try self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             initial_accept,
             server_source_connection_id,
             datagram,
@@ -951,7 +951,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainProtectedLongDatagrams(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     accepted_initial.initial_accept.source_connection_id,
                     server_source_connection_id,
                     &[_]u8{},
@@ -968,7 +968,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 .initial,
-                now_millis,
+                now_nanos,
                 accepted_initial.initial_accept.source_connection_id,
                 server_source_connection_id,
                 &[_]u8{},
@@ -991,7 +991,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!void {
@@ -1000,7 +1000,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processAcceptedProtectedInitialDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1011,7 +1011,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1020,7 +1020,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnections(
             allocator,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1032,14 +1032,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.DrainOptions,
     ) Error!?[]u8 {
         _ = opts;
         return self.pollProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -1049,7 +1049,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         opts: lifecycle_opts.DrainOptions,
     ) Error!?[]u8 {
@@ -1057,7 +1057,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.pollProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
         );
     }
@@ -1087,7 +1087,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1101,7 +1101,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1113,7 +1113,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1126,7 +1126,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1137,7 +1137,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1150,7 +1150,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1161,7 +1161,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1170,7 +1170,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending work with crypto backend — replaces 10+ variants.
@@ -1179,7 +1179,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1188,7 +1188,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     pub fn commitPreferredAddressMigration(
@@ -1219,14 +1219,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn drainDatagramsAcrossConnectionsUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
         opts: lifecycle_opts.DrainOptions,
     ) Error!usize {
         _ = opts;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = space;
         _ = out;
         _ = self;
@@ -1240,14 +1240,14 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!EndpointPendingWorkResult {
         _ = opts;
         _ = options;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending work with installed key options.
@@ -1257,14 +1257,14 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!EndpointPendingWorkResult {
         _ = opts;
         _ = options;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified feed across connections with pending work and crypto backend.
@@ -1273,7 +1273,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1286,7 +1286,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnections(
             allocator,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1325,7 +1325,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
@@ -1334,7 +1334,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = path;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = self;
@@ -1348,7 +1348,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!endpoint.RouteResult {
@@ -1357,7 +1357,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1371,11 +1371,11 @@ pub const EndpointConnectionLifecycle = struct {
         error_code: u64,
         frame_type: u64,
         reason_phrase: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.DrainOptions,
     ) Error!void {
         _ = opts;
-        _ = now_millis;
+        _ = now_nanos;
         _ = frame_type;
         _ = reason_phrase;
         _ = error_code;
@@ -1391,13 +1391,13 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!?EndpointConnectionDeadline {
         _ = opts;
         _ = connection;
         _ = connection_id;
-        _ = now_millis;
+        _ = now_nanos;
         return self.nextDeadline(allocator);
     }
 
@@ -1409,7 +1409,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1420,7 +1420,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1483,7 +1483,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
@@ -1493,7 +1493,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1505,7 +1505,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1514,7 +1514,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnections(
             allocator,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -1526,7 +1526,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1538,7 +1538,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1550,7 +1550,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1563,7 +1563,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -1575,7 +1575,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1584,7 +1584,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending work across connections with crypto backend.
@@ -1592,7 +1592,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossConnectionsWithCryptoBackendUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1601,7 +1601,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -1628,7 +1628,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1638,7 +1638,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work and crypto backend in space.
@@ -1647,7 +1647,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1657,7 +1657,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work and crypto backend across spaces.
@@ -1666,7 +1666,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1676,7 +1676,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified due deadline across connections with crypto backend.
@@ -1684,7 +1684,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn dueDeadlineAcrossConnectionsWithCryptoBackendUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1693,7 +1693,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -1703,7 +1703,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossWithCryptoBackendAndCompatibleVersionUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -1712,7 +1712,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -1724,7 +1724,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1734,7 +1734,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend, and compatible version.
@@ -1743,7 +1743,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1753,7 +1753,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend across spaces, and compatible version.
@@ -1762,7 +1762,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -1772,7 +1772,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     pub fn updateRoutePathAndResetSpinBit(
@@ -1800,7 +1800,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -1808,7 +1808,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with OrClose and poll.
@@ -1818,13 +1818,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified Handshake with OrClose and drain.
@@ -1833,14 +1833,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         out: []EndpointPolledDatagramResult,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!void {
         _ = opts;
         _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Handshake with OrClose and poll.
@@ -1849,12 +1849,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!void {
         _ = opts;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified short with OrClose and drain.
@@ -1863,7 +1863,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -1871,7 +1871,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!void {
         _ = opts;
         _ = out;
-        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, dcid_len, datagram);
+        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, dcid_len, datagram);
     }
 
     /// Unified short with OrClose and poll.
@@ -1880,13 +1880,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!void {
         _ = opts;
-        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, dcid_len, datagram);
+        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, dcid_len, datagram);
     }
 
     /// Unified routed short with OrClose and drain.
@@ -1896,14 +1896,14 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         out: []EndpointPolledDatagramResult,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!endpoint.RouteResult {
         _ = opts;
         _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified routed short with OrClose and poll.
@@ -1913,12 +1913,12 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!endpoint.RouteResult {
         _ = opts;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified Initial with OrClose and drain.
@@ -1927,7 +1927,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1938,7 +1938,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Initial with OrClose and poll.
@@ -1947,7 +1947,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1956,7 +1956,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     pub fn updateRoutePathFromValidatedDatagramAndResetSpinBit(
@@ -1976,7 +1976,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -1987,7 +1987,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Handshake with crypto backend, OrClose, and poll.
@@ -1995,7 +1995,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2004,7 +2004,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified short with crypto backend, OrClose, and drain.
@@ -2013,7 +2013,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2024,7 +2024,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified short with crypto backend, OrClose, and poll.
@@ -2033,7 +2033,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2042,7 +2042,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified due deadline with crypto backend, OrClose, and drain.
@@ -2051,7 +2051,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2062,7 +2062,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified due deadline with crypto backend, OrClose, and poll.
@@ -2071,7 +2071,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2080,7 +2080,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending work with crypto backend, OrClose, and drain.
@@ -2089,7 +2089,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2100,7 +2100,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending work with crypto backend, OrClose, and poll.
@@ -2109,7 +2109,7 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2118,7 +2118,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified feed with crypto backend in space, OrClose, and drain.
@@ -2127,7 +2127,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2139,7 +2139,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with crypto backend in space, OrClose, and poll.
@@ -2148,7 +2148,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2158,7 +2158,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     pub fn currentRoutePath(
@@ -2174,7 +2174,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -2182,7 +2182,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with OrClose and poll.
@@ -2190,13 +2190,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend, OrClose, and drain.
@@ -2204,7 +2204,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2216,7 +2216,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend, OrClose, and poll.
@@ -2224,7 +2224,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2234,7 +2234,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with compatible version, OrClose, and drain.
@@ -2242,7 +2242,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -2250,7 +2250,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with compatible version, OrClose, and poll.
@@ -2258,13 +2258,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend, compatible version, OrClose, and drain.
@@ -2272,7 +2272,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2284,7 +2284,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend, compatible version, OrClose, and poll.
@@ -2292,7 +2292,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2302,7 +2302,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, OrClose, and drain.
@@ -2311,7 +2311,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -2319,7 +2319,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, OrClose, and poll.
@@ -2328,13 +2328,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     pub fn routeDatagram(
@@ -2360,7 +2360,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -2368,7 +2368,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, OrClose, and poll.
@@ -2376,13 +2376,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
         _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend, OrClose, and drain.
@@ -2390,7 +2390,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2402,7 +2402,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend, OrClose, and poll.
@@ -2410,7 +2410,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2420,7 +2420,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend across spaces, OrClose, and drain.
@@ -2428,7 +2428,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2440,7 +2440,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend across spaces, OrClose, and poll.
@@ -2448,7 +2448,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2458,7 +2458,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend in space, compatible version, OrClose, and drain.
@@ -2467,7 +2467,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2479,7 +2479,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend in space, compatible version, OrClose, and poll.
@@ -2488,7 +2488,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2498,7 +2498,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend in space, compatible version, OrClose, and drain.
@@ -2506,7 +2506,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2518,7 +2518,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend in space, compatible version, OrClose, and poll.
@@ -2526,7 +2526,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2536,7 +2536,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     pub fn processRoutedProtectedInitialDatagram(
@@ -2544,7 +2544,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         datagram: []const u8,
     ) EndpointProtectedInitialError!endpoint.RouteResult {
@@ -2565,7 +2565,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             .initial,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -2582,7 +2582,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2594,7 +2594,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
@@ -2602,7 +2602,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2612,7 +2612,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, OrClose, and drain.
@@ -2621,7 +2621,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2633,7 +2633,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, OrClose, and poll.
@@ -2642,7 +2642,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2652,7 +2652,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and drain.
@@ -2661,7 +2661,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2673,7 +2673,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
@@ -2682,7 +2682,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -2692,14 +2692,14 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified due deadline across connections with crypto backend, OrClose, and drain.
     pub fn dueDeadlineAcrossCryptoBackendOrCloseAndDrainUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2710,7 +2710,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2719,7 +2719,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn dueDeadlineAcrossCryptoBackendOrCloseAndPollUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2728,7 +2728,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2737,7 +2737,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossCryptoBackendOrCloseAndDrainUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2748,7 +2748,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2757,7 +2757,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossCryptoBackendOrCloseAndPollUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2766,7 +2766,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2776,7 +2776,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         datagram: []const u8,
     ) EndpointProtectedInitialError!endpoint.RouteResult {
@@ -2797,7 +2797,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             .initial,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -2815,7 +2815,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2826,7 +2826,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2835,7 +2835,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pendingWorkAcrossCryptoBackendCompatibleVersionOrCloseAndPollUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2844,7 +2844,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2853,7 +2853,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn dueDeadlineAcrossCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         out: []EndpointPolledDatagramResult,
@@ -2864,7 +2864,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = out;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2873,7 +2873,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn dueDeadlineAcrossCryptoBackendCompatibleVersionOrCloseAndPollUnified(
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
-        now_millis: i64,
+        now_nanos: i64,
         crypto_backend: CryptoBackend,
         scratch: []u8,
         opts: lifecycle_opts.UnifiedReceiveOptions,
@@ -2882,7 +2882,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = allocator;
-        _ = now_millis;
+        _ = now_nanos;
         _ = self;
         return .{};
     }
@@ -2892,7 +2892,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2903,7 +2903,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Handshake with crypto backend, compatible version, OrClose, and poll.
@@ -2911,7 +2911,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2920,7 +2920,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_millis, datagram);
+        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified short with crypto backend, compatible version, OrClose, and drain.
@@ -2929,7 +2929,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2940,7 +2940,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified short with crypto backend, compatible version, OrClose, and poll.
@@ -2949,7 +2949,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2958,7 +2958,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified Initial with crypto backend, compatible version, OrClose, and drain.
@@ -2966,7 +2966,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2977,7 +2977,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Initial with crypto backend, compatible version, OrClose, and poll.
@@ -2985,7 +2985,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -2994,7 +2994,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     pub fn processRoutedProtectedLongDatagramWithInstalledHandshakeKeys(
@@ -3002,7 +3002,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         datagram: []const u8,
     ) EndpointProtectedInitialError!endpoint.RouteResult {
@@ -3020,7 +3020,7 @@ pub const EndpointConnectionLifecycle = struct {
             .server => initial_secrets.client,
         };
         _ = connection.processProtectedLongDatagramWithInstalledHandshakeKeys(
-            now_millis,
+            now_nanos,
             initial_keys,
             datagram,
         ) catch |err| {
@@ -3046,7 +3046,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3057,7 +3057,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified routed Handshake with crypto backend, compatible version, OrClose, and poll.
@@ -3066,7 +3066,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3075,7 +3075,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_millis, datagram);
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
     }
 
     /// Unified routed long with crypto backend, OrClose, and drain.
@@ -3084,7 +3084,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3098,7 +3098,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = out;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = path;
@@ -3112,7 +3112,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3124,7 +3124,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = path;
@@ -3137,7 +3137,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3151,7 +3151,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = out;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = self;
@@ -3162,7 +3162,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3174,7 +3174,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = self;
@@ -3185,7 +3185,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3196,7 +3196,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Initial with crypto backend in space, OrClose, and poll.
@@ -3204,7 +3204,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3213,7 +3213,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Initial with crypto backend in space, compatible version, OrClose, and drain.
@@ -3221,7 +3221,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3232,7 +3232,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     /// Unified Initial with crypto backend in space, compatible version, OrClose, and poll.
@@ -3240,7 +3240,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
         scratch: []u8,
@@ -3249,7 +3249,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_millis, datagram);
+        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
     }
 
     pub fn processRetryValidatedProtectedInitialDatagram(
@@ -3257,7 +3257,7 @@ pub const EndpointConnectionLifecycle = struct {
         policy: *endpoint.AddressValidationPolicy,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         path: endpoint.Udp4Tuple,
         datagram: []const u8,
         supported_versions: []const packet.Version,
@@ -3288,7 +3288,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = try policy.validateTokenForPathWithoutReplayForVersion(
             .retry,
             initial_accept.version,
-            now_millis,
+            now_nanos,
             path,
             initial_accept.token,
         );
@@ -3296,7 +3296,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             initial_accept.original_destination_connection_id,
             datagram,
         );
@@ -3305,7 +3305,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             initial_accept.version,
-            now_millis,
+            now_nanos,
             path,
             initial_accept.token,
         );
@@ -3328,7 +3328,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3342,7 +3342,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = out;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = path;
@@ -3356,7 +3356,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         crypto_backend: CryptoBackend,
@@ -3368,7 +3368,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = scratch;
         _ = space;
         _ = datagram;
-        _ = now_millis;
+        _ = now_nanos;
         _ = connection;
         _ = connection_id;
         _ = path;
@@ -3382,7 +3382,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3394,7 +3394,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with crypto backend across spaces, compatible version, OrClose, and poll.
@@ -3403,7 +3403,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3413,7 +3413,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend in space, OrClose, and drain.
@@ -3421,7 +3421,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3433,7 +3433,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend in space, OrClose, and poll.
@@ -3441,7 +3441,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3451,7 +3451,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend in space, compatible version, OrClose, and drain.
@@ -3459,7 +3459,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3471,7 +3471,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend in space, compatible version, OrClose, and poll.
@@ -3479,7 +3479,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3489,7 +3489,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend across spaces, OrClose, and drain.
@@ -3497,7 +3497,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3509,7 +3509,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend across spaces, OrClose, and poll.
@@ -3517,7 +3517,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3527,7 +3527,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend across spaces, compatible version, OrClose, and drain.
@@ -3535,7 +3535,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3547,7 +3547,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed across connections with crypto backend across spaces, compatible version, OrClose, and poll.
@@ -3555,7 +3555,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         allocator: std.mem.Allocator,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3565,7 +3565,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend in space, OrClose, and drain.
@@ -3574,7 +3574,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3586,7 +3586,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend in space, OrClose, and poll.
@@ -3595,7 +3595,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3605,7 +3605,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and drain.
@@ -3614,7 +3614,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3626,7 +3626,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = crypto_backend;
         _ = scratch;
         _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
@@ -3635,7 +3635,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         crypto_backend: CryptoBackend,
@@ -3645,7 +3645,7 @@ pub const EndpointConnectionLifecycle = struct {
         _ = opts;
         _ = crypto_backend;
         _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_millis, datagram, options);
+        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
     }
 
     pub fn statelessResetTokenForDatagram(
@@ -3715,11 +3715,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!bool {
         if (datagram.len == 0 or packet.parseHeaderForm(datagram[0]) != .short) return false;
-        if (connection.processStatelessResetDatagram(now_millis, datagram) == null) return false;
+        if (connection.processStatelessResetDatagram(now_nanos, datagram) == null) return false;
         try self.armRecoveryTimerFromConnection(connection_id, connection);
         return true;
     }
@@ -3737,7 +3737,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
@@ -3751,26 +3751,26 @@ pub const EndpointConnectionLifecycle = struct {
         return switch (action) {
             .routed => |route| routed: {
                 if (route.connection_id != connection_id) return error.InvalidPacket;
-                if (try self.processRoutedStatelessResetDatagram(connection_id, connection, now_millis, datagram)) {
+                if (try self.processRoutedStatelessResetDatagram(connection_id, connection, now_nanos, datagram)) {
                     break :routed .dropped;
                 }
                 switch (options.space) {
                     .handshake => try self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
                         connection_id,
                         connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .zero_rtt => try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
                         connection_id,
                         connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .application => try self.processProtectedShortDatagramWithInstalledKeysOrClose(
                         connection_id,
                         connection,
-                        now_millis,
+                        now_nanos,
                         route.destination_connection_id.asSlice().len,
                         datagram,
                     ),
@@ -3799,7 +3799,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
         unified_opts: lifecycle_opts.FeedInstalledKeyOptions,
@@ -3809,7 +3809,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             options,
         );
@@ -3831,7 +3831,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyPathUpdateResult {
@@ -3845,20 +3845,20 @@ pub const EndpointConnectionLifecycle = struct {
         return switch (action) {
             .routed => |route| routed: {
                 if (route.connection_id != connection_id) return error.InvalidPacket;
-                if (try self.processRoutedStatelessResetDatagram(connection_id, connection, now_millis, datagram)) {
+                if (try self.processRoutedStatelessResetDatagram(connection_id, connection, now_nanos, datagram)) {
                     break :routed .{ .feed = .dropped };
                 }
                 switch (options.space) {
                     .handshake => try self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
                         connection_id,
                         connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .zero_rtt => try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
                         connection_id,
                         connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .application => {
@@ -3866,7 +3866,7 @@ pub const EndpointConnectionLifecycle = struct {
                         try self.processProtectedShortDatagramWithInstalledKeysOrClose(
                             connection_id,
                             connection,
-                            now_millis,
+                            now_nanos,
                             route.destination_connection_id.asSlice().len,
                             datagram,
                         );
@@ -3917,7 +3917,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -3926,7 +3926,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         ) catch |err| {
@@ -3935,7 +3935,7 @@ pub const EndpointConnectionLifecycle = struct {
                 try self.pollDatagram(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     poll_options,
                 )
             else
@@ -3973,7 +3973,7 @@ pub const EndpointConnectionLifecycle = struct {
         const polled = try self.pollDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         );
         const polled_result: ?EndpointPolledDatagramResult = if (polled) |protected_datagram|
@@ -4003,7 +4003,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
@@ -4019,26 +4019,26 @@ pub const EndpointConnectionLifecycle = struct {
                 const view = for (connections) |candidate| {
                     if (candidate.connection_id == route.connection_id) break candidate;
                 } else return error.InvalidPacket;
-                if (try self.processRoutedStatelessResetDatagram(view.connection_id, view.connection, now_millis, datagram)) {
+                if (try self.processRoutedStatelessResetDatagram(view.connection_id, view.connection, now_nanos, datagram)) {
                     break :routed .dropped;
                 }
                 switch (options.space) {
                     .handshake => try self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
                         view.connection_id,
                         view.connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .zero_rtt => try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
                         view.connection_id,
                         view.connection,
-                        now_millis,
+                        now_nanos,
                         datagram,
                     ),
                     .application => try self.processProtectedShortDatagramWithInstalledKeysOrClose(
                         view.connection_id,
                         view.connection,
-                        now_millis,
+                        now_nanos,
                         route.destination_connection_id.asSlice().len,
                         datagram,
                     ),
@@ -4063,14 +4063,14 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramNextDeadlineResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -4089,7 +4089,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramNextDeadlineResult {
@@ -4105,7 +4105,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -4121,20 +4121,20 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkNextDeadlineResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .feed = feed,
@@ -4152,7 +4152,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkNextDeadlineResult {
@@ -4168,7 +4168,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -4184,7 +4184,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4193,13 +4193,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4228,7 +4228,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4253,7 +4253,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -4276,7 +4276,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4285,13 +4285,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4321,7 +4321,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4346,7 +4346,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -4369,7 +4369,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4378,13 +4378,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4415,7 +4415,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4440,7 +4440,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -4458,7 +4458,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4467,13 +4467,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4502,7 +4502,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4527,7 +4527,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -4545,7 +4545,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4555,13 +4555,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4591,7 +4591,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4601,13 +4601,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4637,7 +4637,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4663,7 +4663,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -4683,7 +4683,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4693,13 +4693,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4729,7 +4729,7 @@ pub const EndpointConnectionLifecycle = struct {
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4739,13 +4739,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveSweepResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4775,7 +4775,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -4801,7 +4801,7 @@ pub const EndpointConnectionLifecycle = struct {
             &receive_connections,
             &deadline_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -4818,7 +4818,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4830,13 +4830,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4846,7 +4846,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                 ),
                 else => {},
@@ -4869,7 +4869,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4897,7 +4897,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -4916,7 +4916,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4927,13 +4927,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -4943,7 +4943,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -4965,7 +4965,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -4987,7 +4987,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5005,7 +5005,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5017,13 +5017,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5033,7 +5033,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                 ),
                 else => {},
@@ -5056,7 +5056,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5084,7 +5084,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5103,7 +5103,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5114,13 +5114,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5130,7 +5130,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -5152,7 +5152,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5174,7 +5174,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5192,7 +5192,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5205,13 +5205,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5221,7 +5221,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -5245,7 +5245,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5274,7 +5274,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5294,7 +5294,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5306,13 +5306,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5322,7 +5322,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -5345,7 +5345,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5368,7 +5368,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5387,7 +5387,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5400,13 +5400,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5416,7 +5416,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -5440,7 +5440,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5469,7 +5469,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5489,7 +5489,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5501,13 +5501,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5517,7 +5517,7 @@ pub const EndpointConnectionLifecycle = struct {
                     drive_views,
                     compatibilities,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -5540,7 +5540,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5551,13 +5551,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5566,7 +5566,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                 ),
                 else => {},
@@ -5592,7 +5592,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -5603,13 +5603,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5618,7 +5618,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                 ),
                 else => {},
@@ -5642,7 +5642,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -5669,7 +5669,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -5688,7 +5688,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -5698,13 +5698,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5713,7 +5713,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -5735,7 +5735,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -5745,13 +5745,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5760,7 +5760,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -5783,7 +5783,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -5809,7 +5809,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -5827,7 +5827,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5854,7 +5854,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5872,7 +5872,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5882,13 +5882,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -5897,7 +5897,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -5919,7 +5919,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5940,7 +5940,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -5958,7 +5958,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -5981,7 +5981,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6001,7 +6001,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6012,13 +6012,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6027,7 +6027,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                 ),
                 else => {},
@@ -6049,7 +6049,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6076,7 +6076,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6094,7 +6094,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6104,13 +6104,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6119,7 +6119,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -6140,7 +6140,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6161,7 +6161,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6179,7 +6179,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6191,13 +6191,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6206,7 +6206,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -6231,7 +6231,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6259,7 +6259,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -6279,7 +6279,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6290,13 +6290,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6305,7 +6305,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -6329,7 +6329,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6356,7 +6356,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -6376,7 +6376,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6387,13 +6387,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6402,7 +6402,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -6426,7 +6426,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6453,7 +6453,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -6473,7 +6473,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6485,13 +6485,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6500,7 +6500,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_spaces,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -6525,7 +6525,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_spaces: []const PacketNumberSpace,
@@ -6553,7 +6553,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_spaces,
@@ -6572,7 +6572,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6584,13 +6584,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6599,7 +6599,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -6622,7 +6622,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6634,13 +6634,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6649,7 +6649,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     poll_space,
                     out,
                 ),
@@ -6672,7 +6672,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6700,7 +6700,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6719,7 +6719,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6730,13 +6730,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6745,7 +6745,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -6767,7 +6767,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6789,7 +6789,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6808,7 +6808,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6836,7 +6836,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6855,7 +6855,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6866,13 +6866,13 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
@@ -6881,7 +6881,7 @@ pub const EndpointConnectionLifecycle = struct {
                     backend_space,
                     drive_views,
                     poll_views,
-                    now_millis,
+                    now_nanos,
                     out,
                 ),
                 else => {},
@@ -6904,7 +6904,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -6926,7 +6926,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -6947,7 +6947,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionPollView,
@@ -6956,20 +6956,20 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .feed = feed,
             .pending_work = pending_work,
             .datagram = try self.pollDatagramAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -6984,7 +6984,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -6992,20 +6992,20 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .feed = feed,
             .pending_work = pending_work,
             .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -7020,7 +7020,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -7029,14 +7029,14 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWork(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
@@ -7059,7 +7059,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_sweep,
             .datagram = try self.pollDatagramAcrossConnections(
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -7075,7 +7075,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7084,14 +7084,14 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWork(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
@@ -7108,7 +7108,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_sweep,
             .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
@@ -7125,7 +7125,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionPollView,
@@ -7135,20 +7135,20 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .feed = feed,
             .pending_work = pending_work,
             .drain = self.drainDatagramsAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -7164,7 +7164,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7173,20 +7173,20 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
             receive_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .feed = feed,
             .pending_work = pending_work,
             .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -7202,7 +7202,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -7212,14 +7212,14 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWork(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
@@ -7242,7 +7242,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_sweep,
             .drain = self.drainDatagramsAcrossConnections(
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -7259,7 +7259,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7269,14 +7269,14 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
         const pending_work = try self.processPendingWork(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
@@ -7293,7 +7293,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_sweep,
             .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -7310,7 +7310,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7320,7 +7320,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7346,7 +7346,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7356,7 +7356,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7380,7 +7380,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7404,7 +7404,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -7422,7 +7422,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionPollView,
@@ -7431,7 +7431,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7443,7 +7443,7 @@ pub const EndpointConnectionLifecycle = struct {
             .feed = feed,
             .datagram = try self.pollDatagramAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -7459,7 +7459,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7467,7 +7467,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7479,7 +7479,7 @@ pub const EndpointConnectionLifecycle = struct {
             .feed = feed,
             .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -7495,7 +7495,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -7513,7 +7513,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             &poll_views,
@@ -7530,7 +7530,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7542,7 +7542,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             poll_views,
@@ -7559,7 +7559,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionPollView,
@@ -7569,7 +7569,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7581,7 +7581,7 @@ pub const EndpointConnectionLifecycle = struct {
             .feed = feed,
             .drain = self.drainDatagramsAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -7597,7 +7597,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7606,7 +7606,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7618,7 +7618,7 @@ pub const EndpointConnectionLifecycle = struct {
             .feed = feed,
             .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -7636,7 +7636,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -7655,7 +7655,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             &poll_views,
@@ -7673,7 +7673,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -7686,7 +7686,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             poll_views,
@@ -7705,7 +7705,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7716,7 +7716,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7730,7 +7730,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -7745,7 +7745,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7755,7 +7755,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7769,7 +7769,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -7785,7 +7785,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7812,7 +7812,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -7831,7 +7831,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7852,7 +7852,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -7871,7 +7871,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7883,7 +7883,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7897,7 +7897,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -7913,7 +7913,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7924,7 +7924,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -7938,7 +7938,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -7956,7 +7956,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -7984,7 +7984,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8004,7 +8004,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8026,7 +8026,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8044,7 +8044,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8055,7 +8055,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8069,7 +8069,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -8084,7 +8084,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8094,7 +8094,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8108,7 +8108,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -8123,7 +8123,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8150,7 +8150,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8169,7 +8169,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8190,7 +8190,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8207,7 +8207,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8219,7 +8219,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8233,7 +8233,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -8249,7 +8249,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8260,7 +8260,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8274,7 +8274,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -8292,7 +8292,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8320,7 +8320,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8340,7 +8340,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8362,7 +8362,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8383,7 +8383,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8394,7 +8394,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8419,7 +8419,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8444,7 +8444,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8462,7 +8462,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8473,7 +8473,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8498,7 +8498,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8523,7 +8523,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8538,7 +8538,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8550,7 +8550,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8565,7 +8565,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -8580,7 +8580,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8591,7 +8591,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8606,7 +8606,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -8621,7 +8621,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8649,7 +8649,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8666,7 +8666,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8688,7 +8688,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8703,7 +8703,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8716,7 +8716,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8731,7 +8731,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -8747,7 +8747,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8759,7 +8759,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8774,7 +8774,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -8791,7 +8791,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8820,7 +8820,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8841,7 +8841,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8864,7 +8864,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -8880,7 +8880,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8892,7 +8892,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8907,7 +8907,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -8922,7 +8922,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8933,7 +8933,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -8948,7 +8948,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
@@ -8963,7 +8963,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -8991,7 +8991,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -9011,7 +9011,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -9033,7 +9033,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -9048,7 +9048,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -9061,7 +9061,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -9076,7 +9076,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -9092,7 +9092,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -9104,7 +9104,7 @@ pub const EndpointConnectionLifecycle = struct {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
             receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
         );
@@ -9119,7 +9119,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
@@ -9137,7 +9137,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -9166,7 +9166,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -9187,7 +9187,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
         backend_space: PacketNumberSpace,
@@ -9210,7 +9210,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             &receive_connections,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             feed_options,
             backend_space,
@@ -9232,13 +9232,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         local_initial_source_connection_id: []const u8,
         datagram: []const u8,
     ) Error!?EndpointVersionNegotiationResult {
         const selected = (connection.processVersionNegotiationDatagram(
-            now_millis,
+            now_nanos,
             original_destination_connection_id,
             local_initial_source_connection_id,
             datagram,
@@ -9271,7 +9271,7 @@ pub const EndpointConnectionLifecycle = struct {
         old_connection_id: u64,
         followup_connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         old_local_initial_source_connection_id: []const u8,
         followup_local_initial_source_connection_id: []const u8,
@@ -9280,7 +9280,7 @@ pub const EndpointConnectionLifecycle = struct {
         options: endpoint.ClientInitialRouteOptions,
     ) EndpointVersionNegotiationError!?EndpointVersionNegotiationFollowupResult {
         const selected = (connection.processVersionNegotiationDatagram(
-            now_millis,
+            now_nanos,
             original_destination_connection_id,
             old_local_initial_source_connection_id,
             datagram,
@@ -9339,7 +9339,7 @@ pub const EndpointConnectionLifecycle = struct {
         old_connection_id: u64,
         followup_connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         old_local_initial_source_connection_id: []const u8,
         followup_local_initial_source_connection_id: []const u8,
@@ -9351,7 +9351,7 @@ pub const EndpointConnectionLifecycle = struct {
             old_connection_id,
             followup_connection_id,
             connection,
-            now_millis,
+            now_nanos,
             original_destination_connection_id,
             old_local_initial_source_connection_id,
             followup_local_initial_source_connection_id,
@@ -9391,7 +9391,7 @@ pub const EndpointConnectionLifecycle = struct {
         old_connection_id: u64,
         followup_connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         old_local_initial_source_connection_id: []const u8,
         followup_local_initial_source_connection_id: []const u8,
@@ -9407,7 +9407,7 @@ pub const EndpointConnectionLifecycle = struct {
             old_connection_id,
             followup_connection_id,
             connection,
-            now_millis,
+            now_nanos,
             original_destination_connection_id,
             old_local_initial_source_connection_id,
             followup_local_initial_source_connection_id,
@@ -9427,7 +9427,7 @@ pub const EndpointConnectionLifecycle = struct {
             followup_connection_id,
             &handoff.followup_connection,
             .initial,
-            now_millis,
+            now_nanos,
             original_destination_connection_id,
             followup_local_initial_source_connection_id,
             initial_token,
@@ -9478,20 +9478,20 @@ pub const EndpointConnectionLifecycle = struct {
         var next: ?EndpointConnectionDeadline = null;
 
         if (state == .active) {
-            if (connection.idleTimeoutDeadlineMillis()) |deadline| {
+            if (connection.idleTimeoutDeadline()) |deadline| {
                 next = .{
                     .connection_id = connection_id,
-                    .deadline_millis = deadline,
+                    .deadline_nanos = deadline,
                     .kind = .idle_timeout,
                 };
             }
         }
         if (state == .closing or state == .draining) {
-            if (connection.closeDeadlineMillis()) |deadline| {
-                if (next == null or deadline < next.?.deadline_millis) {
+            if (connection.closeDeadline()) |deadline| {
+                if (next == null or deadline < next.?.deadline_nanos) {
                     next = .{
                         .connection_id = connection_id,
-                        .deadline_millis = deadline,
+                        .deadline_nanos = deadline,
                         .kind = .close_timeout,
                     };
                 }
@@ -9499,20 +9499,20 @@ pub const EndpointConnectionLifecycle = struct {
         }
         if (state == .active) {
             if (self.recovery_timers.deadlineForConnection(connection_id)) |deadline| {
-                if (next == null or deadline.timer.deadline_millis < next.?.deadline_millis) {
+                if (next == null or deadline.timer.deadline_nanos < next.?.deadline_nanos) {
                     next = .{
                         .connection_id = connection_id,
-                        .deadline_millis = deadline.timer.deadline_millis,
+                        .deadline_nanos = deadline.timer.deadline_nanos,
                         .kind = .recovery,
                         .recovery = deadline.timer,
                     };
                 }
             }
-            if (connection.oneRttKeyDiscardDeadlineMillis()) |deadline| {
-                if (next == null or deadline < next.?.deadline_millis) {
+            if (connection.oneRttKeyDiscardDeadline()) |deadline| {
+                if (next == null or deadline < next.?.deadline_nanos) {
                     next = .{
                         .connection_id = connection_id,
-                        .deadline_millis = deadline,
+                        .deadline_nanos = deadline,
                         .kind = .key_discard,
                     };
                 }
@@ -9535,7 +9535,7 @@ pub const EndpointConnectionLifecycle = struct {
         var next: ?EndpointConnectionDeadline = null;
         for (connections) |view| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (next == null or candidate.deadline_millis < next.?.deadline_millis) {
+            if (next == null or candidate.deadline_nanos < next.?.deadline_nanos) {
                 next = candidate;
             }
         }
@@ -9549,7 +9549,7 @@ pub const EndpointConnectionLifecycle = struct {
         var next: ?EndpointConnectionDeadline = null;
         for (connections) |view| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (next == null or candidate.deadline_millis < next.?.deadline_millis) {
+            if (next == null or candidate.deadline_nanos < next.?.deadline_nanos) {
                 next = candidate;
             }
         }
@@ -9563,7 +9563,7 @@ pub const EndpointConnectionLifecycle = struct {
         var next: ?EndpointConnectionDeadline = null;
         for (connections) |view| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (next == null or candidate.deadline_millis < next.?.deadline_millis) {
+            if (next == null or candidate.deadline_nanos < next.?.deadline_nanos) {
                 next = candidate;
             }
         }
@@ -9577,7 +9577,7 @@ pub const EndpointConnectionLifecycle = struct {
         var next: ?EndpointConnectionDeadline = null;
         for (connections) |view| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (next == null or candidate.deadline_millis < next.?.deadline_millis) {
+            if (next == null or candidate.deadline_nanos < next.?.deadline_nanos) {
                 next = candidate;
             }
         }
@@ -9672,7 +9672,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -9697,7 +9697,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             poll_space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -9730,7 +9730,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -9747,7 +9747,7 @@ pub const EndpointConnectionLifecycle = struct {
             const datagram = try self.pollProtectedLongDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -9774,7 +9774,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             poll_space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -9809,7 +9809,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         drain_space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -9835,7 +9835,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             drain_space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -9866,7 +9866,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         drain_space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -9886,7 +9886,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainProtectedLongDatagrams(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     dcid,
                     scid,
                     initial_token,
@@ -9908,7 +9908,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             drain_space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -10012,7 +10012,7 @@ pub const EndpointConnectionLifecycle = struct {
     fn pollDatagramAcrossConnectionsAfterBackendDrive(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
@@ -10020,7 +10020,7 @@ pub const EndpointConnectionLifecycle = struct {
             const datagram = try self.pollDatagram(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
                 .{
                     .space = space,
                     .destination_connection_id = view.destination_connection_id,
@@ -10040,7 +10040,7 @@ pub const EndpointConnectionLifecycle = struct {
     fn pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
             if (try self.skipBackendDriveOutputForDiscardedSpace(
@@ -10051,7 +10051,7 @@ pub const EndpointConnectionLifecycle = struct {
             const datagram = try self.pollDatagram(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
                 view.poll_options,
             );
             if (datagram) |bytes| {
@@ -10067,7 +10067,7 @@ pub const EndpointConnectionLifecycle = struct {
     fn drainDatagramsAcrossConnectionsAfterBackendDrive(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) EndpointDatagramDrainResult {
@@ -10075,7 +10075,7 @@ pub const EndpointConnectionLifecycle = struct {
         while (result.datagrams_written < out.len) {
             const polled = self.pollDatagramAcrossConnectionsAfterBackendDrive(
                 connections,
-                now_millis,
+                now_nanos,
                 space,
             ) catch |err| {
                 result.first_error = err;
@@ -10090,14 +10090,14 @@ pub const EndpointConnectionLifecycle = struct {
     fn drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) EndpointDatagramDrainResult {
         var result = EndpointDatagramDrainResult{};
         while (result.datagrams_written < out.len) {
             const polled = self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
                 connections,
-                now_millis,
+                now_nanos,
             ) catch |err| {
                 result.first_error = err;
                 return result;
@@ -10112,7 +10112,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
@@ -10120,7 +10120,7 @@ pub const EndpointConnectionLifecycle = struct {
             const matching_views = [_]EndpointConnectionPollView{view};
             return self.pollDatagramAcrossConnectionsAfterBackendDrive(
                 &matching_views,
-                now_millis,
+                now_nanos,
                 space,
             );
         }
@@ -10131,14 +10131,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
             if (view.connection_id != connection_id) continue;
             const matching_views = [_]EndpointConnectionInstalledKeyPollView{view};
             return self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
                 &matching_views,
-                now_millis,
+                now_nanos,
             );
         }
         return error.InvalidPacket;
@@ -10148,7 +10148,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointDatagramDrainResult {
@@ -10158,7 +10158,7 @@ pub const EndpointConnectionLifecycle = struct {
             const matching_views = [_]EndpointConnectionPollView{view};
             const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
                 &matching_views,
-                now_millis,
+                now_nanos,
                 space,
                 out,
             );
@@ -10174,7 +10174,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointDatagramDrainResult {
         for (connections) |view| {
@@ -10183,7 +10183,7 @@ pub const EndpointConnectionLifecycle = struct {
             const matching_views = [_]EndpointConnectionInstalledKeyPollView{view};
             const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
                 &matching_views,
-                now_millis,
+                now_nanos,
                 out,
             );
             if (drain.datagrams_written == 0) {
@@ -10384,7 +10384,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
@@ -10394,7 +10394,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10420,7 +10420,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
@@ -10430,7 +10430,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10456,7 +10456,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -10467,7 +10467,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -10494,7 +10494,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
             spaces,
@@ -10504,7 +10504,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -10528,7 +10528,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
@@ -10539,7 +10539,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10564,7 +10564,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
             spaces,
@@ -10574,7 +10574,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -10598,7 +10598,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
@@ -10608,7 +10608,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10633,7 +10633,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
@@ -10644,7 +10644,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10670,7 +10670,7 @@ pub const EndpointConnectionLifecycle = struct {
         spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -10681,7 +10681,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -10706,7 +10706,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
             space,
@@ -10716,7 +10716,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -10742,7 +10742,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -10761,7 +10761,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
         );
     }
@@ -10780,7 +10780,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
             .connection_id = connection_id,
@@ -10792,7 +10792,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             poll_views,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -10806,7 +10806,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -10817,7 +10817,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -10842,7 +10842,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
@@ -10853,7 +10853,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -10880,7 +10880,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -10900,7 +10900,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -10918,7 +10918,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -10931,7 +10931,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -11027,7 +11027,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
@@ -11045,7 +11045,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .datagram = try self.pollDatagramForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         poll_space,
                     ),
                     .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
@@ -11056,7 +11056,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -11081,7 +11081,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
@@ -11098,7 +11098,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                     ),
                     .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
                 };
@@ -11109,7 +11109,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -11134,7 +11134,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -11153,7 +11153,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
         );
     }
@@ -11170,7 +11170,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
             .connection_id = connection_id,
@@ -11182,7 +11182,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             poll_views,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -11196,7 +11196,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -11215,7 +11215,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         poll_space,
                         out,
                     ),
@@ -11227,7 +11227,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -11252,7 +11252,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
@@ -11270,7 +11270,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         out,
                     ),
                     .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
@@ -11282,7 +11282,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -11308,7 +11308,7 @@ pub const EndpointConnectionLifecycle = struct {
         space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -11328,7 +11328,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -11346,7 +11346,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -11359,7 +11359,7 @@ pub const EndpointConnectionLifecycle = struct {
             space,
             &drive_views,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -11556,7 +11556,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
@@ -11567,7 +11567,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -11590,7 +11590,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
             spaces,
@@ -11601,7 +11601,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -11625,7 +11625,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -11645,7 +11645,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
         );
     }
@@ -11661,7 +11661,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
             .connection_id = connection_id,
@@ -11674,7 +11674,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -11686,7 +11686,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -11698,7 +11698,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -11722,7 +11722,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
@@ -11734,7 +11734,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -11759,7 +11759,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -11780,7 +11780,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -11797,7 +11797,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -11811,7 +11811,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -11878,7 +11878,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
@@ -11889,7 +11889,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -11915,7 +11915,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
             space,
@@ -11926,7 +11926,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -11952,7 +11952,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -11972,7 +11972,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
         );
     }
@@ -11990,7 +11990,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
             .connection_id = connection_id,
@@ -12003,7 +12003,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -12014,7 +12014,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12026,7 +12026,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -12052,7 +12052,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
@@ -12064,7 +12064,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -12091,7 +12091,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12112,7 +12112,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -12131,7 +12131,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -12145,7 +12145,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -12322,7 +12322,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12342,7 +12342,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         poll_space,
                         out,
                     ),
@@ -12354,7 +12354,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -12378,7 +12378,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
@@ -12397,7 +12397,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         out,
                     ),
                     .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
@@ -12409,7 +12409,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -12434,7 +12434,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12455,7 +12455,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -12472,7 +12472,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -12486,7 +12486,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -12559,7 +12559,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
@@ -12578,7 +12578,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .datagram = try self.pollDatagramForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         poll_space,
                     ),
                     .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
@@ -12589,7 +12589,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -12615,7 +12615,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
@@ -12633,7 +12633,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                     ),
                     .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
                 };
@@ -12644,7 +12644,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
             &backend.progress,
@@ -12670,7 +12670,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -12690,7 +12690,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
         );
     }
@@ -12708,7 +12708,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
             .connection_id = connection_id,
@@ -12721,7 +12721,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -12736,7 +12736,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12756,7 +12756,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         poll_space,
                         out,
                     ),
@@ -12768,7 +12768,7 @@ pub const EndpointConnectionLifecycle = struct {
         const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             poll_space,
             out,
         );
@@ -12794,7 +12794,7 @@ pub const EndpointConnectionLifecycle = struct {
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         var backend = EndpointCryptoBackendDriveSweepResult{};
@@ -12813,7 +12813,7 @@ pub const EndpointConnectionLifecycle = struct {
                     .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
                         view.connection_id,
                         poll_views,
-                        now_millis,
+                        now_nanos,
                         out,
                     ),
                     .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
@@ -12825,7 +12825,7 @@ pub const EndpointConnectionLifecycle = struct {
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
@@ -12852,7 +12852,7 @@ pub const EndpointConnectionLifecycle = struct {
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
@@ -12873,7 +12873,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             &poll_views,
-            now_millis,
+            now_nanos,
             poll_options.space,
             out,
         );
@@ -12892,7 +12892,7 @@ pub const EndpointConnectionLifecycle = struct {
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -12906,7 +12906,7 @@ pub const EndpointConnectionLifecycle = struct {
             &drive_views,
             compatibilities,
             poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -12916,9 +12916,9 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointLossDetectionTimerDeadline {
-        return self.recovery_timers.serviceConnection(connection_id, connection, now_millis);
+        return self.recovery_timers.serviceConnection(connection_id, connection, now_nanos);
     }
 
     /// Process one pending-work pass for a caller-owned connection.
@@ -12930,30 +12930,30 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointPendingWorkResult {
         var result = EndpointPendingWorkResult{};
 
         result.idle_retired = try self.checkIdleTimeoutsAndRetireConnection(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         if (result.idle_retired != null) return result;
 
         result.close_retired = try self.checkCloseTimeoutsAndRetireConnection(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         if (result.close_retired != null) return result;
 
-        result.key_discard_serviced = connection.discardExpiredOneRttKeys(now_millis);
+        result.key_discard_serviced = connection.discardExpiredOneRttKeys(now_nanos);
 
         result.recovery_serviced = try self.serviceRecoveryTimer(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         );
         return result;
     }
@@ -12967,14 +12967,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnections(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointPendingWorkSweepResult {
         var sweep = EndpointPendingWorkSweepResult{};
         for (connections) |view| {
             const pending = try self.processPendingWork(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
             );
             if (pending.idle_retired != null) {
                 sweep.idle_retired_count += 1;
@@ -13002,11 +13002,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointPendingWorkNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13024,9 +13024,9 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!EndpointPendingWorkNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         return .{
             .pending_work = pendingWorkSweepFromSingle(pending_work),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -13043,13 +13043,13 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_views: []const EndpointConnectionPollView,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointPendingWorkSweepDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         if (pending_work.recovery_serviced_count == 0) {
             return .{
@@ -13062,7 +13062,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .datagram = try self.pollDatagramAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13077,12 +13077,12 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkSweepDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         if (pending_work.recovery_serviced_count == 0) {
             return .{
@@ -13095,7 +13095,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
         };
@@ -13110,14 +13110,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_views: []const EndpointConnectionPollView,
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkSweepDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         if (pending_work.recovery_serviced_count == 0) {
             return .{
@@ -13131,7 +13131,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .drain = self.drainDatagramsAcrossConnections(
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -13146,13 +13146,13 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkSweepDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         if (pending_work.recovery_serviced_count == 0) {
             return .{
@@ -13166,7 +13166,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13182,14 +13182,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13209,14 +13209,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13239,14 +13239,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13268,14 +13268,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13296,7 +13296,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13304,7 +13304,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13312,7 +13312,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13327,14 +13327,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13342,7 +13342,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
         };
@@ -13356,7 +13356,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13364,7 +13364,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13372,7 +13372,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13387,14 +13387,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13402,7 +13402,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
         };
@@ -13416,7 +13416,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13425,7 +13425,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13433,7 +13433,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -13448,7 +13448,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -13456,7 +13456,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13464,7 +13464,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13479,7 +13479,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13488,7 +13488,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13496,7 +13496,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -13512,7 +13512,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -13520,7 +13520,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13528,7 +13528,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
@@ -13543,7 +13543,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13551,7 +13551,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13559,7 +13559,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -13573,14 +13573,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13588,7 +13588,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -13598,7 +13598,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -13607,7 +13607,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13615,7 +13615,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -13629,7 +13629,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -13637,7 +13637,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13645,7 +13645,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -13659,7 +13659,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13667,7 +13667,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13688,7 +13688,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13696,7 +13696,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13717,7 +13717,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13726,7 +13726,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13735,7 +13735,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -13749,7 +13749,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13757,7 +13757,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13766,7 +13766,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -13775,7 +13775,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13785,7 +13785,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13794,7 +13794,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -13808,7 +13808,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13817,7 +13817,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13826,7 +13826,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -13837,7 +13837,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13846,7 +13846,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13855,7 +13855,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -13866,7 +13866,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13874,7 +13874,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13883,7 +13883,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -13895,7 +13895,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13903,7 +13903,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13923,7 +13923,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13932,7 +13932,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13941,7 +13941,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -13955,7 +13955,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13963,7 +13963,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -13972,7 +13972,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -13981,7 +13981,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -13991,7 +13991,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -14000,7 +14000,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -14014,7 +14014,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         pending_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -14023,7 +14023,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
         const pending_work = try self.processPendingWorkAcrossConnections(
             pending_connections,
-            now_millis,
+            now_nanos,
         );
         return .{
             .pending_work = pending_work,
@@ -14032,7 +14032,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -14056,12 +14056,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14096,12 +14096,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14135,13 +14135,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14175,13 +14175,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14217,13 +14217,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
     ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14257,13 +14257,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14293,7 +14293,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14309,14 +14309,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14346,7 +14346,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14362,13 +14362,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14398,7 +14398,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14413,14 +14413,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14450,7 +14450,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14468,14 +14468,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14505,7 +14505,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14521,13 +14521,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14557,7 +14557,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14572,13 +14572,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14608,7 +14608,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14623,14 +14623,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14660,7 +14660,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14677,7 +14677,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -14685,7 +14685,7 @@ pub const EndpointConnectionLifecycle = struct {
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14716,7 +14716,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14731,14 +14731,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14769,7 +14769,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14785,7 +14785,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -14793,7 +14793,7 @@ pub const EndpointConnectionLifecycle = struct {
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14824,7 +14824,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -14839,14 +14839,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14877,7 +14877,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -14893,13 +14893,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14920,7 +14920,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -14933,14 +14933,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -14961,7 +14961,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -14976,13 +14976,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15006,7 +15006,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -15020,14 +15020,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15051,7 +15051,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -15065,13 +15065,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15092,7 +15092,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -15105,14 +15105,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15133,7 +15133,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -15148,13 +15148,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15178,7 +15178,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -15192,14 +15192,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15223,7 +15223,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -15234,14 +15234,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15263,7 +15263,7 @@ pub const EndpointConnectionLifecycle = struct {
                 scratch,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -15276,7 +15276,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15284,7 +15284,7 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15306,7 +15306,7 @@ pub const EndpointConnectionLifecycle = struct {
                 scratch,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -15319,14 +15319,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15348,7 +15348,7 @@ pub const EndpointConnectionLifecycle = struct {
                 scratch,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -15361,7 +15361,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15369,7 +15369,7 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const pending_sweep = pendingWorkSweepFromSingle(pending_work);
         if (pending_work.idle_retired != null or pending_work.close_retired != null) {
             return .{
@@ -15391,7 +15391,7 @@ pub const EndpointConnectionLifecycle = struct {
                 scratch,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -15407,10 +15407,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const serviced = pending_work.recovery_serviced orelse return .{
             .pending_work = pending_work,
             .datagram = null,
@@ -15420,7 +15420,7 @@ pub const EndpointConnectionLifecycle = struct {
 
         return .{
             .pending_work = pending_work,
-            .datagram = try self.pollDatagram(connection_id, connection, now_millis, options),
+            .datagram = try self.pollDatagram(connection_id, connection, now_nanos, options),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
     }
@@ -15435,10 +15435,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointPendingWorkDatagramResult {
-        return self.processPendingWorkAndPollDatagram(connection_id, connection, now_millis, options);
+        return self.processPendingWorkAndPollDatagram(connection_id, connection, now_nanos, options);
     }
 
     /// Process pending work and drain installed-key datagrams caused by recovery.
@@ -15450,11 +15450,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_millis);
+        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
         const serviced = pending_work.recovery_serviced orelse return .{
             .pending_work = pending_work,
             .drain = .{},
@@ -15472,7 +15472,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .drain = self.drainDatagramsAcrossConnections(
                 &poll_views,
-                now_millis,
+                now_nanos,
                 options.space,
                 out,
             ),
@@ -15488,11 +15488,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointPendingWorkDatagramDrainResult {
-        return self.processPendingWorkAndDrainDatagrams(connection_id, connection, now_millis, options, out);
+        return self.processPendingWorkAndDrainDatagrams(connection_id, connection, now_nanos, options, out);
     }
 
     fn installedKeyOptionsMatchRecoveryDeadline(
@@ -15514,22 +15514,22 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!?EndpointDueWorkDatagramResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         const pending_datagram = if (deadline.kind == .recovery) pending: {
             if (!installedKeyOptionsMatchRecoveryDeadline(deadline, options)) return error.InvalidPacket;
             break :pending try self.processPendingWorkAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options,
             );
         } else EndpointPendingWorkDatagramResult{
-            .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+            .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
             .datagram = null,
         };
 
@@ -15550,12 +15550,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!?EndpointDueWorkDatagramDrainResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         const pending_drain = if (deadline.kind == .recovery) pending: {
             if (!installedKeyOptionsMatchRecoveryDeadline(deadline, options)) return error.InvalidPacket;
@@ -15563,12 +15563,12 @@ pub const EndpointConnectionLifecycle = struct {
             break :pending try self.processPendingWorkAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options,
                 out,
             );
         } else EndpointPendingWorkDatagramDrainResult{
-            .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+            .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
             .drain = .{},
         };
 
@@ -15591,21 +15591,21 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         destination_connection_id: []const u8,
         source_connection_id: []const u8,
     ) Error!?EndpointDueWorkDatagramResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         const pending_datagram = if (deadline.installedKeyPollOptions(
             destination_connection_id,
             source_connection_id,
         )) |options|
-            try self.processPendingWorkAndPollDatagram(connection_id, connection, now_millis, options)
+            try self.processPendingWorkAndPollDatagram(connection_id, connection, now_nanos, options)
         else
             EndpointPendingWorkDatagramResult{
-                .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+                .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
                 .datagram = null,
             };
 
@@ -15626,13 +15626,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         destination_connection_id: []const u8,
         source_connection_id: []const u8,
         out: []EndpointPolledDatagramResult,
     ) Error!?EndpointDueWorkDatagramDrainResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         const pending_drain = if (deadline.installedKeyPollOptions(
             destination_connection_id,
@@ -15642,12 +15642,12 @@ pub const EndpointConnectionLifecycle = struct {
             break :pending try self.processPendingWorkAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options,
                 out,
             );
         } else EndpointPendingWorkDatagramDrainResult{
-            .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+            .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
             .drain = .{},
         };
 
@@ -15669,17 +15669,17 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointDueWorkNextDeadlineResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         return .{
             .deadline = deadline,
             .pending_work = try self.processPendingWork(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
@@ -15695,14 +15695,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointDueWorkNextDeadlineResult {
         var selected_index: ?usize = null;
         var selected_deadline: ?EndpointConnectionDeadline = null;
         for (due_connections, 0..) |view, index| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (candidate.deadline_millis > now_millis) continue;
-            if (selected_deadline == null or candidate.deadline_millis < selected_deadline.?.deadline_millis) {
+            if (candidate.deadline_nanos > now_nanos) continue;
+            if (selected_deadline == null or candidate.deadline_nanos < selected_deadline.?.deadline_nanos) {
                 selected_index = index;
                 selected_deadline = candidate;
             }
@@ -15715,7 +15715,7 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = try self.processPendingWork(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadlineAcrossConnections(deadline_connections),
         };
@@ -15732,7 +15732,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15740,7 +15740,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndSelectNextDeadline(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15770,7 +15770,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15778,7 +15778,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndSelectNextDeadline(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15806,7 +15806,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15815,7 +15815,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndSelectNextDeadline(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15844,7 +15844,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15853,7 +15853,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndSelectNextDeadline(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15894,12 +15894,12 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!EndpointPendingWorkResult {
         _ = opts;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     /// Unified pending-work processing with options-struct interface.
@@ -15910,19 +15910,19 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!EndpointPendingWorkResult {
         _ = opts;
         _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_millis);
+        return self.processPendingWork(connection_id, connection, now_nanos);
     }
 
     pub fn processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -15931,7 +15931,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndSelectNextDeadline(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15960,7 +15960,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
@@ -15968,7 +15968,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -15995,7 +15995,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
@@ -16003,7 +16003,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16028,7 +16028,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
@@ -16036,7 +16036,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16061,7 +16061,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         deadline_connections: []const EndpointConnectionView,
@@ -16069,7 +16069,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16095,7 +16095,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -16104,7 +16104,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16130,7 +16130,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -16139,7 +16139,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16167,7 +16167,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         due_connections: []const EndpointConnectionReceiveView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -16176,7 +16176,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndSelectNextDeadline(
             due_connections,
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.pending_work.idle_retired != null or
             due_work.pending_work.close_retired != null)
@@ -16197,17 +16197,17 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!?EndpointDueWorkDatagramResult {
         const deadline = self.nextDeadline(connection_id, connection) orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         const pending_datagram = if (deadline.kind == .recovery) pending: {
             const timer = deadline.recovery orelse return error.InvalidPacket;
             if (timer.space == .initial) {
                 break :pending EndpointPendingWorkDatagramResult{
-                    .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+                    .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
                     .datagram = null,
                 };
             }
@@ -16215,11 +16215,11 @@ pub const EndpointConnectionLifecycle = struct {
             break :pending try self.processPendingWorkAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 poll_options,
             );
         } else EndpointPendingWorkDatagramResult{
-            .pending_work = try self.processPendingWork(connection_id, connection, now_millis),
+            .pending_work = try self.processPendingWork(connection_id, connection, now_nanos),
             .datagram = null,
         };
 
@@ -16239,7 +16239,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16248,7 +16248,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16279,7 +16279,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -16296,7 +16296,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16306,7 +16306,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16337,7 +16337,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -16355,7 +16355,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16365,7 +16365,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16390,7 +16390,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
@@ -16404,7 +16404,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16415,7 +16415,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16440,7 +16440,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -16456,7 +16456,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16465,7 +16465,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16496,7 +16496,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
@@ -16512,7 +16512,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16522,7 +16522,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16553,7 +16553,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -16569,7 +16569,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16579,7 +16579,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16601,7 +16601,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
@@ -16616,7 +16616,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16627,7 +16627,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16649,7 +16649,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -16664,7 +16664,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16673,7 +16673,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16701,7 +16701,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -16718,7 +16718,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16728,7 +16728,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16756,7 +16756,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -16771,7 +16771,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16781,7 +16781,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16803,7 +16803,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -16816,7 +16816,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16827,7 +16827,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16849,7 +16849,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -16864,7 +16864,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16873,7 +16873,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16901,7 +16901,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -16916,7 +16916,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16926,7 +16926,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -16954,7 +16954,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -16970,7 +16970,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -16980,7 +16980,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17002,7 +17002,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17016,7 +17016,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17027,7 +17027,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17049,7 +17049,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 &drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -17063,7 +17063,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17073,7 +17073,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17102,7 +17102,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -17118,7 +17118,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17129,7 +17129,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17158,7 +17158,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -17173,7 +17173,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17184,7 +17184,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17207,7 +17207,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17220,7 +17220,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17232,7 +17232,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17255,7 +17255,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -17269,7 +17269,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17279,7 +17279,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17308,7 +17308,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
             ),
         };
@@ -17324,7 +17324,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17335,7 +17335,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17364,7 +17364,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 poll_options.space,
                 out,
             ),
@@ -17379,7 +17379,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17390,7 +17390,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17413,7 +17413,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17426,7 +17426,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
@@ -17438,7 +17438,7 @@ pub const EndpointConnectionLifecycle = struct {
         const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             due_options,
         )) orelse return null;
         if (due_work.datagram != null or
@@ -17461,7 +17461,7 @@ pub const EndpointConnectionLifecycle = struct {
                 &drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -17472,18 +17472,18 @@ pub const EndpointConnectionLifecycle = struct {
     /// The lifecycle still does not own connection storage. Callers pass the
     /// currently live connection views from their map, including the connection
     /// IDs needed for installed-key packet output. If no endpoint-visible
-    /// deadline is due at `now_millis`, this returns null without side effects.
+    /// deadline is due at `now_nanos`, this returns null without side effects.
     pub fn processDueDeadlineAcrossConnectionsAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointDueWorkDatagramResult {
         var selected_index: ?usize = null;
         var selected_deadline: ?EndpointConnectionDeadline = null;
         for (connections, 0..) |view, index| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (candidate.deadline_millis > now_millis) continue;
-            if (selected_deadline == null or candidate.deadline_millis < selected_deadline.?.deadline_millis) {
+            if (candidate.deadline_nanos > now_nanos) continue;
+            if (selected_deadline == null or candidate.deadline_nanos < selected_deadline.?.deadline_nanos) {
                 selected_index = index;
                 selected_deadline = candidate;
             }
@@ -17494,7 +17494,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processDueDeadlineAndPollDatagram(
             view.connection_id,
             view.connection,
-            now_millis,
+            now_nanos,
             view.destination_connection_id,
             view.source_connection_id,
         );
@@ -17510,14 +17510,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointDueWorkDatagramResult {
         var selected_index: ?usize = null;
         var selected_deadline: ?EndpointConnectionDeadline = null;
         for (connections, 0..) |view, index| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (candidate.deadline_millis > now_millis) continue;
-            if (selected_deadline == null or candidate.deadline_millis < selected_deadline.?.deadline_millis) {
+            if (candidate.deadline_nanos > now_nanos) continue;
+            if (selected_deadline == null or candidate.deadline_nanos < selected_deadline.?.deadline_nanos) {
                 selected_index = index;
                 selected_deadline = candidate;
             }
@@ -17528,7 +17528,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processDueDeadlineAndPollDatagramWithInstalledKeyOptions(
             view.connection_id,
             view.connection,
-            now_millis,
+            now_nanos,
             view.poll_options,
         );
     }
@@ -17537,15 +17537,15 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!?EndpointDueWorkDatagramDrainResult {
         var selected_index: ?usize = null;
         var selected_deadline: ?EndpointConnectionDeadline = null;
         for (connections, 0..) |view, index| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (candidate.deadline_millis > now_millis) continue;
-            if (selected_deadline == null or candidate.deadline_millis < selected_deadline.?.deadline_millis) {
+            if (candidate.deadline_nanos > now_nanos) continue;
+            if (selected_deadline == null or candidate.deadline_nanos < selected_deadline.?.deadline_nanos) {
                 selected_index = index;
                 selected_deadline = candidate;
             }
@@ -17556,14 +17556,14 @@ pub const EndpointConnectionLifecycle = struct {
         var result = (try self.processDueDeadlineAndDrainDatagrams(
             view.connection_id,
             view.connection,
-            now_millis,
+            now_nanos,
             view.destination_connection_id,
             view.source_connection_id,
             out,
         )) orelse return null;
         for (connections) |deadline_view| {
             const candidate = self.nextDeadline(deadline_view.connection_id, deadline_view.connection) orelse continue;
-            if (result.next_deadline == null or candidate.deadline_millis < result.next_deadline.?.deadline_millis) {
+            if (result.next_deadline == null or candidate.deadline_nanos < result.next_deadline.?.deadline_nanos) {
                 result.next_deadline = candidate;
             }
         }
@@ -17577,15 +17577,15 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!?EndpointDueWorkDatagramDrainResult {
         var selected_index: ?usize = null;
         var selected_deadline: ?EndpointConnectionDeadline = null;
         for (connections, 0..) |view, index| {
             const candidate = self.nextDeadline(view.connection_id, view.connection) orelse continue;
-            if (candidate.deadline_millis > now_millis) continue;
-            if (selected_deadline == null or candidate.deadline_millis < selected_deadline.?.deadline_millis) {
+            if (candidate.deadline_nanos > now_nanos) continue;
+            if (selected_deadline == null or candidate.deadline_nanos < selected_deadline.?.deadline_nanos) {
                 selected_index = index;
                 selected_deadline = candidate;
             }
@@ -17596,13 +17596,13 @@ pub const EndpointConnectionLifecycle = struct {
         var result = (try self.processDueDeadlineAndDrainDatagramsWithInstalledKeyOptions(
             view.connection_id,
             view.connection,
-            now_millis,
+            now_nanos,
             view.poll_options,
             out,
         )) orelse return null;
         for (connections) |deadline_view| {
             const candidate = self.nextDeadline(deadline_view.connection_id, deadline_view.connection) orelse continue;
-            if (result.next_deadline == null or candidate.deadline_millis < result.next_deadline.?.deadline_millis) {
+            if (result.next_deadline == null or candidate.deadline_nanos < result.next_deadline.?.deadline_nanos) {
                 result.next_deadline = candidate;
             }
         }
@@ -17620,7 +17620,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17628,7 +17628,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17642,7 +17642,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -17656,14 +17656,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17677,7 +17677,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17690,7 +17690,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17698,7 +17698,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17712,7 +17712,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -17726,14 +17726,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17747,7 +17747,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17761,7 +17761,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17770,7 +17770,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17784,7 +17784,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -17798,7 +17798,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -17806,7 +17806,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17820,7 +17820,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -17834,7 +17834,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17843,7 +17843,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17857,7 +17857,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -17872,7 +17872,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -17880,7 +17880,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17894,7 +17894,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_spaces,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -17908,7 +17908,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17916,7 +17916,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17930,7 +17930,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -17946,14 +17946,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17967,7 +17967,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -17975,7 +17975,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionPollView,
@@ -17984,7 +17984,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -17998,7 +17998,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -18012,7 +18012,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         poll_views: []const EndpointConnectionInstalledKeyPollView,
@@ -18020,7 +18020,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18034,7 +18034,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend_space,
                 drive_views,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -18043,7 +18043,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18052,7 +18052,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18067,7 +18067,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -18082,7 +18082,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18090,7 +18090,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18105,7 +18105,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -18114,7 +18114,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18124,7 +18124,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18139,7 +18139,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -18153,7 +18153,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18162,7 +18162,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18177,7 +18177,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -18187,7 +18187,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18196,7 +18196,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18211,7 +18211,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -18226,7 +18226,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18234,7 +18234,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18249,7 +18249,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -18258,7 +18258,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18268,7 +18268,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18283,7 +18283,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
                 out,
             ),
@@ -18297,7 +18297,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_space: PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18306,7 +18306,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18321,7 +18321,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 out,
             ),
         };
@@ -18332,7 +18332,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18341,7 +18341,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18356,7 +18356,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
                 poll_space,
             ),
         };
@@ -18367,7 +18367,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         deadline_connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         backend_spaces: []const PacketNumberSpace,
         drive_views: []const EndpointCryptoBackendDriveView,
         compatibilities: []const VersionCompatibility,
@@ -18375,7 +18375,7 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
             deadline_connections,
-            now_millis,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -18390,7 +18390,7 @@ pub const EndpointConnectionLifecycle = struct {
                 drive_views,
                 compatibilities,
                 poll_views,
-                now_millis,
+                now_nanos,
             ),
         };
     }
@@ -18404,13 +18404,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
         keys: ProtectedLongDatagramKeys,
     ) Error!EndpointProtectedLongRecoveryPollResult {
-        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_nanos);
         const deadline = serviced orelse return .{
             .serviced = null,
             .datagram = null,
@@ -18420,7 +18420,7 @@ pub const EndpointConnectionLifecycle = struct {
         const datagram = try self.pollProtectedLongDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -18441,11 +18441,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!EndpointProtectedLongRecoveryPollResult {
-        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_nanos);
         const deadline = serviced orelse return .{
             .serviced = null,
             .datagram = null,
@@ -18455,7 +18455,7 @@ pub const EndpointConnectionLifecycle = struct {
         const datagram = try self.pollProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
         );
@@ -18474,11 +18474,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!EndpointProtectedLongRecoveryPollResult {
-        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_nanos);
         const deadline = serviced orelse return .{
             .serviced = null,
             .datagram = null,
@@ -18488,7 +18488,7 @@ pub const EndpointConnectionLifecycle = struct {
         const datagram = try self.pollProtectedZeroRttDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
         );
@@ -18508,18 +18508,18 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!EndpointProtectedShortRecoveryPollResult {
-        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_nanos);
         const deadline = serviced orelse return .{
             .serviced = null,
             .datagram = null,
         };
         if (deadline.timer.space != .application) return error.InvalidPacket;
 
-        const datagram = try self.pollProtectedShortDatagram(connection_id, connection, now_millis, dcid, keys);
+        const datagram = try self.pollProtectedShortDatagram(connection_id, connection, now_nanos, dcid, keys);
         return .{
             .serviced = deadline,
             .datagram = datagram,
@@ -18536,17 +18536,17 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
     ) Error!EndpointProtectedShortRecoveryPollResult {
-        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        const serviced = try self.serviceRecoveryTimer(connection_id, connection, now_nanos);
         const deadline = serviced orelse return .{
             .serviced = null,
             .datagram = null,
         };
         if (deadline.timer.space != .application) return error.InvalidPacket;
 
-        const datagram = try self.pollProtectedShortDatagramWithInstalledKeys(connection_id, connection, now_millis, dcid);
+        const datagram = try self.pollProtectedShortDatagramWithInstalledKeys(connection_id, connection, now_nanos, dcid);
         return .{
             .serviced = deadline,
             .datagram = datagram,
@@ -18563,14 +18563,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointConnectionRetireResult {
         if (connection.connectionState() != .active) {
-            try connection.checkIdleTimeouts(now_millis);
+            try connection.checkIdleTimeouts(now_nanos);
             return null;
         }
 
-        connection.checkIdleTimeouts(now_millis) catch |err| switch (err) {
+        connection.checkIdleTimeouts(now_nanos) catch |err| switch (err) {
             error.ConnectionClosed => return self.retireConnection(connection_id),
             else => return err,
         };
@@ -18587,15 +18587,15 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointConnectionRetireResult {
         const state = connection.connectionState();
         if (state != .closing and state != .draining) {
-            try connection.checkCloseTimeouts(now_millis);
+            try connection.checkCloseTimeouts(now_nanos);
             return null;
         }
 
-        connection.checkCloseTimeouts(now_millis) catch |err| switch (err) {
+        connection.checkCloseTimeouts(now_nanos) catch |err| switch (err) {
             error.ConnectionClosed => return self.retireConnection(connection_id),
             else => return err,
         };
@@ -18613,13 +18613,13 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
         keys: ProtectedLongDatagramKeys,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedLongDatagram(now_millis, dcid, scid, initial_token, keys) catch |err| {
+        const datagram = connection.pollProtectedLongDatagram(now_nanos, dcid, scid, initial_token, keys) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -18638,11 +18638,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
     ) Error!usize {
-        const count = connection.processProtectedLongDatagram(now_millis, keys, datagram) catch |err| {
+        const count = connection.processProtectedLongDatagram(now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -18659,11 +18659,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
     ) Error!usize {
-        const count = connection.processProtectedLongDatagramOrClose(now_millis, keys, datagram) catch |err| {
+        const count = connection.processProtectedLongDatagramOrClose(now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -18684,7 +18684,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointProtectedLongDatagramResult {
@@ -18693,7 +18693,7 @@ pub const EndpointConnectionLifecycle = struct {
         const processed_packets = try self.processProtectedLongDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -18716,13 +18716,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedLongCryptoDatagramInSpace(space, now_millis, dcid, scid, initial_token, keys) catch |err| {
+        const datagram = connection.pollProtectedLongCryptoDatagramInSpace(space, now_nanos, dcid, scid, initial_token, keys) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -18743,7 +18743,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -18756,7 +18756,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 space,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -18778,7 +18778,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
@@ -18790,7 +18790,7 @@ pub const EndpointConnectionLifecycle = struct {
             const datagram = self.pollProtectedLongDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -18819,11 +18819,11 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedLongDatagramInSpace(space, now_millis, keys, datagram) catch |err| {
+        connection.processProtectedLongDatagramInSpace(space, now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -18840,7 +18840,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -18852,14 +18852,14 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
         const output = try self.pollProtectedLongDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -18880,7 +18880,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -18892,7 +18892,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         ) catch |err| {
@@ -18901,7 +18901,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedLongDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -18922,7 +18922,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -18935,7 +18935,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -18945,7 +18945,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedLongDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -18972,7 +18972,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -18985,7 +18985,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         ) catch |err| {
@@ -18997,7 +18997,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedLongDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -19024,7 +19024,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19041,7 +19041,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 space,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 dcid,
@@ -19066,7 +19066,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19081,7 +19081,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19092,7 +19092,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -19113,7 +19113,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19127,7 +19127,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19138,7 +19138,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -19159,7 +19159,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19169,7 +19169,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19194,7 +19194,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19209,7 +19209,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         ) catch |err| {
@@ -19219,7 +19219,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainProtectedLongDatagrams(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     dcid,
                     scid,
                     initial_token,
@@ -19235,7 +19235,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -19256,7 +19256,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19270,7 +19270,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         ) catch |err| {
@@ -19278,7 +19278,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = try self.pollProtectedLongDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -19299,7 +19299,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             space,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             initial_token,
@@ -19315,11 +19315,11 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedLongDatagramInSpaceOrClose(space, now_millis, keys, datagram) catch |err| {
+        connection.processProtectedLongDatagramInSpaceOrClose(space, now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -19339,7 +19339,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -19349,7 +19349,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             space,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -19369,7 +19369,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19385,7 +19385,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection,
             space,
             path,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19398,7 +19398,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 space,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -19420,7 +19420,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19435,7 +19435,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection,
             space,
             path,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19448,7 +19448,7 @@ pub const EndpointConnectionLifecycle = struct {
                 backend,
                 scratch,
                 space,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
                 initial_token,
@@ -19469,7 +19469,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19480,7 +19480,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection,
             space,
             path,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19509,7 +19509,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19528,7 +19528,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 space,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 backend,
@@ -19555,7 +19555,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection: *Connection,
         space: PacketNumberSpace,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         backend: CryptoBackend,
@@ -19573,7 +19573,7 @@ pub const EndpointConnectionLifecycle = struct {
                 connection_id,
                 connection,
                 space,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 backend,
@@ -19597,12 +19597,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedZeroRttDatagram(now_millis, dcid, scid, keys) catch |err| {
+        const datagram = connection.pollProtectedZeroRttDatagram(now_nanos, dcid, scid, keys) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -19621,11 +19621,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedZeroRttDatagram(now_millis, keys, datagram) catch |err| {
+        connection.processProtectedZeroRttDatagram(now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -19640,11 +19640,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedZeroRttDatagramOrClose(now_millis, keys, datagram) catch |err| {
+        connection.processProtectedZeroRttDatagramOrClose(now_nanos, keys, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -19663,7 +19663,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -19672,7 +19672,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -19689,7 +19689,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -19698,7 +19698,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             datagram,
         );
@@ -19715,7 +19715,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19724,14 +19724,14 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
         const output = try self.pollProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
         );
@@ -19750,7 +19750,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19760,7 +19760,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19769,7 +19769,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
             ) catch |err| {
@@ -19793,7 +19793,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19802,14 +19802,14 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
         const output = try self.pollProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
         );
@@ -19827,7 +19827,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19837,7 +19837,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             datagram,
         );
@@ -19846,7 +19846,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
             ) catch |err| {
@@ -19872,7 +19872,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19885,7 +19885,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedZeroRttDatagramAndPollShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 dcid,
@@ -19905,7 +19905,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19919,7 +19919,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedZeroRttDatagramAndDrainShortDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 dcid,
@@ -19938,7 +19938,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19951,7 +19951,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedZeroRttDatagramOrCloseAndPollShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 dcid,
@@ -19969,7 +19969,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -19983,7 +19983,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedZeroRttDatagramOrCloseAndDrainShortDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 datagram,
                 dcid,
@@ -20005,11 +20005,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedShortDatagram(now_millis, dcid, keys) catch |err| {
+        const datagram = connection.pollProtectedShortDatagram(now_nanos, dcid, keys) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20028,12 +20028,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagram(now_millis, keys, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagram(now_nanos, keys, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20049,12 +20049,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramOrClose(now_millis, keys, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramOrClose(now_nanos, keys, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20073,7 +20073,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -20082,7 +20082,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20104,7 +20104,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
@@ -20115,7 +20115,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20148,7 +20148,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
@@ -20159,7 +20159,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20191,7 +20191,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -20200,7 +20200,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20227,7 +20227,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
@@ -20236,7 +20236,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -20250,7 +20250,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!endpoint.RouteResult {
@@ -20259,7 +20259,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -20268,7 +20268,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20276,7 +20276,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20293,7 +20293,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
@@ -20304,7 +20304,7 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = try self.processProtectedShortDatagramAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20321,7 +20321,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20331,7 +20331,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20339,7 +20339,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
         );
@@ -20357,7 +20357,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20367,7 +20367,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20377,7 +20377,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
         );
@@ -20398,7 +20398,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20411,7 +20411,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20430,7 +20430,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20443,7 +20443,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20462,7 +20462,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20473,7 +20473,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20483,7 +20483,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
             ) catch |err| {
@@ -20507,7 +20507,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20518,7 +20518,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20531,7 +20531,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
             ) catch |err| {
@@ -20557,7 +20557,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20571,7 +20571,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20591,7 +20591,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20605,7 +20605,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20627,12 +20627,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedShortDatagramWithKeyPhase(now_millis, dcid, keys, key_phase) catch |err| {
+        const datagram = connection.pollProtectedShortDatagramWithKeyPhase(now_nanos, dcid, keys, key_phase) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20651,12 +20651,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithKeyUpdate(now_millis, keys, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithKeyUpdate(now_nanos, keys, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20672,12 +20672,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithKeyUpdateOrClose(now_millis, keys, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithKeyUpdateOrClose(now_nanos, keys, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -20696,7 +20696,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -20705,7 +20705,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyUpdate(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20723,7 +20723,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -20732,7 +20732,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyUpdateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             keys,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -20750,7 +20750,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20758,7 +20758,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyUpdate(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20775,7 +20775,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
@@ -20786,7 +20786,7 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = try self.processProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20803,7 +20803,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20814,7 +20814,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyUpdate(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20822,7 +20822,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagramWithKeyPhase(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
             send_key_phase,
@@ -20841,7 +20841,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20852,7 +20852,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithKeyUpdateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20862,7 +20862,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagramWithKeyPhase(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_keys,
             send_key_phase,
@@ -20884,7 +20884,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20898,7 +20898,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithKeyUpdateAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20918,7 +20918,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -20932,7 +20932,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithKeyUpdateOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -20952,7 +20952,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -20964,7 +20964,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyUpdate(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -20974,7 +20974,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithKeyPhase(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
                 send_key_phase,
@@ -20999,7 +20999,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
@@ -21011,7 +21011,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithKeyUpdateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_keys,
             dcid_len,
             datagram,
@@ -21024,7 +21024,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithKeyPhase(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_keys,
                 send_key_phase,
@@ -21051,7 +21051,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -21066,7 +21066,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithKeyUpdateAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21087,7 +21087,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
         dcid: []const u8,
@@ -21102,7 +21102,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithKeyUpdateOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_keys,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21126,11 +21126,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         key_phase_state: *const protection.Aes128KeyPhaseState,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedShortDatagramWithKeyPhaseState(now_millis, dcid, key_phase_state) catch |err| {
+        const datagram = connection.pollProtectedShortDatagramWithKeyPhaseState(now_nanos, dcid, key_phase_state) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21148,12 +21148,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithKeyPhaseState(now_millis, key_phase_state, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithKeyPhaseState(now_nanos, key_phase_state, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21169,12 +21169,12 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithKeyPhaseStateOrClose(now_millis, key_phase_state, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithKeyPhaseStateOrClose(now_nanos, key_phase_state, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21193,7 +21193,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -21202,7 +21202,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             key_phase_state,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -21219,7 +21219,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
@@ -21228,7 +21228,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyPhaseStateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             key_phase_state,
             route.destination_connection_id.asSlice().len,
             datagram,
@@ -21245,7 +21245,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
@@ -21253,7 +21253,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_key_phase_state,
             dcid_len,
             datagram,
@@ -21270,7 +21270,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
@@ -21281,7 +21281,7 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = try self.processProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_key_phase_state,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21297,7 +21297,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
@@ -21307,7 +21307,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_key_phase_state,
             dcid_len,
             datagram,
@@ -21315,7 +21315,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_key_phase_state,
         );
@@ -21334,7 +21334,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
@@ -21344,7 +21344,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithKeyPhaseStateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_key_phase_state,
             dcid_len,
             datagram,
@@ -21354,7 +21354,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             send_key_phase_state,
         );
@@ -21373,7 +21373,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
         dcid: []const u8,
@@ -21386,7 +21386,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithKeyPhaseStateAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_key_phase_state,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21405,7 +21405,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
         dcid: []const u8,
@@ -21418,7 +21418,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_key_phase_state,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21436,7 +21436,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
@@ -21447,7 +21447,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithKeyPhaseState(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_key_phase_state,
             dcid_len,
             datagram,
@@ -21457,7 +21457,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithKeyPhaseState(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_key_phase_state,
             ) catch |err| {
@@ -21482,7 +21482,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
@@ -21493,7 +21493,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithKeyPhaseStateOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             receive_key_phase_state,
             dcid_len,
             datagram,
@@ -21506,7 +21506,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithKeyPhaseState(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 send_key_phase_state,
             ) catch |err| {
@@ -21531,7 +21531,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
         dcid: []const u8,
@@ -21545,7 +21545,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_key_phase_state,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21565,7 +21565,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         receive_key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
         dcid: []const u8,
@@ -21579,7 +21579,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 receive_key_phase_state,
                 route.destination_connection_id.asSlice().len,
                 datagram,
@@ -21601,11 +21601,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedHandshakeDatagramWithInstalledKeys(now_millis, dcid, scid) catch |err| {
+        const datagram = connection.pollProtectedHandshakeDatagramWithInstalledKeys(now_nanos, dcid, scid) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21623,10 +21623,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedHandshakeDatagramWithInstalledKeys(now_millis, datagram) catch |err| {
+        connection.processProtectedHandshakeDatagramWithInstalledKeys(now_nanos, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21646,7 +21646,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -21657,7 +21657,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
 
@@ -21677,7 +21677,7 @@ pub const EndpointConnectionLifecycle = struct {
             .handshake,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             .handshake,
             out,
         );
@@ -21694,7 +21694,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -21703,7 +21703,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
 
@@ -21713,7 +21713,7 @@ pub const EndpointConnectionLifecycle = struct {
             .handshake,
             backend,
             scratch,
-            now_millis,
+            now_nanos,
             poll_options,
         );
     }
@@ -21729,7 +21729,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -21740,7 +21740,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
@@ -21749,7 +21749,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainProtectedHandshakeDatagramsWithInstalledKeys(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     dcid,
                     scid,
                     out,
@@ -21773,7 +21773,7 @@ pub const EndpointConnectionLifecycle = struct {
             .handshake,
             &drive_views,
             &poll_views,
-            now_millis,
+            now_nanos,
             .handshake,
             out,
         ) catch |err| {
@@ -21783,7 +21783,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainProtectedHandshakeDatagramsWithInstalledKeys(
                     connection_id,
                     connection,
-                    now_millis,
+                    now_nanos,
                     dcid,
                     scid,
                     out,
@@ -21803,7 +21803,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -21812,14 +21812,14 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             const output = try self.pollProtectedHandshakeDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 poll_options.destination_connection_id,
                 poll_options.source_connection_id,
             );
@@ -21838,14 +21838,14 @@ pub const EndpointConnectionLifecycle = struct {
             .handshake,
             backend,
             scratch,
-            now_millis,
+            now_nanos,
             poll_options,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             const output = try self.pollProtectedHandshakeDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 poll_options.destination_connection_id,
                 poll_options.source_connection_id,
             );
@@ -21868,10 +21868,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedHandshakeDatagramWithInstalledKeysOrClose(now_millis, datagram) catch |err| {
+        connection.processProtectedHandshakeDatagramWithInstalledKeysOrClose(now_nanos, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -21889,7 +21889,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -21897,7 +21897,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return route;
@@ -21913,7 +21913,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -21921,7 +21921,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return route;
@@ -21936,7 +21936,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -21944,13 +21944,13 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         const output = try self.pollProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
         );
@@ -21968,7 +21968,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -21976,7 +21976,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
@@ -21984,7 +21984,7 @@ pub const EndpointConnectionLifecycle = struct {
         const output = try self.pollProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
         );
@@ -22002,7 +22002,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -22014,7 +22014,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedHandshakeDatagramWithInstalledKeysAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
                 scid,
@@ -22030,7 +22030,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -22039,7 +22039,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         var result = EndpointDatagramDrainResult{};
@@ -22047,7 +22047,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedHandshakeDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
             ) catch |err| {
@@ -22071,7 +22071,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -22080,7 +22080,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
@@ -22088,7 +22088,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.drainProtectedHandshakeDatagramsWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
             scid,
             out,
@@ -22099,7 +22099,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -22109,7 +22109,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedHandshakeDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
                 scid,
             ) catch |err| {
@@ -22133,7 +22133,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -22146,7 +22146,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
                 scid,
@@ -22165,7 +22165,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         scid: []const u8,
@@ -22178,7 +22178,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
                 scid,
@@ -22201,7 +22201,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
     ) Error!void {
@@ -22209,7 +22209,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -22220,7 +22220,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         space: PacketNumberSpace,
         datagram: []const u8,
         opts: lifecycle_opts.FeedInstalledKeyOptions,
@@ -22229,7 +22229,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedLongDatagramInSpace(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             space,
             datagram,
         );
@@ -22241,18 +22241,18 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         opts: lifecycle_opts.UnifiedReceiveOptions,
     ) Error!void {
         _ = opts;
-        return self.serviceRecoveryTimer(connection_id, connection, now_millis);
+        return self.serviceRecoveryTimer(connection_id, connection, now_nanos);
     }
 
     pub fn processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22260,7 +22260,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedHandshakeDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return try self.driveCryptoBackendInSpaceAndSelectNextDeadline(
@@ -22282,7 +22282,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22291,7 +22291,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return .{
@@ -22318,7 +22318,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22330,7 +22330,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
         );
         const drive_views = [_]EndpointCryptoBackendDriveView{.{
@@ -22351,7 +22351,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .handshake,
                 &drive_views,
                 &poll_views,
-                now_millis,
+                now_nanos,
                 .handshake,
                 out,
             ),
@@ -22371,7 +22371,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22384,7 +22384,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 backend,
                 scratch,
@@ -22405,7 +22405,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22420,7 +22420,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 backend,
                 scratch,
@@ -22443,7 +22443,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend: CryptoBackend,
         scratch: []u8,
@@ -22456,7 +22456,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 backend,
                 scratch,
@@ -22476,11 +22476,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedZeroRttDatagramWithInstalledKeys(now_millis, dcid, scid) catch |err| {
+        const datagram = connection.pollProtectedZeroRttDatagramWithInstalledKeys(now_nanos, dcid, scid) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -22499,10 +22499,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedZeroRttDatagramWithInstalledKeys(now_millis, datagram) catch |err| {
+        connection.processProtectedZeroRttDatagramWithInstalledKeys(now_nanos, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -22517,10 +22517,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedZeroRttDatagramWithInstalledKeysOrClose(now_millis, datagram) catch |err| {
+        connection.processProtectedZeroRttDatagramWithInstalledKeysOrClose(now_nanos, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -22538,7 +22538,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -22546,7 +22546,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return route;
@@ -22561,7 +22561,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -22569,7 +22569,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         return route;
@@ -22585,20 +22585,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
     ) Error!?EndpointPolledDatagramResult {
         try self.processProtectedZeroRttDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         const output = try self.pollProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
         );
         return if (output) |bytes| .{
@@ -22616,7 +22616,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -22624,7 +22624,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         var result = EndpointDatagramDrainResult{};
@@ -22632,7 +22632,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
             ) catch |err| {
                 result.first_error = err;
@@ -22655,20 +22655,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
     ) Error!?EndpointPolledDatagramResult {
         try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         const output = try self.pollProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid,
         );
         return if (output) |bytes| .{
@@ -22685,7 +22685,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -22693,7 +22693,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             datagram,
         );
         var result = EndpointDatagramDrainResult{};
@@ -22701,7 +22701,7 @@ pub const EndpointConnectionLifecycle = struct {
             const output = self.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 dcid,
             ) catch |err| {
                 result.first_error = err;
@@ -22726,7 +22726,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
@@ -22737,7 +22737,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
             ),
@@ -22754,7 +22754,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -22766,7 +22766,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
                 out,
@@ -22784,7 +22784,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
@@ -22795,7 +22795,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndPollShortDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
             ),
@@ -22812,7 +22812,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         dcid: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -22824,7 +22824,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndDrainShortDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 datagram,
                 dcid,
                 out,
@@ -22843,10 +22843,10 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
     ) Error!?[]u8 {
-        const datagram = connection.pollProtectedShortDatagramWithInstalledKeys(now_millis, dcid) catch |err| {
+        const datagram = connection.pollProtectedShortDatagramWithInstalledKeys(now_nanos, dcid) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -22863,28 +22863,28 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!?[]u8 {
         return switch (options.space) {
             .handshake => self.pollProtectedHandshakeDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options.destination_connection_id,
                 options.source_connection_id,
             ),
             .zero_rtt => self.pollProtectedZeroRttDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options.destination_connection_id,
                 options.source_connection_id,
             ),
             .application => self.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 options.destination_connection_id,
             ),
         };
@@ -22905,26 +22905,26 @@ pub const EndpointConnectionLifecycle = struct {
         allocator: std.mem.Allocator,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
         opts: lifecycle_opts.DrainOptions,
     ) Error!?[]u8 {
         _ = opts;
         _ = allocator;
-        return self.pollDatagram(connection_id, connection, now_millis, space);
+        return self.pollDatagram(connection_id, connection, now_nanos, space);
     }
 
     pub fn pollDatagramAcrossConnections(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
             const datagram = try self.pollDatagram(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
                 .{
                     .space = space,
                     .destination_connection_id = view.destination_connection_id,
@@ -22949,13 +22949,13 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn pollDatagramAcrossConnectionsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointPolledDatagramResult {
         for (connections) |view| {
             const datagram = try self.pollDatagram(
                 view.connection_id,
                 view.connection,
-                now_millis,
+                now_nanos,
                 view.poll_options,
             );
             if (datagram) |bytes| {
@@ -22978,7 +22978,7 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn drainDatagramsAcrossConnections(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
-        now_millis: i64,
+        now_nanos: i64,
         space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) EndpointDatagramDrainResult {
@@ -22986,7 +22986,7 @@ pub const EndpointConnectionLifecycle = struct {
         while (result.datagrams_written < out.len) {
             const polled = self.pollDatagramAcrossConnections(
                 connections,
-                now_millis,
+                now_nanos,
                 space,
             ) catch |err| {
                 result.first_error = err;
@@ -23005,14 +23005,14 @@ pub const EndpointConnectionLifecycle = struct {
     pub fn drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionInstalledKeyPollView,
-        now_millis: i64,
+        now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) EndpointDatagramDrainResult {
         var result = EndpointDatagramDrainResult{};
         while (result.datagrams_written < out.len) {
             const polled = self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
                 connections,
-                now_millis,
+                now_nanos,
             ) catch |err| {
                 result.first_error = err;
                 return result;
@@ -23032,11 +23032,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithInstalledKeys(now_millis, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithInstalledKeys(now_nanos, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -23052,11 +23052,11 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        connection.processProtectedShortDatagramWithInstalledKeysOrClose(now_millis, dcid_len, datagram) catch |err| {
+        connection.processProtectedShortDatagramWithInstalledKeysOrClose(now_nanos, dcid_len, datagram) catch |err| {
             self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
             return err;
         };
@@ -23075,7 +23075,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23083,7 +23083,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             route.destination_connection_id.asSlice().len,
             datagram,
         );
@@ -23099,7 +23099,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23107,7 +23107,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             route.destination_connection_id.asSlice().len,
             datagram,
         );
@@ -23129,7 +23129,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23139,7 +23139,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             route.destination_connection_id.asSlice().len,
             datagram,
         );
@@ -23169,14 +23169,14 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!?EndpointConnectionDeadline {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23193,7 +23193,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23203,7 +23203,7 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = try self.processProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
             ),
@@ -23219,7 +23219,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
@@ -23229,7 +23229,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23253,7 +23253,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
@@ -23263,7 +23263,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -23297,7 +23297,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
@@ -23308,7 +23308,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23331,7 +23331,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
@@ -23342,7 +23342,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -23378,7 +23378,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
@@ -23391,7 +23391,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
@@ -23412,7 +23412,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
@@ -23425,7 +23425,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
@@ -23445,7 +23445,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
@@ -23459,7 +23459,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
@@ -23481,7 +23481,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
@@ -23495,7 +23495,7 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
@@ -23516,19 +23516,19 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23538,7 +23538,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend_space,
             backend,
             scratch,
-            poll_now_millis,
+            poll_now_nanos,
             poll_options,
         );
     }
@@ -23553,19 +23553,19 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -23573,7 +23573,7 @@ pub const EndpointConnectionLifecycle = struct {
             const polled = try self.pollDatagram(
                 connection_id,
                 connection,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             );
             return .{
@@ -23590,14 +23590,14 @@ pub const EndpointConnectionLifecycle = struct {
             backend_space,
             backend,
             scratch,
-            poll_now_millis,
+            poll_now_nanos,
             poll_options,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             const polled = try self.pollDatagram(
                 connection_id,
                 connection,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             );
             return .{
@@ -23620,20 +23620,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23644,7 +23644,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             compatibilities,
-            poll_now_millis,
+            poll_now_nanos,
             poll_options,
         );
     }
@@ -23659,20 +23659,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -23680,7 +23680,7 @@ pub const EndpointConnectionLifecycle = struct {
             const polled = try self.pollDatagram(
                 connection_id,
                 connection,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             );
             return .{
@@ -23698,14 +23698,14 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             compatibilities,
-            poll_now_millis,
+            poll_now_nanos,
             poll_options,
         ) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             const polled = try self.pollDatagram(
                 connection_id,
                 connection,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             );
             return .{
@@ -23728,12 +23728,12 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23743,13 +23743,13 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             ),
         };
@@ -23766,12 +23766,12 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23781,13 +23781,13 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             ),
         };
@@ -23803,13 +23803,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23819,14 +23819,14 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
                 compatibilities,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             ),
         };
@@ -23843,13 +23843,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        poll_now_millis: i64,
+        poll_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
         const route = try self.routeDatagram(path, datagram);
@@ -23859,14 +23859,14 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
                 compatibilities,
-                poll_now_millis,
+                poll_now_nanos,
                 poll_options,
             ),
         };
@@ -23881,20 +23881,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -23904,7 +23904,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend_space,
             backend,
             scratch,
-            drain_now_millis,
+            drain_now_nanos,
             poll_options,
             out,
         );
@@ -23920,20 +23920,20 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -23943,7 +23943,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainInstalledKeyDatagrams(
                     connection_id,
                     connection,
-                    drain_now_millis,
+                    drain_now_nanos,
                     poll_options,
                     out,
                 ),
@@ -23955,7 +23955,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend_space,
             backend,
             scratch,
-            drain_now_millis,
+            drain_now_nanos,
             poll_options,
             out,
         ) catch |err| {
@@ -23965,7 +23965,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainInstalledKeyDatagrams(
                     connection_id,
                     connection,
-                    drain_now_millis,
+                    drain_now_nanos,
                     poll_options,
                     out,
                 ),
@@ -23982,21 +23982,21 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -24007,7 +24007,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             compatibilities,
-            drain_now_millis,
+            drain_now_nanos,
             poll_options,
             out,
         );
@@ -24023,21 +24023,21 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -24047,7 +24047,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainInstalledKeyDatagrams(
                     connection_id,
                     connection,
-                    drain_now_millis,
+                    drain_now_nanos,
                     poll_options,
                     out,
                 ),
@@ -24060,7 +24060,7 @@ pub const EndpointConnectionLifecycle = struct {
             backend,
             scratch,
             compatibilities,
-            drain_now_millis,
+            drain_now_nanos,
             poll_options,
             out,
         ) catch |err| {
@@ -24070,7 +24070,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .drain = self.drainInstalledKeyDatagrams(
                     connection_id,
                     connection,
-                    drain_now_millis,
+                    drain_now_nanos,
                     poll_options,
                     out,
                 ),
@@ -24088,12 +24088,12 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
@@ -24104,13 +24104,13 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
-                drain_now_millis,
+                drain_now_nanos,
                 poll_options,
                 out,
             ),
@@ -24128,12 +24128,12 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
@@ -24144,13 +24144,13 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
-                drain_now_millis,
+                drain_now_nanos,
                 poll_options,
                 out,
             ),
@@ -24167,13 +24167,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
@@ -24184,14 +24184,14 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
                 compatibilities,
-                drain_now_millis,
+                drain_now_nanos,
                 poll_options,
                 out,
             ),
@@ -24209,13 +24209,13 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         backend_space: PacketNumberSpace,
         backend: CryptoBackend,
         scratch: []u8,
         compatibilities: []const VersionCompatibility,
-        drain_now_millis: i64,
+        drain_now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
@@ -24226,14 +24226,14 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 backend_space,
                 backend,
                 scratch,
                 compatibilities,
-                drain_now_millis,
+                drain_now_nanos,
                 poll_options,
                 out,
             ),
@@ -24250,7 +24250,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -24258,14 +24258,14 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
         const polled = try self.pollDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         );
         return if (polled) |out_datagram| .{
@@ -24282,7 +24282,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -24290,7 +24290,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -24299,7 +24299,7 @@ pub const EndpointConnectionLifecycle = struct {
         const polled = try self.pollDatagram(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
         );
         return if (polled) |out_datagram| .{
@@ -24319,7 +24319,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
@@ -24330,7 +24330,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithInstalledKeysAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 poll_options,
@@ -24348,7 +24348,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
@@ -24359,7 +24359,7 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = try self.processProtectedShortDatagramWithInstalledKeysOrCloseAndPollDatagram(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 poll_options,
@@ -24377,7 +24377,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         destination_connection_id: []const u8,
@@ -24386,7 +24386,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
             .{
@@ -24407,7 +24407,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -24416,7 +24416,7 @@ pub const EndpointConnectionLifecycle = struct {
         try self.processProtectedShortDatagramWithInstalledKeys(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         );
@@ -24427,7 +24427,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
             &poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -24441,7 +24441,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         destination_connection_id: []const u8,
@@ -24450,7 +24450,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
             .{
@@ -24469,7 +24469,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
@@ -24478,7 +24478,7 @@ pub const EndpointConnectionLifecycle = struct {
         self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             dcid_len,
             datagram,
         ) catch |err| {
@@ -24488,7 +24488,7 @@ pub const EndpointConnectionLifecycle = struct {
         return self.drainInstalledKeyDatagrams(
             connection_id,
             connection,
-            now_millis,
+            now_nanos,
             poll_options,
             out,
         );
@@ -24498,7 +24498,7 @@ pub const EndpointConnectionLifecycle = struct {
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
     ) EndpointDatagramDrainResult {
@@ -24509,7 +24509,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
             &poll_views,
-            now_millis,
+            now_nanos,
             out,
         );
     }
@@ -24527,7 +24527,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         destination_connection_id: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -24536,7 +24536,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             .{
                 .space = .application,
@@ -24556,7 +24556,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -24568,7 +24568,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 poll_options,
@@ -24588,7 +24588,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         destination_connection_id: []const u8,
         out: []EndpointPolledDatagramResult,
@@ -24597,7 +24597,7 @@ pub const EndpointConnectionLifecycle = struct {
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             datagram,
             .{
                 .space = .application,
@@ -24616,7 +24616,7 @@ pub const EndpointConnectionLifecycle = struct {
         connection_id: u64,
         connection: *Connection,
         path: endpoint.Udp4Tuple,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
         out: []EndpointPolledDatagramResult,
@@ -24628,7 +24628,7 @@ pub const EndpointConnectionLifecycle = struct {
             .drain = try self.processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
                 connection_id,
                 connection,
-                now_millis,
+                now_nanos,
                 route.destination_connection_id.asSlice().len,
                 datagram,
                 poll_options,

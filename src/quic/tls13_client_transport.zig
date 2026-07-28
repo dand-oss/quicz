@@ -30,10 +30,10 @@ pub const ClientTransportDeadline = union(enum) {
     key_discard: i64,
 
     /// Return the monotonic deadline value for socket wait selection.
-    pub fn deadlineMillis(self: ClientTransportDeadline) i64 {
+    pub fn deadline(self: ClientTransportDeadline) i64 {
         return switch (self) {
-            .recovery => |deadline| deadline.deadline_millis,
-            .idle_timeout, .close_timeout, .key_discard => |deadline| deadline,
+            .recovery => |dl| dl.deadline_nanos,
+            .idle_timeout, .close_timeout, .key_discard => |dl| dl,
         };
     }
 };
@@ -128,10 +128,10 @@ pub const Tls13ClientTransport = struct {
         application_error_code: u64,
         frame_type: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?[]u8 {
         try self.connection.closeConnection(application_error_code, frame_type, reason);
-        return self.pollApplicationDatagram(now_millis);
+        return self.pollApplicationDatagram(now_nanos);
     }
 
     /// Queue a protected APPLICATION_CLOSE and poll it for send.
@@ -139,25 +139,25 @@ pub const Tls13ClientTransport = struct {
         self: *Tls13ClientTransport,
         application_error_code: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?[]u8 {
         try self.connection.closeApplication(application_error_code, reason);
-        return self.pollApplicationDatagram(now_millis);
+        return self.pollApplicationDatagram(now_nanos);
     }
 
     /// Return the active close deadline after `close()` queues a close.
-    pub fn closeDeadlineMillis(self: *const Tls13ClientTransport) ?i64 {
-        return self.connection.closeDeadlineMillis();
+    pub fn closeDeadline(self: *const Tls13ClientTransport) ?i64 {
+        return self.connection.closeDeadline();
     }
 
     /// Return one protected 1-RTT application datagram queued by this transport.
     pub fn pollApplicationDatagram(
         self: *Tls13ClientTransport,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?[]u8 {
         const peer_connection_id = self.connection.peerDestinationConnectionId() orelse return error.InvalidPacket;
         return self.connection.pollProtectedShortDatagramWithInstalledKeys(
-            now_millis,
+            now_nanos,
             peer_connection_id,
         );
     }
@@ -171,14 +171,14 @@ pub const Tls13ClientTransport = struct {
     pub fn pollRecoveryDatagram(
         self: *Tls13ClientTransport,
         deadline: LossDetectionTimerDeadline,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?[]u8 {
         return switch (deadline.space) {
             .initial => initial: {
                 const dcid = self.connection.retrySourceConnectionId() orelse &self.original_destination_connection_id;
                 const initial_keys = try protection.deriveInitialSecrets(self.version, dcid);
                 break :initial try self.connection.pollProtectedLongDatagram(
-                    now_millis,
+                    now_nanos,
                     dcid,
                     &self.local_source_connection_id,
                     &[_]u8{},
@@ -188,12 +188,12 @@ pub const Tls13ClientTransport = struct {
             .handshake => handshake: {
                 const peer_connection_id = self.connection.peerInitialSourceConnectionId() orelse return error.InvalidPacket;
                 break :handshake try self.connection.pollProtectedHandshakeDatagramWithInstalledKeys(
-                    now_millis,
+                    now_nanos,
                     peer_connection_id,
                     &self.local_source_connection_id,
                 );
             },
-            .application => try self.pollApplicationDatagram(now_millis),
+            .application => try self.pollApplicationDatagram(now_nanos),
         };
     }
 
@@ -212,16 +212,16 @@ pub const Tls13ClientTransport = struct {
     }
 
     /// Return the transport's current loss/PTO wakeup deadline.
-    pub fn lossDetectionTimerDeadlineMillis(self: *const Tls13ClientTransport) ?LossDetectionTimerDeadline {
-        return self.connection.lossDetectionTimerDeadlineMillis();
+    pub fn lossDetectionTimerDeadline(self: *const Tls13ClientTransport) ?LossDetectionTimerDeadline {
+        return self.connection.lossDetectionTimerDeadline();
     }
 
     /// Service a due loss/PTO timer before polling retransmission output.
     pub fn serviceLossDetectionTimer(
         self: *Tls13ClientTransport,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?LossDetectionTimerDeadline {
-        return self.connection.serviceLossDetectionTimer(now_millis);
+        return self.connection.serviceLossDetectionTimer(now_nanos);
     }
 
     /// Select the earliest active lifecycle deadline for this transport.
@@ -235,18 +235,18 @@ pub const Tls13ClientTransport = struct {
         var next: ?ClientTransportDeadline = null;
 
         if (state == .active) {
-            if (self.connection.idleTimeoutDeadlineMillis()) |deadline| {
+            if (self.connection.idleTimeoutDeadline()) |deadline| {
                 next = .{ .idle_timeout = deadline };
             }
-            if (self.connection.lossDetectionTimerDeadlineMillis()) |deadline| {
+            if (self.connection.lossDetectionTimerDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .recovery = deadline });
             }
-            if (self.connection.oneRttKeyDiscardDeadlineMillis()) |deadline| {
+            if (self.connection.oneRttKeyDiscardDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .key_discard = deadline });
             }
         }
         if (state == .closing or state == .draining) {
-            if (self.connection.closeDeadlineMillis()) |deadline| {
+            if (self.connection.closeDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .close_timeout = deadline });
             }
         }
@@ -260,29 +260,29 @@ pub const Tls13ClientTransport = struct {
     /// unchanged and return null.
     pub fn serviceDueDeadline(
         self: *Tls13ClientTransport,
-        now_millis: i64,
+        now_nanos: i64,
     ) ClientTransportError!?ClientTransportDeadline {
         const deadline = self.nextDeadline() orelse return null;
-        if (deadline.deadlineMillis() > now_millis) return null;
+        if (deadline.deadline() > now_nanos) return null;
 
         switch (deadline) {
             .recovery => {
-                _ = try self.connection.serviceLossDetectionTimer(now_millis);
+                _ = try self.connection.serviceLossDetectionTimer(now_nanos);
             },
             .idle_timeout => {
-                self.connection.checkIdleTimeouts(now_millis) catch |err| switch (err) {
+                self.connection.checkIdleTimeouts(now_nanos) catch |err| switch (err) {
                     error.ConnectionClosed => {},
                     else => return err,
                 };
             },
             .close_timeout => {
-                self.connection.checkCloseTimeouts(now_millis) catch |err| switch (err) {
+                self.connection.checkCloseTimeouts(now_nanos) catch |err| switch (err) {
                     error.ConnectionClosed => {},
                     else => return err,
                 };
             },
             .key_discard => {
-                _ = self.connection.discardExpiredOneRttKeys(now_millis);
+                _ = self.connection.discardExpiredOneRttKeys(now_nanos);
             },
         }
         return deadline;
@@ -297,12 +297,12 @@ pub const Tls13ClientTransport = struct {
     }
 
     /// Queue ClientHello and return the first protected Initial datagram.
-    pub fn begin(self: *Tls13ClientTransport, now_millis: i64, scratch: []u8) ClientTransportError![]u8 {
+    pub fn begin(self: *Tls13ClientTransport, now_nanos: i64, scratch: []u8) ClientTransportError![]u8 {
         _ = try self.connection.driveCryptoBackendInSpace(.initial, self.backend.cryptoBackend(), scratch);
         const initial_keys = try protection.deriveInitialSecrets(self.version, &self.original_destination_connection_id);
         return (try self.connection.pollProtectedLongCryptoDatagramInSpace(
             .initial,
-            now_millis,
+            now_nanos,
             &self.original_destination_connection_id,
             &self.local_source_connection_id,
             &[_]u8{},
@@ -317,7 +317,7 @@ pub const Tls13ClientTransport = struct {
     /// protected Handshake datagram. Callers retain and free non-null output.
     pub fn receive(
         self: *Tls13ClientTransport,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
     ) ClientTransportError!ReceiveResult {
@@ -325,7 +325,7 @@ pub const Tls13ClientTransport = struct {
         if (isZeroOnlyPadding(datagram)) return error.InvalidPacket;
         if (isVersionNegotiationDatagram(datagram)) {
             const selected = try self.connection.processVersionNegotiationDatagram(
-                now_millis,
+                now_nanos,
                 &self.original_destination_connection_id,
                 &self.local_source_connection_id,
                 datagram,
@@ -335,7 +335,7 @@ pub const Tls13ClientTransport = struct {
         if ((datagram[0] & 0x40) == 0) return error.InvalidPacket;
         if (isRetryDatagram(datagram)) {
             if (self.retry_received) return error.InvalidPacket;
-            try self.connection.processRetryDatagram(now_millis, &self.original_destination_connection_id, datagram);
+            try self.connection.processRetryDatagram(now_nanos, &self.original_destination_connection_id, datagram);
             const retry_scid = self.connection.retrySourceConnectionId() orelse return error.InvalidPacket;
             const retry_keys = try protection.deriveInitialSecrets(self.version, retry_scid);
             self.backend.retryReceived();
@@ -343,7 +343,7 @@ pub const Tls13ClientTransport = struct {
             _ = try self.connection.driveCryptoBackendInSpace(.initial, self.backend.cryptoBackend(), scratch);
             const retry_initial = (try self.connection.pollProtectedLongCryptoDatagramInSpace(
                 .initial,
-                now_millis,
+                now_nanos,
                 retry_scid,
                 &self.local_source_connection_id,
                 &[_]u8{},
@@ -361,11 +361,11 @@ pub const Tls13ClientTransport = struct {
             if (end > datagram.len) return error.InvalidPacket;
             switch (info.packet_type) {
                 .initial => {
-                    try self.connection.processProtectedLongDatagramInSpace(.initial, now_millis, self.server_initial_keys, datagram[offset..end]);
+                    try self.connection.processProtectedLongDatagramInSpace(.initial, now_nanos, self.server_initial_keys, datagram[offset..end]);
                     _ = try self.connection.driveCryptoBackendInSpace(.initial, self.backend.cryptoBackend(), scratch);
                 },
                 .handshake => {
-                    try self.connection.processProtectedHandshakeDatagramWithInstalledKeys(now_millis, datagram[offset..end]);
+                    try self.connection.processProtectedHandshakeDatagramWithInstalledKeys(now_nanos, datagram[offset..end]);
                     _ = try self.connection.driveCryptoBackendInSpace(.handshake, self.backend.cryptoBackend(), scratch);
                 },
                 .zero_rtt, .retry => return error.InvalidPacket,
@@ -375,7 +375,7 @@ pub const Tls13ClientTransport = struct {
         var application_processed = false;
         if (offset < datagram.len and !isZeroOnlyPadding(datagram[offset..])) {
             try self.connection.processProtectedShortDatagramWithInstalledKeysOrClose(
-                now_millis,
+                now_nanos,
                 self.local_source_connection_id.len,
                 datagram[offset..],
             );
@@ -385,7 +385,7 @@ pub const Tls13ClientTransport = struct {
         if (!self.handshake_finished_sent) {
             if (self.connection.peerInitialSourceConnectionId()) |peer_scid| {
                 outbound_handshake = try self.connection.pollProtectedHandshakeDatagramWithInstalledKeys(
-                    now_millis,
+                    now_nanos,
                     peer_scid,
                     &self.local_source_connection_id,
                 );
@@ -425,7 +425,7 @@ fn selectEarlierDeadline(
     candidate: ClientTransportDeadline,
 ) ClientTransportDeadline {
     if (current) |deadline| {
-        if (deadline.deadlineMillis() <= candidate.deadlineMillis()) return deadline;
+        if (deadline.deadline() <= candidate.deadline()) return deadline;
     }
     return candidate;
 }
@@ -484,13 +484,13 @@ test "Tls13ClientTransport services idle lifecycle deadline" {
         .{ 8, 7, 6, 5, 4, 3, 2, 1 },
     );
     defer transport.deinit();
-    transport.connection.last_packet_activity_millis = 10;
+    transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
 
     const deadline = transport.nextDeadline() orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(i64, 20), deadline.deadlineMillis());
+    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expect((try transport.serviceDueDeadline(19)) == null);
-    const serviced = try transport.serviceDueDeadline(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect((try transport.serviceDueDeadline(19 * 1_000_000)) == null);
+    const serviced = try transport.serviceDueDeadline(20 * 1_000_000) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .idle_timeout);
     try std.testing.expectEqual(transport_types.ConnectionState.closed, transport.connection.connectionState());
 }
@@ -581,7 +581,7 @@ test "Tls13ClientTransport sends to the newest peer connection ID" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0, writer.getWritten());
+    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try transport.connection.sendPing();
 
     const datagram = (try transport.pollApplicationDatagram(1)) orelse return error.TestUnexpectedResult;
@@ -624,15 +624,15 @@ test "Tls13ClientTransport closes with protected application output and deadline
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0, writer.getWritten());
+    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     const datagram = (try transport.close(77, 0, "client close", 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(datagram);
     try std.testing.expectEqual(transport_types.ConnectionState.closing, transport.connection.connectionState());
-    const close_deadline = transport.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = transport.closeDeadline() orelse return error.TestUnexpectedResult;
     const next_deadline = transport.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(next_deadline == .close_timeout);
-    try std.testing.expectEqual(close_deadline, next_deadline.deadlineMillis());
+    try std.testing.expectEqual(close_deadline, next_deadline.deadline());
 
     var opened = try protection.unprotectShortPacketAes128(
         std.testing.allocator,

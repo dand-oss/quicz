@@ -284,7 +284,7 @@ fn earliestDeadline(
     const cd = client.lifecycle.nextDeadline(client.handle, client.conn);
     const sd = server.lifecycle.nextDeadline(server.handle, server.conn);
     if (cd) |c| {
-        if (sd) |s| return if (c.deadline_millis < s.deadline_millis) c else s;
+        if (sd) |s| return if (c.deadline_nanos < s.deadline_nanos) c else s;
         return c;
     }
     return sd;
@@ -325,7 +325,7 @@ fn stepEventLoop(
     //    限制推进幅度，避免 idle/close deadline 的 i64 max 溢出。
     if (!progressed) {
         if (earliestDeadline(client, server)) |d| {
-            const target = @min(d.deadline_millis, now.* + 100000);
+            const target = @min(d.deadline_nanos, now.* + 100000);
             now.* = @max(now.*, target);
         }
     }
@@ -610,7 +610,7 @@ pub fn main(init: std.process.Init) !void {
         try require(client.sentPacketCount(.application) == 0);
 
         const first_lost_packet_number = client.nextPacketNumber(.application);
-        const persistent_duration = client.recovery_state.persistentCongestionDurationMs();
+        const persistent_duration = client.recovery_state.persistentCongestionDuration();
         const send_times = [_]i64{ now + 10, now + 1000, now + 1100, now + 1200 };
         const initial_cwnd = client.congestionWindow(.application);
         client_ep.drop_ack_eliciting_one_rtt_datagrams = 3;
@@ -763,10 +763,10 @@ pub fn main(init: std.process.Init) !void {
         try require((server.peerOneRttKeyUpdateCount() orelse return error.UnexpectedState) == 2);
         try require(server.peerOneRttRetainsKeyGeneration(1).?);
 
-        const key_discard_deadline = server.oneRttKeyDiscardDeadlineMillis() orelse return error.UnexpectedState;
+        const key_discard_deadline = server.oneRttKeyDiscardDeadline() orelse return error.UnexpectedState;
         const endpoint_deadline = server_lifecycle.nextDeadline(server_handle, &server) orelse return error.UnexpectedState;
         try require(endpoint_deadline.kind == .key_discard);
-        try require(endpoint_deadline.deadline_millis == key_discard_deadline);
+        try require(endpoint_deadline.deadline_nanos == key_discard_deadline);
         now = key_discard_deadline;
         const discard_result = (try server_lifecycle.processDueDeadlineAndPollDatagram(
             server_handle,

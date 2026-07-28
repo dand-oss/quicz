@@ -21,20 +21,20 @@ fn recvTimeout() std.Io.Timeout {
     } };
 }
 
-fn recvTimeoutForDeadline(io: std.Io, deadline_millis: ?i64) std.Io.Timeout {
-    const now_millis = std.Io.Clock.awake.now(io).toMilliseconds();
-    const timeout_millis = if (deadline_millis) |deadline|
-        @max(@as(i64, 0), deadline - now_millis)
+fn recvTimeoutForDeadline(io: std.Io, deadline_nanos: ?i64) std.Io.Timeout {
+    const now_nanos = std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
+    const timeout_nanos = if (deadline_nanos) |deadline|
+        @max(@as(i64, 0), deadline - now_nanos)
     else
-        2_000;
+        2_000_000_000; // 2s in ns
     return .{ .duration = .{
         .clock = .awake,
-        .raw = std.Io.Duration.fromMilliseconds(timeout_millis),
+        .raw = std.Io.Duration.fromMilliseconds(@intCast(timeout_nanos / 1_000_000)),
     } };
 }
 
 fn nowMillis(io: std.Io) i64 {
-    return std.Io.Clock.awake.now(io).toMilliseconds();
+    return std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
 }
 
 fn require(condition: bool) !void {
@@ -191,7 +191,7 @@ pub fn main(init: std.process.Init) !void {
     var pto_recovered = false;
     while (received_application_datagrams < 16 and recovery_timer_services < 4) {
         const next_deadline = if (client_endpoint.nextDeadline()) |deadline|
-            deadline.deadlineMillis()
+            deadline.deadline()
         else
             null;
         const received = socket.receiveTimeout(io, &receive_buffer, recvTimeoutForDeadline(io, next_deadline)) catch |err| switch (err) {

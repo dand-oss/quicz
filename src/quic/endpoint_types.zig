@@ -206,7 +206,7 @@ pub const EndpointConnectionDeadline = struct {
     /// Caller-owned connection handle used by endpoint routing and timers.
     connection_id: u64,
     /// Absolute deadline in the connection's caller-controlled millisecond clock.
-    deadline_millis: i64,
+    deadline_nanos: i64,
     /// Timer class that owns the deadline.
     kind: EndpointConnectionDeadlineKind,
     /// Recovery timer detail, present only when `kind` is `.recovery`.

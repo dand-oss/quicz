@@ -194,7 +194,7 @@ pub fn main() !void {
     const client_pto_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         client_handle,
         &client,
-        client_stream_timer.timer.deadline_millis,
+        client_stream_timer.timer.deadline_nanos,
         &server_dcid,
     );
     const client_pto_serviced = client_pto_result.serviced orelse return error.UnexpectedState;
@@ -212,7 +212,7 @@ pub fn main() !void {
         server_handle,
         &server,
         pto_received.path,
-        client_stream_timer.timer.deadline_millis + 1,
+        client_stream_timer.timer.deadline_nanos + 1,
         pto_received.data,
     );
     try require(pto_route.connection_id == server_handle);
@@ -259,7 +259,7 @@ pub fn main() !void {
     try require(server_echo_timer.connection_id == server_handle);
     try require(server_echo_timer.timer.space == .application);
     try require(server_echo_timer.timer.kind == .pto);
-    const server_echo_deadline = server_echo_timer.timer.deadline_millis;
+    const server_echo_deadline = server_echo_timer.timer.deadline_nanos;
 
     const server_pto_result = try server_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         server_handle,
@@ -318,7 +318,7 @@ pub fn main() !void {
         client_local.port,
         server_local.port,
         stream_datagram.len,
-        client_stream_timer.timer.deadline_millis,
+        client_stream_timer.timer.deadline_nanos,
         client_pto_probe.len,
         pto_route.connection_id,
         echo_datagram_count,

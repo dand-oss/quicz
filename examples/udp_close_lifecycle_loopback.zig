@@ -97,11 +97,11 @@ fn runProtectedAutoClose(
         invalid_received.data,
     ));
     try require(server.connectionState() == .closing);
-    try require(server.closeDeadlineMillis() == null);
+    try require(server.closeDeadline() == null);
 
     const close_packet = (try server_lifecycle.pollProtectedShortDatagram(connection_handle, &server, 31, &client_dcid, secrets.server)) orelse return error.UnexpectedState;
     defer allocator.free(close_packet);
-    const auto_server_close_deadline = server.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const auto_server_close_deadline = server.closeDeadline() orelse return error.UnexpectedState;
     try require(auto_server_close_deadline > 31);
     try server_socket.*.send(io, &invalid_received.from, close_packet);
 
@@ -119,7 +119,7 @@ fn runProtectedAutoClose(
     try require(close_route.connection_id == connection_handle);
     try require(std.mem.eql(u8, close_route.destination_connection_id.asSlice(), &client_dcid));
     try require(client.connectionState() == .draining);
-    const auto_client_drain_deadline = client.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const auto_client_drain_deadline = client.closeDeadline() orelse return error.UnexpectedState;
     try require(auto_client_drain_deadline > 32);
 
     const auto_server_retired = (try server_lifecycle.checkCloseTimeoutsAndRetireConnection(
@@ -215,10 +215,10 @@ pub fn main() !void {
 
     try client.closeConnection(0, @intFromEnum(quicz.frame.FrameType.stream), "udp close");
     try require(client.connectionState() == .closing);
-    try require(client.closeDeadlineMillis() == null);
+    try require(client.closeDeadline() == null);
     const close_packet = (try client.pollProtectedShortDatagram(1, &server_dcid, secrets.client)) orelse return error.UnexpectedState;
     defer allocator.free(close_packet);
-    const client_close_deadline = client.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const client_close_deadline = client.closeDeadline() orelse return error.UnexpectedState;
     try require(client_close_deadline > 1);
     try client_socket.send(io, &server_socket.address, close_packet);
 
@@ -236,7 +236,7 @@ pub fn main() !void {
     try require(close_route.connection_id == connection_handle);
     try require(std.mem.eql(u8, close_route.destination_connection_id.asSlice(), &server_dcid));
     try require(server.connectionState() == .draining);
-    const server_drain_deadline = server.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const server_drain_deadline = server.closeDeadline() orelse return error.UnexpectedState;
     try require(server_drain_deadline > 2);
     switch (server.peerClose() orelse return error.UnexpectedState) {
         .connection => |close| {

@@ -1,6 +1,6 @@
 //! Pure-Zig TLS 1.3 QUIC echo server for local process interoperability.
 //!
-//! Usage: quicz-tls13-process-echo-server <bind_host> <bind_port> [completion_target] [sequential|concurrent|concurrent-retry|concurrent-limit|concurrent-reset|concurrent-stop|concurrent-uni|concurrent-flow|rolling] [max_active_connections] [idle_timeout_millis]
+//! Usage: quicz-tls13-process-echo-server <bind_host> <bind_port> [completion_target] [sequential|concurrent|concurrent-retry|concurrent-limit|concurrent-reset|concurrent-stop|concurrent-uni|concurrent-flow|rolling] [max_active_connections] [idle_timeout_nanos]
 //!
 //! A concurrent mode with completion_target=0 runs until interrupted and
 //! requires an explicit positive max_active_connections value.
@@ -24,8 +24,8 @@ const server_scid = [_]u8{ 0x31, 0x32, 0x33, 0x34 };
 const max_initial_datagrams: usize = 4;
 const max_application_datagrams: usize = 16;
 const server_max_datagram_size: usize = 8192;
-const default_server_idle_timeout_millis: u64 = 30_000;
-const retry_token_lifetime_millis: u64 = 10_000;
+const default_server_idle_timeout_nanos: u64 = 30_000;
+const retry_token_lifetime_nanos: u64 = 10_000;
 const max_retry_datagram_size: usize = 256;
 const echo_stream_ids = [_]u64{ 0, 4 };
 const echo_payloads = [_][]const u8{ "hello", "world" };
@@ -78,15 +78,15 @@ const certificate_der = [_]u8{
     0x0a,
 };
 
-fn recvTimeoutForDeadline(io: std.Io, deadline_millis: ?i64) std.Io.Timeout {
-    const now_millis = std.Io.Clock.awake.now(io).toMilliseconds();
-    const timeout_millis = if (deadline_millis) |deadline|
-        @max(@as(i64, 0), deadline - now_millis)
+fn recvTimeoutForDeadline(io: std.Io, deadline_nanos: ?i64) std.Io.Timeout {
+    const now_nanos = std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
+    const timeout_nanos = if (deadline_nanos) |deadline|
+        @max(@as(i64, 0), deadline - now_nanos)
     else
         10_000;
     return .{ .duration = .{
         .clock = .awake,
-        .raw = std.Io.Duration.fromMilliseconds(timeout_millis),
+        .raw = std.Io.Duration.fromMilliseconds(@intCast(timeout_nanos / 1_000_000)),
     } };
 }
 
@@ -98,7 +98,7 @@ fn recvTimeout() std.Io.Timeout {
 }
 
 fn nowMillis(io: std.Io) i64 {
-    return std.Io.Clock.awake.now(io).toMilliseconds();
+    return std.Io.Clock.awake.now(io).toMilliseconds() * 1_000_000; // ms→ns
 }
 
 fn require(condition: bool) !void {
@@ -240,7 +240,7 @@ fn serveConcurrent(
     expect_client_stop_sending: bool,
     expect_client_uni_stream: bool,
     expect_flow_control: bool,
-    idle_timeout_millis: u64,
+    idle_timeout_nanos: u64,
 ) !void {
     const alpn = [_][]const u8{"hq-interop"};
     const max_routes = std.math.mul(usize, max_active_connections, 2) catch return error.InvalidConnectionCount;
@@ -268,7 +268,7 @@ fn serveConcurrent(
         const received = socket.receiveTimeout(
             io,
             &receive_buffer,
-            recvTimeoutForDeadline(io, if (next_deadline) |deadline| deadline.deadline_millis else null),
+            recvTimeoutForDeadline(io, if (next_deadline) |deadline| deadline.deadline_nanos else null),
         ) catch |err| switch (err) {
             error.Timeout => {
                 var due_datagrams: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
@@ -310,7 +310,7 @@ fn serveConcurrent(
             },
             else => return err,
         };
-        const now_millis = nowMillis(io);
+        const now_nanos = nowMillis(io);
         const path = try serverPath(bind_address, received.from);
         const action = try server_endpoint.feedDatagram(
             &endpoint_output,
@@ -365,7 +365,7 @@ fn serveConcurrent(
                     // Keep the local loss-recovery probe comfortably ahead of
                     // the configured endpoint idle timeout.
                     .initial_rtt_ns = 100000000,
-                    .max_idle_timeout_ms = idle_timeout_millis,
+                    .max_idle_timeout_ms = idle_timeout_nanos,
                 }, .{
                     .alpn = &alpn,
                     .cert_chain_der = &.{&certificate_der},
@@ -388,14 +388,14 @@ fn serveConcurrent(
                         allocator,
                         .retry,
                         initial_info.version,
-                        now_millis,
-                        retry_token_lifetime_millis,
+                        now_nanos,
+                        retry_token_lifetime_nanos,
                         path,
                         try randomRetryTokenNonce(io),
                     );
                     defer allocator.free(token);
                     const retry_datagram = try managed.transport.connection.issueRetryDatagram(
-                        now_millis,
+                        now_nanos,
                         initial_info.dcid,
                         initial_accept.source_connection_id,
                         managed.transport.localInitialSourceConnectionId(),
@@ -425,7 +425,7 @@ fn serveConcurrent(
                 const accepted = try server_endpoint.acceptInitialRecord(
                     handle,
                     managed,
-                    now_millis,
+                    now_nanos,
                     initial_accept,
                     managed.transport.localInitialSourceConnectionId(),
                     received.data,
@@ -455,7 +455,7 @@ fn serveConcurrent(
                     const retry_initial = try server_endpoint.validateRetryInitial(
                         &address_validation,
                         managed.handle,
-                        now_millis,
+                        now_nanos,
                         path,
                         received.data,
                         &[_]quic_packet.Version{.v1},
@@ -466,7 +466,7 @@ fn serveConcurrent(
                     const retry_initial_progress = try server_endpoint.driveInitialBackend(
                         managed.handle,
                         &retry_scratch,
-                        now_millis,
+                        now_nanos,
                         &[_]u8{},
                         retry_initial.initial_accept.version,
                         &retry_initial_outputs,
@@ -482,7 +482,7 @@ fn serveConcurrent(
                         managed.handle,
                         .handshake,
                         &retry_scratch,
-                        now_millis,
+                        now_nanos,
                         &retry_handshake_outputs,
                     );
                     for (retry_handshake_outputs[0..retry_handshake_progress.drain.datagrams_written]) |output| {
@@ -515,7 +515,7 @@ fn serveConcurrent(
                         const coalesced_handshake = try server_endpoint.processInitialWithHandshakeKeys(
                             managed.handle,
                             path,
-                            now_millis,
+                            now_nanos,
                             received.data,
                             &coalesced_scratch,
                             &coalesced_handshake_outputs,
@@ -540,7 +540,7 @@ fn serveConcurrent(
                                 const initial = try server_endpoint.processInitial(
                                     managed.handle,
                                     path,
-                                    now_millis,
+                                    now_nanos,
                                     long_packet,
                                     &initial_scratch,
                                     &[_]u8{},
@@ -572,7 +572,7 @@ fn serveConcurrent(
                                 const handshake = try server_endpoint.processHandshake(
                                     managed.handle,
                                     path,
-                                    now_millis,
+                                    now_nanos,
                                     long_packet,
                                     &handshake_scratch,
                                     &handshake_outputs,
@@ -597,7 +597,7 @@ fn serveConcurrent(
                     managed.handle,
                     managed.connectionRef(),
                     path,
-                    now_millis,
+                    now_nanos,
                     received.data,
                     .{
                         .space = .application,
@@ -622,7 +622,7 @@ fn serveConcurrent(
                 if (application_result.selected_output_path) |output_path| {
                     const path_output = (server_endpoint.pollOneRttDatagram(
                         managed.handle,
-                        now_millis,
+                        now_nanos,
                     ) catch |err| switch (err) {
                         error.ConnectionClosed => null,
                         else => return err,
@@ -714,7 +714,7 @@ fn serveConcurrent(
                 while (sent_packets < max_initial_datagrams) : (sent_packets += 1) {
                     const output_packet = (server_endpoint.pollOneRttDatagram(
                         managed.handle,
-                        now_millis + @as(i64, @intCast(sent_packets)),
+                        now_nanos + @as(i64, @intCast(sent_packets)),
                     ) catch |err| switch (err) {
                         error.ConnectionClosed => null,
                         else => return err,
@@ -760,36 +760,36 @@ pub fn main(init: std.process.Init) !void {
     else
         return error.MissingActiveConnectionCapacity;
     if (max_active_connections == 0) return error.InvalidConnectionCount;
-    const idle_timeout_millis = if (args.next()) |raw_timeout|
+    const idle_timeout_nanos = if (args.next()) |raw_timeout|
         try std.fmt.parseInt(u64, raw_timeout, 10)
     else
-        default_server_idle_timeout_millis;
+        default_server_idle_timeout_nanos;
     if (args.next() != null) return error.TooManyArgs;
     const bind_address = try std.Io.net.IpAddress.parseIp4(bind_host, bind_port);
     var socket = try bind_address.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer socket.close(io);
-    std.debug.print("zig_process_server: listening={s}:{d} completion_target={d} max_active_connections={d} idle_timeout_ms={d} mode={s}\n", .{ bind_host, bind_port, completion_target, max_active_connections, idle_timeout_millis, mode });
+    std.debug.print("zig_process_server: listening={s}:{d} completion_target={d} max_active_connections={d} idle_timeout_ms={d} mode={s}\n", .{ bind_host, bind_port, completion_target, max_active_connections, idle_timeout_nanos, mode });
 
     if (std.mem.eql(u8, mode, "concurrent") or std.mem.eql(u8, mode, "rolling")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, false, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, false, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-retry")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, true, 8, false, false, false, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, true, 8, false, false, false, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-limit")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 1, false, false, false, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 1, false, false, false, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-reset")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, true, false, false, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, true, false, false, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-stop")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, true, false, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, true, false, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-uni")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, true, false, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, true, false, idle_timeout_nanos);
     }
     if (std.mem.eql(u8, mode, "concurrent-flow")) {
-        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, false, true, idle_timeout_millis);
+        return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, false, true, idle_timeout_nanos);
     }
     if (!std.mem.eql(u8, mode, "sequential")) return error.InvalidMode;
     if (completion_target == 0) return error.InvalidConnectionCount;
@@ -1007,13 +1007,13 @@ pub fn main(init: std.process.Init) !void {
                 error.Timeout => break,
                 else => return err,
             };
-            const now_millis = 10 + @as(i64, @intCast(close_datagrams));
+            const now_nanos = 10 + @as(i64, @intCast(close_datagrams));
             const close_route = if ((received.data[0] & 0x80) == 0)
                 try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeys(
                     server_handle,
                     &connection,
                     server_path,
-                    now_millis,
+                    now_nanos,
                     received.data,
                 )
             else blk: {
@@ -1044,7 +1044,7 @@ pub fn main(init: std.process.Init) !void {
             defer allocator.free(close_packet);
             try socket.send(io, &received_initial.from, close_packet);
         }
-        const server_drain_deadline = connection.closeDeadlineMillis() orelse return error.UnexpectedState;
+        const server_drain_deadline = connection.closeDeadline() orelse return error.UnexpectedState;
         const server_retired = (try lifecycle.checkCloseTimeoutsAndRetireConnection(
             server_handle,
             &connection,

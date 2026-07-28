@@ -941,7 +941,7 @@ fn verifyManualSocketTranscriptDelivery() !ManualSocketTranscriptDelivery {
         &server_scid,
     )) orelse return error.UnexpectedState;
     defer allocator.free(close_datagram);
-    const client_close_deadline = client.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const client_close_deadline = client.closeDeadline() orelse return error.UnexpectedState;
     try require(client_close_deadline > 130);
     try client_socket.send(io, &server_socket.address, close_datagram);
 
@@ -956,7 +956,7 @@ fn verifyManualSocketTranscriptDelivery() !ManualSocketTranscriptDelivery {
     try require(close_route.connection_id == server_handle);
     try require(std.mem.eql(u8, close_route.destination_connection_id.asSlice(), &server_scid));
     try require(server.connectionState() == .draining);
-    const server_drain_deadline = server.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const server_drain_deadline = server.closeDeadline() orelse return error.UnexpectedState;
     try require(server_drain_deadline > 131);
     const server_close_error_code = switch (server.peerClose() orelse return error.UnexpectedState) {
         .connection => |close| blk: {

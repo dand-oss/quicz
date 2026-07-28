@@ -6,6 +6,27 @@
 //!   const delay = Duration.fromMicros(100);
 //!   const timeout = Duration.fromSecs(30);
 
+/// Time unit conversion constants (signed, for timestamp arithmetic).
+/// Internal timestamps are nanoseconds throughout.
+pub const ns_per_us: i64 = 1_000;
+pub const ns_per_ms: i64 = 1_000_000;
+pub const ns_per_s: i64 = 1_000_000_000;
+
+/// Convert nanoseconds to milliseconds (truncating).
+pub fn nanosToMillis(ns: i64) i64 {
+    return @divTrunc(ns, ns_per_ms);
+}
+
+/// Convert milliseconds to nanoseconds.
+pub fn millisToNanos(ms_val: i64) i64 {
+    return ms_val * ns_per_ms;
+}
+
+/// Convert nanoseconds to seconds (floating point, for CUBIC formula).
+pub fn nanosToSecsF(ns: i64) f64 {
+    return @as(f64, @floatFromInt(ns)) / @as(f64, @floatFromInt(ns_per_s));
+}
+
 /// Time duration with nanosecond precision (u64 nanoseconds internally).
 /// Nanosecond-precision duration for RTT, PTO, and timing calculations.
 pub const Duration = struct {
@@ -64,7 +85,7 @@ pub const Duration = struct {
     pub const one_micros = Duration{ .ns = 1_000 };
 
     /// 1 millisecond.
-    pub const one_millis = Duration{ .ns = 1_000_000 };
+    pub const one_nanos = Duration{ .ns = 1_000_000 };
 
     /// 1 second.
     pub const one_sec = Duration{ .ns = 1_000_000_000 };
@@ -143,7 +164,7 @@ test "Duration fromMicros (1μs MIN_RTT)" {
 
 test "Duration constants" {
     try std.testing.expectEqual(@as(u64, 1_000), Duration.one_micros.ns);
-    try std.testing.expectEqual(@as(u64, 1_000_000), Duration.one_millis.ns);
+    try std.testing.expectEqual(@as(u64, 1_000_000), Duration.one_nanos.ns);
     try std.testing.expectEqual(@as(u64, 1_000_000_000), Duration.one_sec.ns);
 }
 

@@ -60,20 +60,20 @@ pub fn main() !void {
     try require((try endpoint_lifecycle.serviceRecoveryTimer(
         pto_connection_id,
         &pto_conn,
-        first.timer.deadline_millis - 1,
+        first.timer.deadline_nanos - 1,
     )) == null);
     try require(pto_conn.pending_ping_count == 0);
 
     const pto_serviced = (try endpoint_lifecycle.serviceRecoveryTimer(
         pto_connection_id,
         &pto_conn,
-        first.timer.deadline_millis,
+        first.timer.deadline_nanos,
     )) orelse return error.EndpointRecoveryTimerExampleFailed;
     try require(pto_serviced.connection_id == pto_connection_id);
     try require(pto_serviced.timer.kind == .pto);
     try require(pto_conn.pending_ping_count == 1);
 
-    try pto_conn.receiveAckInSpace(.application, pto_serviced.timer.deadline_millis + 1, .{
+    try pto_conn.receiveAckInSpace(.application, pto_serviced.timer.deadline_nanos + 1, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -88,7 +88,7 @@ pub fn main() !void {
     const loss_serviced = (try endpoint_lifecycle.serviceRecoveryTimer(
         loss_connection_id,
         &loss_conn,
-        second.timer.deadline_millis,
+        second.timer.deadline_nanos,
     )) orelse return error.EndpointRecoveryTimerExampleFailed;
     try require(loss_serviced.connection_id == loss_connection_id);
     try require(loss_serviced.timer.kind == .loss_time);
@@ -117,7 +117,7 @@ pub fn main() !void {
     try require(endpoint_lifecycle.recoveryTimerCount() == 1);
     try closing_conn.closeConnection(0, @intFromEnum(quicz.frame.FrameType.stream), "done");
     try endpoint_lifecycle.armRecoveryTimerFromConnection(closing_connection_id, &closing_conn);
-    const closing_disarmed = endpoint_lifecycle.recoveryTimerCount() == 0 and closing_conn.lossDetectionTimerDeadlineMillis() == null;
+    const closing_disarmed = endpoint_lifecycle.recoveryTimerCount() == 0 and closing_conn.lossDetectionTimerDeadline() == null;
     try require(closing_disarmed);
     const closing_retired = endpoint_lifecycle.retireConnection(closing_connection_id);
     try require(closing_retired.routes_retired == 1);
@@ -170,7 +170,7 @@ pub fn main() !void {
     const long_pto_probe_result = try long_pto_lifecycle.serviceRecoveryTimerAndPollProtectedLongDatagram(
         protected_client_id,
         &long_pto_client,
-        long_pto_timer.timer.deadline_millis,
+        long_pto_timer.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
         &[_]u8{},
@@ -213,7 +213,7 @@ pub fn main() !void {
     const installed_pto_probe_result = try installed_pto_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         protected_client_id,
         &installed_pto_client,
-        installed_pto_timer.timer.deadline_millis,
+        installed_pto_timer.timer.deadline_nanos,
         &server_dcid,
     );
     const installed_pto_serviced = installed_pto_probe_result.serviced orelse return error.EndpointRecoveryTimerExampleFailed;
@@ -250,7 +250,7 @@ pub fn main() !void {
     const installed_handshake_pto_probe_result = try installed_handshake_pto_lifecycle.serviceRecoveryTimerAndPollProtectedHandshakeDatagramWithInstalledKeys(
         protected_client_id,
         &installed_handshake_pto_client,
-        installed_handshake_pto_timer.timer.deadline_millis,
+        installed_handshake_pto_timer.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
     );
@@ -295,7 +295,7 @@ pub fn main() !void {
     const installed_zero_rtt_pto_probe_result = try installed_zero_rtt_pto_lifecycle.serviceRecoveryTimerAndPollProtectedZeroRttDatagramWithInstalledKeys(
         protected_client_id,
         &installed_zero_rtt_pto_client,
-        installed_zero_rtt_pto_timer.timer.deadline_millis,
+        installed_zero_rtt_pto_timer.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
     );
@@ -783,10 +783,10 @@ pub fn main() !void {
     std.debug.print("[endpoint-timers] first_connection={} first_kind={s} first_deadline={} second_connection={} second_kind={s} second_deadline={} pto_ping={} loss_remaining={} close_disarmed={} timers_remaining={} routes_remaining={} long_pto_bytes={} installed_pto_bytes={} installed_handshake_pto_bytes={} installed_zero_rtt_pto_bytes={} protected_bytes={} protected_timers={}\n", .{
         first.connection_id,
         @tagName(first.timer.kind),
-        first.timer.deadline_millis,
+        first.timer.deadline_nanos,
         second.connection_id,
         @tagName(second.timer.kind),
-        second.timer.deadline_millis,
+        second.timer.deadline_nanos,
         pto_conn.pending_ping_count,
         loss_conn.sentPacketCount(.application),
         closing_disarmed,

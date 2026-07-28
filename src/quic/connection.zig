@@ -333,37 +333,37 @@ const LossDetectionResult = struct {
     pc_candidate_count: usize = 0,
     pc_first_packet_number: u64 = 0,
     pc_last_packet_number: u64 = 0,
-    pc_first_sent_time_millis: i64 = 0,
-    pc_last_sent_time_millis: i64 = 0,
+    pc_first_sent_time_nanos: i64 = 0,
+    pc_last_sent_time_nanos: i64 = 0,
     pc_contiguous_packet_numbers: bool = true,
-    largest_lost_sent_time_millis: ?i64 = null,
+    largest_lost_sent_time_nanos: ?i64 = null,
     largest_lost_packet_number: ?u64 = null,
 
-    fn recordLostPacket(self: *LossDetectionResult, sent_packet: SentPacket, first_rtt_sample_sent_time_millis: ?i64) void {
+    fn recordLostPacket(self: *LossDetectionResult, sent_packet: SentPacket, first_rtt_sample_sent_time_nanos: ?i64) void {
         self.lost_bytes = std.math.add(usize, self.lost_bytes, sent_packet.bytes) catch std.math.maxInt(usize);
-        self.largest_lost_sent_time_millis = if (self.largest_lost_sent_time_millis) |current|
-            @max(current, sent_packet.sent_time_millis)
+        self.largest_lost_sent_time_nanos = if (self.largest_lost_sent_time_nanos) |current|
+            @max(current, sent_packet.sent_time_nanos)
         else
-            sent_packet.sent_time_millis;
+            sent_packet.sent_time_nanos;
         self.largest_lost_packet_number = if (self.largest_lost_packet_number) |current|
             @max(current, sent_packet.packet_number)
         else
             sent_packet.packet_number;
 
-        const first_rtt_sent_time = first_rtt_sample_sent_time_millis orelse return;
-        if (sent_packet.sent_time_millis <= first_rtt_sent_time) return;
+        const first_rtt_sent_time = first_rtt_sample_sent_time_nanos orelse return;
+        if (sent_packet.sent_time_nanos <= first_rtt_sent_time) return;
 
         if (self.pc_candidate_count == 0) {
             self.pc_first_packet_number = sent_packet.packet_number;
             self.pc_last_packet_number = sent_packet.packet_number;
-            self.pc_first_sent_time_millis = sent_packet.sent_time_millis;
-            self.pc_last_sent_time_millis = sent_packet.sent_time_millis;
+            self.pc_first_sent_time_nanos = sent_packet.sent_time_nanos;
+            self.pc_last_sent_time_nanos = sent_packet.sent_time_nanos;
         } else {
             if (sent_packet.packet_number != saturatingAddU64(self.pc_last_packet_number, 1)) {
                 self.pc_contiguous_packet_numbers = false;
             }
             self.pc_last_packet_number = sent_packet.packet_number;
-            self.pc_last_sent_time_millis = sent_packet.sent_time_millis;
+            self.pc_last_sent_time_nanos = sent_packet.sent_time_nanos;
         }
         self.pc_candidate_count += 1;
     }
@@ -375,10 +375,10 @@ const LossDetectionResult = struct {
     ) bool {
         if (self.pc_candidate_count < 2 or !self.pc_contiguous_packet_numbers) return false;
         const duration_ns = switch (space) {
-            .initial, .handshake => recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay(),
-            .application => recovery_state.persistentCongestionDurationNs(),
+            .initial, .handshake => recovery_state.persistentCongestionDurationWithoutMaxAckDelay(),
+            .application => recovery_state.persistentCongestionDuration(),
         };
-        return elapsedMillis(self.pc_first_sent_time_millis, self.pc_last_sent_time_millis) * 1_000_000 >=
+        return elapsedNanos(self.pc_first_sent_time_nanos, self.pc_last_sent_time_nanos) >=
             duration_ns;
     }
 };
@@ -387,9 +387,9 @@ fn saturatingMulU64(a: u64, b: u64) u64 {
     return std.math.mul(u64, a, b) catch std.math.maxInt(u64);
 }
 
-fn saturatingAddMillis(now_millis: i64, duration_millis: u64) i64 {
-    const duration_i64 = std.math.cast(i64, duration_millis) orelse return std.math.maxInt(i64);
-    return std.math.add(i64, now_millis, duration_i64) catch std.math.maxInt(i64);
+fn saturatingAddNanos(now_nanos: i64, duration_nanos: u64) i64 {
+    const duration_i64 = std.math.cast(i64, duration_nanos) orelse return std.math.maxInt(i64);
+    return std.math.add(i64, now_nanos, duration_i64) catch std.math.maxInt(i64);
 }
 
 fn ptoDeadlineFor(
@@ -401,9 +401,9 @@ fn ptoDeadlineFor(
     var latest_sent_time: ?i64 = null;
     for (sent_packets) |sent_packet| {
         latest_sent_time = if (latest_sent_time) |current|
-            @max(current, sent_packet.sent_time_millis)
+            @max(current, sent_packet.sent_time_nanos)
         else
-            sent_packet.sent_time_millis;
+            sent_packet.sent_time_nanos;
     }
     const sent_time = latest_sent_time orelse return null;
     var deadline_recovery_state = recovery_state;
@@ -412,11 +412,11 @@ fn ptoDeadlineFor(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddMillis(sent_time, (pto_ns + 999_999) / 1_000_000);
+    return saturatingAddNanos(sent_time, pto_ns);
 }
 
 fn ptoDeadlineFromStart(
-    start_millis: i64,
+    start_nanos: i64,
     recovery_state: recovery.Recovery,
     include_max_ack_delay: bool,
     pto_count: u8,
@@ -427,7 +427,7 @@ fn ptoDeadlineFromStart(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddMillis(start_millis, (pto_ns + 999_999) / 1_000_000);
+    return saturatingAddNanos(start_nanos, pto_ns);
 }
 
 fn saturatingAddU64(a: u64, b: u64) u64 {
@@ -449,9 +449,9 @@ fn deinitPeerClose(close: *PeerClose, allocator: std.mem.Allocator) void {
 }
 
 
-fn elapsedMillis(sent_time_millis: i64, now_millis: i64) u64 {
-    if (now_millis <= sent_time_millis) return 0;
-    const delta = std.math.sub(i64, now_millis, sent_time_millis) catch return std.math.maxInt(u64);
+fn elapsedNanos(sent_time_nanos: i64, now_nanos: i64) u64 {
+    if (now_nanos <= sent_time_nanos) return 0;
+    const delta = std.math.sub(i64, now_nanos, sent_time_nanos) catch return std.math.maxInt(u64);
     return @intCast(delta);
 }
 
@@ -671,7 +671,7 @@ pub const Connection = struct {
     peer_preferred_address: ?PreferredAddress,
     peer_version_information_chosen_version: ?packet.Version,
     peer_version_information_available_versions: ?[]packet.Version,
-    last_packet_activity_millis: ?i64,
+    last_packet_activity_nanos: ?i64,
     next_stream_id: u64,
     next_uni_stream_id: u64,
     initial_packet_space: PacketNumberSpaceState,
@@ -730,9 +730,9 @@ pub const Connection = struct {
     recovery_state: recovery.Recovery,
     sent_packets: std.ArrayList(SentPacket),
     largest_acknowledged: ?u64,
-    first_rtt_sample_sent_time_millis: ?i64,
-    loss_deadline_millis: ?i64,
-    anti_deadlock_pto_start_millis: ?i64,
+    first_rtt_sample_sent_time_nanos: ?i64,
+    loss_deadline_nanos: ?i64,
+    anti_deadlock_pto_start_nanos: ?i64,
     ecn_sent_ect0: u64,
     ecn_sent_ect1: u64,
     ecn_largest_acknowledged: ?u64,
@@ -770,7 +770,7 @@ pub const Connection = struct {
     peer_close: ?PeerClose,
     pending_close: ?PendingCloseFrame,
     state: ConnectionState,
-    close_deadline_millis: ?i64,
+    close_deadline_nanos: ?i64,
     closed: bool,
 
     /// Create a connection with empty send and receive state.
@@ -833,7 +833,7 @@ pub const Connection = struct {
             .peer_preferred_address = null,
             .peer_version_information_chosen_version = null,
             .peer_version_information_available_versions = null,
-            .last_packet_activity_millis = null,
+            .last_packet_activity_nanos = null,
             .next_stream_id = switch (side) {
                 .client => 0,
                 .server => 1,
@@ -904,9 +904,9 @@ pub const Connection = struct {
             }),
             .sent_packets = .empty,
             .largest_acknowledged = null,
-            .first_rtt_sample_sent_time_millis = null,
-            .loss_deadline_millis = null,
-            .anti_deadlock_pto_start_millis = null,
+            .first_rtt_sample_sent_time_nanos = null,
+            .loss_deadline_nanos = null,
+            .anti_deadlock_pto_start_nanos = null,
             .ecn_sent_ect0 = 0,
             .ecn_sent_ect1 = 0,
             .ecn_largest_acknowledged = null,
@@ -941,7 +941,7 @@ pub const Connection = struct {
             .peer_close = null,
             .pending_close = null,
             .state = .active,
-            .close_deadline_millis = null,
+            .close_deadline_nanos = null,
             .closed = false,
         };
         if (config.initial_congestion_window_packets) |pkts| {
@@ -1031,8 +1031,8 @@ pub const Connection = struct {
     }
 
     /// Return the close/drain deadline in milliseconds, or null when no timer is active.
-    pub fn closeDeadlineMillis(self: Connection) ?i64 {
-        return self.close_deadline_millis;
+    pub fn closeDeadline(self: Connection) ?i64 {
+        return self.close_deadline_nanos;
     }
 
     /// Return the peer close frame that moved this connection into draining, if any.
@@ -1086,7 +1086,7 @@ pub const Connection = struct {
     /// RFC 9000 uses the shorter non-zero timeout advertised by either endpoint.
     /// A zero value from one side means that side has no preference; both zero
     /// disables idle timeout handling in this frame-payload model.
-    pub fn effectiveIdleTimeoutMillis(self: Connection) ?u64 {
+    pub fn effectiveIdleTimeout(self: Connection) ?u64 {
         const local = self.config.max_idle_timeout_ms;
         const peer = self.peer_max_idle_timeout_ms;
         if (local == 0 and peer == 0) return null;
@@ -1096,10 +1096,10 @@ pub const Connection = struct {
     }
 
     /// Return the current idle timeout deadline, or null when the timer is inactive.
-    pub fn idleTimeoutDeadlineMillis(self: Connection) ?i64 {
-        const idle_timeout = self.effectiveIdleTimeoutMillis() orelse return null;
-        const last_activity = self.last_packet_activity_millis orelse return null;
-        return saturatingAddMillis(last_activity, idle_timeout);
+    pub fn idleTimeoutDeadline(self: Connection) ?i64 {
+        const idle_timeout = self.effectiveIdleTimeout() orelse return null;
+        const last_activity = self.last_packet_activity_nanos orelse return null;
+        return saturatingAddNanos(last_activity, @intCast(duration_mod.millisToNanos(@intCast(idle_timeout))));
     }
 
     /// Return whether the peer disabled active connection migration.
@@ -1183,13 +1183,13 @@ pub const Connection = struct {
     /// the aggregate loss detection timer with the supplied controlled clock.
     pub fn recordPeerAddressDatagramReceived(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         bytes: usize,
     ) Error!?LossDetectionTimerDeadline {
         const was_at_limit = self.serverAtAntiAmplificationLimit();
         try self.recordPeerAddressBytesReceived(bytes);
         if (!was_at_limit) return null;
-        return try self.serviceLossDetectionTimer(now_millis);
+        return try self.serviceLossDetectionTimer(now_nanos);
     }
 
     /// Mark the peer address as validated and lift the modeled anti-amplification limit.
@@ -1367,7 +1367,7 @@ pub const Connection = struct {
     }
 
     /// Return the current smoothed RTT estimate for one packet number space.
-    pub fn smoothedRttMillis(self: Connection, space: PacketNumberSpace) u64 {
+    pub fn smoothedRtt(self: Connection, space: PacketNumberSpace) u64 {
         const ns = switch (space) {
             .initial => self.initial_packet_space.recovery_state.smoothed_rtt_ns,
             .handshake => self.handshake_packet_space.recovery_state.smoothed_rtt_ns,
@@ -1377,11 +1377,11 @@ pub const Connection = struct {
     }
 
     /// Return the current time-threshold loss deadline for one packet number space.
-    pub fn lossDetectionDeadlineMillis(self: Connection, space: PacketNumberSpace) ?i64 {
+    pub fn lossDetectionDeadline(self: Connection, space: PacketNumberSpace) ?i64 {
         return switch (space) {
-            .initial => self.initial_packet_space.loss_deadline_millis,
-            .handshake => self.handshake_packet_space.loss_deadline_millis,
-            .application => self.loss_deadline_millis,
+            .initial => self.initial_packet_space.loss_deadline_nanos,
+            .handshake => self.handshake_packet_space.loss_deadline_nanos,
+            .application => self.loss_deadline_nanos,
         };
     }
 
@@ -1393,14 +1393,14 @@ pub const Connection = struct {
     /// tracked in `sent_packets`, so they do not arm PTO. RFC 9002 forbids
     /// arming Application Data PTO before the handshake is confirmed, and
     /// disarms PTO while an unvalidated server has no anti-amplification credit.
-    pub fn ptoDeadlineMillis(self: Connection, space: PacketNumberSpace) ?i64 {
+    pub fn ptoDeadline(self: Connection, space: PacketNumberSpace) ?i64 {
         if (!self.ptoAllowedInSpace(space)) return null;
         const pto_count = self.connectionPtoBackoffCount();
         return switch (space) {
             .initial => ptoDeadlineFor(self.initial_packet_space.sent_packets.items, self.initial_packet_space.recovery_state, false, pto_count) orelse
-                self.antiDeadlockPtoDeadlineMillis(.initial, pto_count),
+                self.antiDeadlockPtoDeadline(.initial, pto_count),
             .handshake => ptoDeadlineFor(self.handshake_packet_space.sent_packets.items, self.handshake_packet_space.recovery_state, false, pto_count) orelse
-                self.antiDeadlockPtoDeadlineMillis(.handshake, pto_count),
+                self.antiDeadlockPtoDeadline(.handshake, pto_count),
             .application => ptoDeadlineFor(self.sent_packets.items, self.recovery_state, true, pto_count),
         };
     }
@@ -1412,19 +1412,19 @@ pub const Connection = struct {
     /// the earliest PTO deadline is returned. The caller can pass the same clock
     /// value to `checkLossDetectionTimeouts()` and `checkPtoTimeouts()` when the
     /// deadline expires.
-    pub fn lossDetectionTimerDeadlineMillis(self: Connection) ?LossDetectionTimerDeadline {
+    pub fn lossDetectionTimerDeadline(self: Connection) ?LossDetectionTimerDeadline {
         if (self.isClosingOrClosed()) return null;
 
         const spaces = [_]PacketNumberSpace{ .initial, .handshake, .application };
 
         var loss_deadline: ?LossDetectionTimerDeadline = null;
         for (spaces) |space| {
-            const deadline = self.lossDetectionDeadlineMillis(space) orelse continue;
-            if (loss_deadline == null or deadline < loss_deadline.?.deadline_millis) {
+            const deadline = self.lossDetectionDeadline(space) orelse continue;
+            if (loss_deadline == null or deadline < loss_deadline.?.deadline_nanos) {
                 loss_deadline = .{
                     .space = space,
                     .kind = .loss_time,
-                    .deadline_millis = deadline,
+                    .deadline_nanos = deadline,
                 };
             }
         }
@@ -1432,12 +1432,12 @@ pub const Connection = struct {
 
         var pto_deadline: ?LossDetectionTimerDeadline = null;
         for (spaces) |space| {
-            const deadline = self.ptoDeadlineMillis(space) orelse continue;
-            if (pto_deadline == null or deadline < pto_deadline.?.deadline_millis) {
+            const deadline = self.ptoDeadline(space) orelse continue;
+            if (pto_deadline == null or deadline < pto_deadline.?.deadline_nanos) {
                 pto_deadline = .{
                     .space = space,
                     .kind = .pto,
-                    .deadline_millis = deadline,
+                    .deadline_nanos = deadline,
                 };
             }
         }
@@ -1452,13 +1452,13 @@ pub const Connection = struct {
     /// probing. Loss-time service drains due loss deadlines; PTO service handles
     /// one earliest PTO expiration and advances the connection-level backoff.
     /// The returned value is the earliest timer that caused this service call to run.
-    pub fn serviceLossDetectionTimer(self: *Connection, now_millis: i64) Error!?LossDetectionTimerDeadline {
-        const deadline = self.lossDetectionTimerDeadlineMillis() orelse return null;
-        if (deadline.deadline_millis > now_millis) return null;
+    pub fn serviceLossDetectionTimer(self: *Connection, now_nanos: i64) Error!?LossDetectionTimerDeadline {
+        const deadline = self.lossDetectionTimerDeadline() orelse return null;
+        if (deadline.deadline_nanos > now_nanos) return null;
 
         switch (deadline.kind) {
-            .loss_time => try self.checkLossDetectionTimeouts(now_millis),
-            .pto => try self.checkPtoTimeouts(now_millis),
+            .loss_time => try self.checkLossDetectionTimeouts(now_nanos),
+            .pto => try self.checkPtoTimeouts(now_nanos),
         }
         return deadline;
     }
@@ -1714,13 +1714,13 @@ pub const Connection = struct {
     /// key-phase transition, then stop accepting packets protected with it.
     /// Socket loops use this deadline together with idle, close, and recovery
     /// deadlines so an otherwise idle connection still discards old keys.
-    pub fn oneRttKeyDiscardDeadlineMillis(self: Connection) ?i64 {
+    pub fn oneRttKeyDiscardDeadline(self: Connection) ?i64 {
         var deadline: ?i64 = null;
         if (self.local_one_rtt_key_phase_state) |state| {
-            if (state.previousDiscardDeadlineMillis()) |candidate| deadline = candidate;
+            if (state.previousDiscardDeadline()) |candidate| deadline = candidate;
         }
         if (self.peer_one_rtt_key_phase_state) |state| {
-            if (state.previousDiscardDeadlineMillis()) |candidate| {
+            if (state.previousDiscardDeadline()) |candidate| {
                 if (deadline == null or candidate < deadline.?) deadline = candidate;
             }
         }
@@ -1728,13 +1728,13 @@ pub const Connection = struct {
     }
 
     /// Discard retained 1-RTT generations whose PTO retain window has elapsed.
-    pub fn discardExpiredOneRttKeys(self: *Connection, now_millis: i64) bool {
+    pub fn discardExpiredOneRttKeys(self: *Connection, now_nanos: i64) bool {
         var discarded = false;
         if (self.local_one_rtt_key_phase_state) |*state| {
-            discarded = state.discardExpiredPrevious(now_millis) or discarded;
+            discarded = state.discardExpiredPrevious(now_nanos) or discarded;
         }
         if (self.peer_one_rtt_key_phase_state) |*state| {
-            discarded = state.discardExpiredPrevious(now_millis) or discarded;
+            discarded = state.discardExpiredPrevious(now_nanos) or discarded;
         }
         return discarded;
     }
@@ -1745,15 +1745,15 @@ pub const Connection = struct {
     /// confirmation. A second local update is rejected until an Application ACK
     /// covers a packet number sent with the new key phase.
     /// Schedule the retained previous-generation key for discard one PTO after
-    /// `now_millis`, so delayed packets protected with the old key phase can be
+    /// `now_nanos`, so delayed packets protected with the old key phase can be
     /// opened during the retain window and the old key is dropped afterwards
     /// (RFC 9001 §6.5 / RFC 9002 §6.2).
     fn schedulePreviousKeyDiscard(
         self: *Connection,
         state: *protection.Aes128KeyPhaseState,
-        now_millis: ?i64,
+        now_nanos: ?i64,
     ) void {
-        const now = now_millis orelse return;
+        const now = now_nanos orelse return;
         const deadline = ptoDeadlineFromStart(
             now,
             self.recovery_state,
@@ -1769,7 +1769,7 @@ pub const Connection = struct {
         if (self.local_one_rtt_key_update_ack_threshold != null) return error.InvalidPacket;
         if (self.local_one_rtt_key_phase_state) |*state| {
             state.initiateKeyUpdate();
-            self.schedulePreviousKeyDiscard(state, self.last_packet_activity_millis);
+            self.schedulePreviousKeyDiscard(state, self.last_packet_activity_nanos);
             self.local_one_rtt_key_update_ack_threshold = self.next_packet_number;
             return;
         }
@@ -1810,14 +1810,14 @@ pub const Connection = struct {
     /// pending CONNECTION_CLOSE output and starts the close/draining timeout.
     /// Null means the datagram was too short, used an unknown token, matched
     /// only a retired token, or the connection was already fully closed.
-    pub fn processStatelessResetDatagram(self: *Connection, now_millis: i64, datagram: []const u8) ?u64 {
-        self.expireCloseState(now_millis);
-        self.expireIdleState(now_millis);
+    pub fn processStatelessResetDatagram(self: *Connection, now_nanos: i64, datagram: []const u8) ?u64 {
+        self.expireCloseState(now_nanos);
+        self.expireIdleState(now_nanos);
         if (self.state == .closed) return null;
 
         const sequence_number = self.detectStatelessReset(datagram) orelse return null;
         self.clearPendingCloseFrame();
-        self.enterDrainingState(now_millis);
+        self.enterDrainingState(now_nanos);
         return sequence_number;
     }
 
@@ -1976,14 +1976,14 @@ pub const Connection = struct {
     /// remains endpoint policy.
     pub fn issueRetryDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         client_source_connection_id: []const u8,
         retry_source_connection_id: []const u8,
         token: []const u8,
     ) Error![]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.side != .server or token.len == 0) return error.InvalidPacket;
         if (self.initial_packet_space.discarded or self.initial_packet_space.next_peer_packet_number != 0) return error.InvalidPacket;
@@ -2019,7 +2019,7 @@ pub const Connection = struct {
         self.recordOriginalDestinationConnectionId(original_destination_connection_id);
         self.retry_source_connection_id = owned_retry_scid;
         self.recordPeerAddressBytesSent(datagram.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return datagram;
     }
 
@@ -2033,12 +2033,12 @@ pub const Connection = struct {
     /// and endpoint DCID switching remain endpoint policy.
     pub fn processRetryDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         datagram: []const u8,
     ) Error!void {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.side != .client or self.retry_token != null) return error.InvalidPacket;
         if (self.initial_packet_space.discarded) return error.InvalidPacket;
@@ -2071,7 +2071,7 @@ pub const Connection = struct {
         self.recordOriginalDestinationConnectionId(original_destination_connection_id);
         self.retry_token = owned_token;
         self.retry_source_connection_id = owned_retry_scid;
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
     }
 
     /// 重置 Initial packet space 的发送侧状态，用于 Retry 后重发 ClientHello。
@@ -2123,13 +2123,13 @@ pub const Connection = struct {
     /// version.
     pub fn processVersionNegotiationDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         original_destination_connection_id: []const u8,
         local_initial_source_connection_id: []const u8,
         datagram: []const u8,
     ) Error!?packet.Version {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.side != .client) return error.InvalidPacket;
         if (original_destination_connection_id.len > max_connection_id_len) return error.InvalidPacket;
@@ -2155,13 +2155,13 @@ pub const Connection = struct {
 
         const selected = connection_version.selectMutualVersion(self.config.available_versions, negotiation.versions) orelse return error.InvalidPacket;
         self.version_negotiation_selected_version = selected;
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return selected;
     }
 
     /// Create a server-authenticated address-validation token.
     ///
-    /// The token is bound to `peer_address`, expires after `lifetime_millis`,
+    /// The token is bound to `peer_address`, expires after `lifetime_nanos`,
     /// and is authenticated with `secret`. The peer address is included in the
     /// MAC input but not serialized into the token. Callers pass `.retry`
     /// tokens to `issueRetryDatagram()` and `.new_token` values to
@@ -2170,12 +2170,12 @@ pub const Connection = struct {
         self: *Connection,
         secret: address_validation_token.Secret,
         kind: address_validation_token.Kind,
-        now_millis: i64,
-        lifetime_millis: u64,
+        now_nanos: i64,
+        lifetime_nanos: u64,
         peer_address: []const u8,
         nonce: address_validation_token.Nonce,
     ) Error![]u8 {
-        return self.issueAddressValidationTokenForVersion(secret, kind, .v1, now_millis, lifetime_millis, peer_address, nonce);
+        return self.issueAddressValidationTokenForVersion(secret, kind, .v1, now_nanos, lifetime_nanos, peer_address, nonce);
     }
 
     /// Create a server-authenticated token for a specific QUIC version.
@@ -2184,21 +2184,21 @@ pub const Connection = struct {
         secret: address_validation_token.Secret,
         kind: address_validation_token.Kind,
         originating_version: packet.Version,
-        now_millis: i64,
-        lifetime_millis: u64,
+        now_nanos: i64,
+        lifetime_nanos: u64,
         peer_address: []const u8,
         nonce: address_validation_token.Nonce,
     ) Error![]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.side != .server) return error.InvalidPacket;
 
         return address_validation_token.encode(self.allocator, secret, .{
             .kind = kind,
             .originating_version = originating_version,
-            .issued_millis = now_millis,
-            .lifetime_millis = lifetime_millis,
+            .issued_nanos = now_nanos,
+            .lifetime_nanos = lifetime_nanos,
             .peer_address = peer_address,
             .nonce = nonce,
         }) catch |err| switch (err) {
@@ -2218,11 +2218,11 @@ pub const Connection = struct {
         self: *Connection,
         secret: address_validation_token.Secret,
         expected_kind: address_validation_token.Kind,
-        now_millis: i64,
+        now_nanos: i64,
         peer_address: []const u8,
         token: []const u8,
     ) Error!void {
-        try self.validateAddressValidationTokenForVersion(secret, expected_kind, .v1, now_millis, peer_address, token);
+        try self.validateAddressValidationTokenForVersion(secret, expected_kind, .v1, now_nanos, peer_address, token);
     }
 
     /// Validate a server-authenticated token for an expected QUIC version.
@@ -2231,12 +2231,12 @@ pub const Connection = struct {
         secret: address_validation_token.Secret,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         peer_address: []const u8,
         token: []const u8,
     ) Error!void {
         const secrets = [_]address_validation_token.Secret{secret};
-        try self.validateAddressValidationTokenWithSecretsForVersion(&secrets, expected_kind, expected_originating_version, now_millis, peer_address, token);
+        try self.validateAddressValidationTokenWithSecretsForVersion(&secrets, expected_kind, expected_originating_version, now_nanos, peer_address, token);
     }
 
     /// Validate a server-authenticated token against rotated endpoint secrets.
@@ -2249,11 +2249,11 @@ pub const Connection = struct {
         self: *Connection,
         secrets: []const address_validation_token.Secret,
         expected_kind: address_validation_token.Kind,
-        now_millis: i64,
+        now_nanos: i64,
         peer_address: []const u8,
         token: []const u8,
     ) Error!void {
-        try self.validateAddressValidationTokenWithSecretsForVersion(secrets, expected_kind, .v1, now_millis, peer_address, token);
+        try self.validateAddressValidationTokenWithSecretsForVersion(secrets, expected_kind, .v1, now_nanos, peer_address, token);
     }
 
     /// Validate a version-bound server-authenticated token against rotated secrets.
@@ -2262,21 +2262,21 @@ pub const Connection = struct {
         secrets: []const address_validation_token.Secret,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         peer_address: []const u8,
         token: []const u8,
     ) Error!void {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.side != .server or token.len == 0) return error.InvalidPacket;
 
-        _ = address_validation_token.validateAnySecretForVersion(secrets, expected_kind, expected_originating_version, now_millis, peer_address, token) catch return error.InvalidPacket;
+        _ = address_validation_token.validateAnySecretForVersion(secrets, expected_kind, expected_originating_version, now_nanos, peer_address, token) catch return error.InvalidPacket;
         if (expected_kind == .retry and !self.consumePendingRetryToken(token)) {
             return error.InvalidPacket;
         }
         self.peer_address_validated = true;
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
     }
 
     /// Register an opaque Retry token that a server will accept once.
@@ -2381,11 +2381,11 @@ pub const Connection = struct {
     /// Timeout uses the current simplified PTO. Endpoint path identity is not
     /// modeled until the UDP routing layer exists, so this only retries the
     /// frame-payload validation data already tracked by the connection.
-    pub fn checkPathValidationTimeouts(self: *Connection, now_millis: i64) Error!void {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+    pub fn checkPathValidationTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
-        try self.expirePathChallenges(now_millis);
+        try self.expirePathChallenges(now_nanos);
     }
 
     /// Apply due time-threshold loss detection in all packet number spaces.
@@ -2393,11 +2393,11 @@ pub const Connection = struct {
     /// This deterministic timer hook is part of the frame-payload recovery
     /// skeleton. It does not send PTO probes yet; it only removes packets whose
     /// RFC 9002 time-threshold loss deadline has expired.
-    pub fn checkLossDetectionTimeouts(self: *Connection, now_millis: i64) Error!void {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+    pub fn checkLossDetectionTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
-        try self.expireLossDetectionTimeouts(now_millis);
+        try self.expireLossDetectionTimeouts(now_nanos);
     }
 
     /// Queue PTO probes when simplified PTO deadlines expire.
@@ -2408,20 +2408,20 @@ pub const Connection = struct {
     /// falling back to a PING. When one space expires, the connection-level PTO
     /// backoff advances and other packet number spaces that still have
     /// in-flight packets also get peer probes.
-    pub fn checkPtoTimeouts(self: *Connection, now_millis: i64) Error!void {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+    pub fn checkPtoTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         // Drop retained previous-generation 1-RTT keys once their post-update
         // retain window expires (RFC 9001 §6.5).
-        _ = self.discardExpiredOneRttKeys(now_millis);
-        try self.expireLossDetectionTimeouts(now_millis);
+        _ = self.discardExpiredOneRttKeys(now_nanos);
+        try self.expireLossDetectionTimeouts(now_nanos);
         const spaces = [_]PacketNumberSpace{ .initial, .handshake, .application };
         var expired_space: ?PacketNumberSpace = null;
         var expired_deadline: ?i64 = null;
         for (spaces) |space| {
-            const deadline = self.ptoDeadlineMillis(space) orelse continue;
-            if (deadline > now_millis) continue;
+            const deadline = self.ptoDeadline(space) orelse continue;
+            if (deadline > now_nanos) continue;
             if (expired_deadline == null or deadline < expired_deadline.?) {
                 expired_space = space;
                 expired_deadline = deadline;
@@ -2434,14 +2434,14 @@ pub const Connection = struct {
     }
 
     /// Apply the modeled QUIC idle timeout under a controlled clock.
-    pub fn checkIdleTimeouts(self: *Connection, now_millis: i64) Error!void {
-        self.expireIdleState(now_millis);
+    pub fn checkIdleTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        self.expireIdleState(now_nanos);
         if (self.state == .closed) return error.ConnectionClosed;
     }
 
     /// Apply the modeled close/drain timeout under a controlled clock.
-    pub fn checkCloseTimeouts(self: *Connection, now_millis: i64) Error!void {
-        self.expireCloseState(now_millis);
+    pub fn checkCloseTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        self.expireCloseState(now_nanos);
         if (self.state == .closed) return error.ConnectionClosed;
     }
 
@@ -2454,9 +2454,9 @@ pub const Connection = struct {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         self.handshake_state = .confirmed;
         self.handshake_confirmed = true;
-        self.anti_deadlock_pto_start_millis = null;
+        self.anti_deadlock_pto_start_nanos = null;
         if (self.qlog_writer) |qlog| {
-            qlog.emitConnectionState("handshake_confirmed", self.last_packet_activity_millis orelse 0);
+            qlog.emitConnectionState("handshake_confirmed", self.last_packet_activity_nanos orelse 0);
         }
     }
 
@@ -2484,8 +2484,8 @@ pub const Connection = struct {
         packet_space.pending_ack_largest.* = null;
         packet_space.received_packet_ranges.* = .{};
         packet_space.largest_acknowledged.* = null;
-        packet_space.first_rtt_sample_sent_time_millis.* = null;
-        packet_space.loss_deadline_millis.* = null;
+        packet_space.first_rtt_sample_sent_time_nanos.* = null;
+        packet_space.loss_deadline_nanos.* = null;
         clearSentPacketList(self.allocator, packet_space.sent_packets);
         packet_space.pending_ping_count.* = 0;
         packet_space.pto_probe_count.* = 0;
@@ -2503,7 +2503,7 @@ pub const Connection = struct {
         packet_space.ecn_largest_acknowledged.* = null;
         packet_space.ecn_counts.* = zeroEcnCounts();
         packet_space.ecn_validation_state.* = .unknown;
-        self.anti_deadlock_pto_start_millis = null;
+        self.anti_deadlock_pto_start_nanos = null;
         self.resetConnectionPtoBackoff();
     }
 
@@ -2514,10 +2514,10 @@ pub const Connection = struct {
     pub fn recordPacketSentInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         bytes: usize,
     ) Error!u64 {
-        return self.recordPacketSentInSpaceWithEcn(space, now_millis, bytes, .not_ect);
+        return self.recordPacketSentInSpaceWithEcn(space, now_nanos, bytes, .not_ect);
     }
 
     /// Record a modeled ECT-marked packet in the selected packet number space.
@@ -2529,20 +2529,20 @@ pub const Connection = struct {
     pub fn recordEcnPacketSentInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         bytes: usize,
         codepoint: EcnCodepoint,
     ) Error!u64 {
         if (codepoint == .not_ect) return error.InvalidPacket;
         const packet_space = self.packetNumberSpace(space);
         if (packet_space.ecn_validation_state.* == .failed) return error.InvalidPacket;
-        return self.recordPacketSentInSpaceWithEcn(space, now_millis, bytes, codepoint);
+        return self.recordPacketSentInSpaceWithEcn(space, now_nanos, bytes, codepoint);
     }
 
     fn recordPacketSentInSpaceWithEcn(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         bytes: usize,
         codepoint: EcnCodepoint,
     ) Error!u64 {
@@ -2555,7 +2555,7 @@ pub const Connection = struct {
         const packet_number = packet_space.next_packet_number.*;
         packet_space.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = bytes,
             .ecn_codepoint = codepoint,
         }) catch return error.OutOfMemory;
@@ -2569,7 +2569,7 @@ pub const Connection = struct {
         }
         self.recordAckElicitingSendInSpace(space, bytes);
         self.recordPeerAddressBytesSent(bytes);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         self.maybeDiscardInitialAfterHandshakePacketSent(space);
         return packet_number;
     }
@@ -2578,22 +2578,22 @@ pub const Connection = struct {
     pub fn receiveAckInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         ack: frame.AckFrame,
     ) Error!void {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
-        try self.receiveAckFrame(space, now_millis, ack, null);
+        try self.receiveAckFrame(space, now_nanos, ack, null);
     }
 
     /// Process one ACK_ECN frame in the selected packet number space.
     pub fn receiveAckEcnInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         ack_ecn: frame.AckEcnFrame,
     ) Error!void {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
-        try self.receiveAckFrame(space, now_millis, ack_ecn.ack, ack_ecn.ecn_counts);
+        try self.receiveAckFrame(space, now_nanos, ack_ecn.ack, ack_ecn.ecn_counts);
     }
 
     /// Queue an ACK for the next expected packet number in the selected space.
@@ -3067,13 +3067,13 @@ pub const Connection = struct {
         }
     }
 
-    fn closeStateTimeoutMillis(self: Connection) u64 {
+    fn closeStateTimeout(self: Connection) u64 {
         var rs = self.recovery_state;
-        return saturatingMulU64(close_state_pto_multiplier, (rs.ptoNs() + 999_999) / 1_000_000);
+        return saturatingMulU64(close_state_pto_multiplier, rs.ptoNs());
     }
 
-    fn closeStateDeadlineMillis(self: Connection, now_millis: i64) i64 {
-        return saturatingAddMillis(now_millis, self.closeStateTimeoutMillis());
+    fn closeStateDeadline(self: Connection, now_nanos: i64) i64 {
+        return saturatingAddNanos(now_nanos, self.closeStateTimeout());
     }
 
     fn clearPendingCloseFrame(self: *Connection) void {
@@ -3090,19 +3090,19 @@ pub const Connection = struct {
         }
     }
 
-    fn enterClosingState(self: *Connection, now_millis: i64) void {
+    fn enterClosingState(self: *Connection, now_nanos: i64) void {
         self.state = .closing;
-        self.close_deadline_millis = self.closeStateDeadlineMillis(now_millis);
+        self.close_deadline_nanos = self.closeStateDeadline(now_nanos);
         self.closed = true;
     }
 
-    fn enterDrainingState(self: *Connection, now_millis: i64) void {
+    fn enterDrainingState(self: *Connection, now_nanos: i64) void {
         self.state = .draining;
-        self.close_deadline_millis = self.closeStateDeadlineMillis(now_millis);
+        self.close_deadline_nanos = self.closeStateDeadline(now_nanos);
         self.closed = true;
     }
 
-    fn receiveConnectionCloseFrame(self: *Connection, now_millis: i64, close: frame.ConnectionCloseFrame) Error!void {
+    fn receiveConnectionCloseFrame(self: *Connection, now_nanos: i64, close: frame.ConnectionCloseFrame) Error!void {
         if (self.peer_close == null) {
             const owned_reason = self.allocator.alloc(u8, close.reason_phrase.len) catch return error.OutOfMemory;
             errdefer self.allocator.free(owned_reason);
@@ -3113,10 +3113,10 @@ pub const Connection = struct {
                 .reason_phrase = owned_reason,
             } };
         }
-        self.enterDrainingState(now_millis);
+        self.enterDrainingState(now_nanos);
     }
 
-    fn receiveApplicationCloseFrame(self: *Connection, now_millis: i64, close: frame.ApplicationCloseFrame) Error!void {
+    fn receiveApplicationCloseFrame(self: *Connection, now_nanos: i64, close: frame.ApplicationCloseFrame) Error!void {
         if (self.peer_close == null) {
             const owned_reason = self.allocator.alloc(u8, close.reason_phrase.len) catch return error.OutOfMemory;
             errdefer self.allocator.free(owned_reason);
@@ -3126,45 +3126,45 @@ pub const Connection = struct {
                 .reason_phrase = owned_reason,
             } };
         }
-        self.enterDrainingState(now_millis);
+        self.enterDrainingState(now_nanos);
     }
 
-    fn expireCloseState(self: *Connection, now_millis: i64) void {
+    fn expireCloseState(self: *Connection, now_nanos: i64) void {
         if (self.state != .closing and self.state != .draining) return;
-        const deadline = self.close_deadline_millis orelse return;
-        if (now_millis < deadline) return;
+        const deadline = self.close_deadline_nanos orelse return;
+        if (now_nanos < deadline) return;
 
         self.state = .closed;
-        self.close_deadline_millis = null;
+        self.close_deadline_nanos = null;
         self.closed = true;
         self.clearPendingCloseFrame();
     }
 
-    fn expireIdleState(self: *Connection, now_millis: i64) void {
+    fn expireIdleState(self: *Connection, now_nanos: i64) void {
         if (self.state != .active) return;
         if (self.pending_close != null) return;
-        const deadline = self.idleTimeoutDeadlineMillis() orelse return;
-        if (now_millis < deadline) return;
+        const deadline = self.idleTimeoutDeadline() orelse return;
+        if (now_nanos < deadline) return;
 
         self.state = .closed;
-        self.close_deadline_millis = null;
+        self.close_deadline_nanos = null;
         self.closed = true;
         self.clearPendingCloseFrame();
     }
 
-    fn recordPacketActivity(self: *Connection, now_millis: i64) void {
-        if (self.effectiveIdleTimeoutMillis() == null) return;
-        self.last_packet_activity_millis = now_millis;
+    fn recordPacketActivity(self: *Connection, now_nanos: i64) void {
+        if (self.effectiveIdleTimeout() == null) return;
+        self.last_packet_activity_nanos = now_nanos;
     }
 
     fn isClosingOrClosed(self: Connection) bool {
         return self.state != .active or self.pending_close != null or self.closed;
     }
 
-    fn prepareInboundDatagramProcessing(self: *Connection, now_millis: i64) Error!bool {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
-        _ = self.discardExpiredOneRttKeys(now_millis);
+    fn prepareInboundDatagramProcessing(self: *Connection, now_nanos: i64) Error!bool {
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
+        _ = self.discardExpiredOneRttKeys(now_nanos);
         if (self.state == .closing or self.state == .draining) return false;
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         return true;
@@ -3247,7 +3247,7 @@ pub const Connection = struct {
     fn rttEstimateSnapshot(self: *Connection, space: PacketNumberSpace) RttEstimateSnapshot {
         const packet_space = self.packetNumberSpace(space);
         return .{
-            .first_rtt_sample_sent_time_millis = packet_space.first_rtt_sample_sent_time_millis.*,
+            .first_rtt_sample_sent_time_nanos = packet_space.first_rtt_sample_sent_time_nanos.*,
             .latest_rtt_ns = packet_space.recovery_state.latest_rtt_ns,
             .min_rtt_ns = packet_space.recovery_state.min_rtt_ns,
             .smoothed_rtt_ns = packet_space.recovery_state.smoothed_rtt_ns,
@@ -3261,7 +3261,7 @@ pub const Connection = struct {
         snapshot: RttEstimateSnapshot,
     ) void {
         const packet_space = self.packetNumberSpace(space);
-        packet_space.first_rtt_sample_sent_time_millis.* = snapshot.first_rtt_sample_sent_time_millis;
+        packet_space.first_rtt_sample_sent_time_nanos.* = snapshot.first_rtt_sample_sent_time_nanos;
         packet_space.recovery_state.latest_rtt_ns = snapshot.latest_rtt_ns;
         packet_space.recovery_state.min_rtt_ns = snapshot.min_rtt_ns;
         packet_space.recovery_state.smoothed_rtt_ns = snapshot.smoothed_rtt_ns;
@@ -3325,13 +3325,13 @@ pub const Connection = struct {
         self.setConnectionPtoBackoffCount(next);
     }
 
-    fn rememberFirstRttSampleSentTime(self: *Connection, sent_time_millis: i64) void {
+    fn rememberFirstRttSampleSentTime(self: *Connection, sent_time_nanos: i64) void {
         const spaces = [_]PacketNumberSpace{ .initial, .handshake, .application };
         for (spaces) |sample_space| {
             const packet_space = self.packetNumberSpace(sample_space);
             if (packet_space.discarded.*) continue;
-            if (packet_space.first_rtt_sample_sent_time_millis.* == null) {
-                packet_space.first_rtt_sample_sent_time_millis.* = sent_time_millis;
+            if (packet_space.first_rtt_sample_sent_time_nanos.* == null) {
+                packet_space.first_rtt_sample_sent_time_nanos.* = sent_time_nanos;
             }
         }
     }
@@ -3384,8 +3384,8 @@ pub const Connection = struct {
                 .pending_ack_largest = &self.initial_packet_space.pending_ack_largest,
                 .received_packet_ranges = &self.initial_packet_space.received_packet_ranges,
                 .largest_acknowledged = &self.initial_packet_space.largest_acknowledged,
-                .first_rtt_sample_sent_time_millis = &self.initial_packet_space.first_rtt_sample_sent_time_millis,
-                .loss_deadline_millis = &self.initial_packet_space.loss_deadline_millis,
+                .first_rtt_sample_sent_time_nanos = &self.initial_packet_space.first_rtt_sample_sent_time_nanos,
+                .loss_deadline_nanos = &self.initial_packet_space.loss_deadline_nanos,
                 .recovery_state = &self.initial_packet_space.recovery_state,
                 .sent_packets = &self.initial_packet_space.sent_packets,
                 .pending_ping_count = &self.initial_packet_space.pending_ping_count,
@@ -3409,8 +3409,8 @@ pub const Connection = struct {
                 .pending_ack_largest = &self.handshake_packet_space.pending_ack_largest,
                 .received_packet_ranges = &self.handshake_packet_space.received_packet_ranges,
                 .largest_acknowledged = &self.handshake_packet_space.largest_acknowledged,
-                .first_rtt_sample_sent_time_millis = &self.handshake_packet_space.first_rtt_sample_sent_time_millis,
-                .loss_deadline_millis = &self.handshake_packet_space.loss_deadline_millis,
+                .first_rtt_sample_sent_time_nanos = &self.handshake_packet_space.first_rtt_sample_sent_time_nanos,
+                .loss_deadline_nanos = &self.handshake_packet_space.loss_deadline_nanos,
                 .recovery_state = &self.handshake_packet_space.recovery_state,
                 .sent_packets = &self.handshake_packet_space.sent_packets,
                 .pending_ping_count = &self.handshake_packet_space.pending_ping_count,
@@ -3434,8 +3434,8 @@ pub const Connection = struct {
                 .pending_ack_largest = &self.pending_ack_largest,
                 .received_packet_ranges = &self.received_packet_ranges,
                 .largest_acknowledged = &self.largest_acknowledged,
-                .first_rtt_sample_sent_time_millis = &self.first_rtt_sample_sent_time_millis,
-                .loss_deadline_millis = &self.loss_deadline_millis,
+                .first_rtt_sample_sent_time_nanos = &self.first_rtt_sample_sent_time_nanos,
+                .loss_deadline_nanos = &self.loss_deadline_nanos,
                 .recovery_state = &self.recovery_state,
                 .sent_packets = &self.sent_packets,
                 .pending_ping_count = &self.pending_ping_count,
@@ -3484,8 +3484,8 @@ pub const Connection = struct {
         packet_space.recovery_state.largest_sent_packet_number = self.next_packet_number;
         packet_space.recovery_state.onPacketSent(bytes);
         packet_space.recovery_state.fast_retransmission_required = false;
-        packet_space.recovery_state.last_sent_time_millis = @intCast(clock.nanoTimestamp() / 1_000_000);
-        self.anti_deadlock_pto_start_millis = null;
+        packet_space.recovery_state.last_sent_time_nanos = @intCast(clock.nanoTimestamp());
+        self.anti_deadlock_pto_start_nanos = null;
         if (packet_space.pto_probe_count.* != 0) {
             packet_space.pto_probe_count.* -= 1;
         }
@@ -3499,10 +3499,10 @@ pub const Connection = struct {
     /// Closing or draining connections discard the datagram before parsing.
     pub fn processDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        try self.processDatagramInSpace(.application, now_millis, datagram);
+        try self.processDatagramInSpace(.application, now_nanos, datagram);
     }
 
     /// Process one unencrypted packet payload and queue CONNECTION_CLOSE on classified peer errors.
@@ -3512,10 +3512,10 @@ pub const Connection = struct {
     /// pure rollback behavior can continue using `processDatagram()`.
     pub fn processDatagramOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
-        try self.processDatagramInSpaceOrClose(.application, now_millis, datagram);
+        try self.processDatagramInSpaceOrClose(.application, now_nanos, datagram);
     }
 
     /// Process one frame-payload datagram in a selected packet number space.
@@ -3527,13 +3527,13 @@ pub const Connection = struct {
     pub fn processDatagramInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         try self.processDatagramInSpaceWithPacketType(
             space,
             defaultFramePacketTypeForSpace(space),
-            now_millis,
+            now_nanos,
             datagram,
             null,
         );
@@ -3547,12 +3547,12 @@ pub const Connection = struct {
     pub fn processDatagramInSpaceOrClose(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         try self.processDatagramForPacketTypeOrClose(
             defaultFramePacketTypeForSpace(space),
-            now_millis,
+            now_nanos,
             datagram,
         );
     }
@@ -3571,11 +3571,11 @@ pub const Connection = struct {
     /// discard remain future endpoint/TLS work.
     pub fn processProtectedLongDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
     ) Error!usize {
-        return self.processProtectedLongDatagramWithFrameErrorPolicy(now_millis, keys, datagram, false);
+        return self.processProtectedLongDatagramWithFrameErrorPolicy(now_nanos, keys, datagram, false);
     }
 
     /// Process coalesced protected long-header packets and queue CONNECTION_CLOSE on frame errors.
@@ -3587,22 +3587,22 @@ pub const Connection = struct {
     /// returning `InvalidPacket`.
     pub fn processProtectedLongDatagramOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
     ) Error!usize {
-        return self.processProtectedLongDatagramWithFrameErrorPolicy(now_millis, keys, datagram, true);
+        return self.processProtectedLongDatagramWithFrameErrorPolicy(now_nanos, keys, datagram, true);
     }
 
     fn processProtectedLongDatagramWithFrameErrorPolicy(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: ProtectedLongDatagramKeys,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!usize {
         if (datagram.len == 0) return error.InvalidPacket;
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return 0;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return 0;
         try self.validateReceivedUdpDatagramSize(datagram);
 
         var offset: usize = 0;
@@ -3624,7 +3624,7 @@ pub const Connection = struct {
             const route = protectedLongPacketRouteFor(keys, info.packet_type) orelse return error.InvalidPacket;
             try self.processProtectedLongDatagramWithRoute(
                 route,
-                now_millis,
+                now_nanos,
                 datagram.len,
                 datagram[offset..][0..info.len],
                 close_on_frame_payload_error,
@@ -3651,11 +3651,11 @@ pub const Connection = struct {
     pub fn processProtectedLongDatagramInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedLongDatagramInSpaceWithFrameErrorPolicy(space, now_millis, keys, datagram, false);
+        try self.processProtectedLongDatagramInSpaceWithFrameErrorPolicy(space, now_nanos, keys, datagram, false);
     }
 
     /// Remove long-header protection and queue CONNECTION_CLOSE on frame errors.
@@ -3667,22 +3667,22 @@ pub const Connection = struct {
     pub fn processProtectedLongDatagramInSpaceOrClose(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedLongDatagramInSpaceWithFrameErrorPolicy(space, now_millis, keys, datagram, true);
+        try self.processProtectedLongDatagramInSpaceWithFrameErrorPolicy(space, now_nanos, keys, datagram, true);
     }
 
     fn processProtectedLongDatagramInSpaceWithFrameErrorPolicy(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         try self.validateReceivedUdpDatagramSize(datagram);
 
         const long_space = protectedLongPacketSpaceFor(space) orelse return error.InvalidPacket;
@@ -3694,7 +3694,7 @@ pub const Connection = struct {
             .packet_type = long_space.packet_type,
             .frame_packet_type = long_space.frame_packet_type,
             .keys = keys,
-        }, now_millis, datagram.len, datagram, close_on_frame_payload_error);
+        }, now_nanos, datagram.len, datagram, close_on_frame_payload_error);
     }
 
     /// Remove Handshake long-header protection using installed peer keys.
@@ -3705,11 +3705,11 @@ pub const Connection = struct {
     /// same rollback boundary as the caller-keyed helper.
     pub fn processProtectedHandshakeDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         const keys = self.peer_handshake_keys orelse return error.InvalidPacket;
-        try self.processProtectedLongDatagramInSpace(.handshake, now_millis, keys, datagram);
+        try self.processProtectedLongDatagramInSpace(.handshake, now_nanos, keys, datagram);
     }
 
     /// Process a coalesced Initial and Handshake UDP datagram using caller
@@ -3720,12 +3720,12 @@ pub const Connection = struct {
     /// authenticated long-header packet at its encoded boundary.
     pub fn processProtectedLongDatagramWithInstalledHandshakeKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         initial_keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!usize {
         const handshake_keys = self.peer_handshake_keys orelse return error.InvalidPacket;
-        return self.processProtectedLongDatagram(now_millis, .{
+        return self.processProtectedLongDatagram(now_nanos, .{
             .initial = initial_keys,
             .handshake = handshake_keys,
         }, datagram);
@@ -3739,17 +3739,17 @@ pub const Connection = struct {
     /// authentication succeeds.
     pub fn processProtectedHandshakeDatagramWithInstalledKeysOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         const keys = self.peer_handshake_keys orelse return error.InvalidPacket;
-        try self.processProtectedLongDatagramInSpaceOrClose(.handshake, now_millis, keys, datagram);
+        try self.processProtectedLongDatagramInSpaceOrClose(.handshake, now_nanos, keys, datagram);
     }
 
     fn processProtectedLongDatagramWithRoute(
         self: *Connection,
         route: ProtectedLongPacketRoute,
-        now_millis: i64,
+        now_nanos: i64,
         udp_datagram_len: usize,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
@@ -3800,7 +3800,7 @@ pub const Connection = struct {
         try self.processDatagramInSpaceWithPacketTypeMaybeClose(
             route.space,
             route.frame_packet_type,
-            now_millis,
+            now_nanos,
             decoded.packet.plaintext,
             close_on_frame_payload_error,
             decoded.packet.header.packet_number,
@@ -3824,11 +3824,11 @@ pub const Connection = struct {
     /// policy, and replay defenses remain endpoint/TLS integration work.
     pub fn processProtectedZeroRttDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedZeroRttDatagramWithFrameErrorPolicy(now_millis, keys, datagram, false);
+        try self.processProtectedZeroRttDatagramWithFrameErrorPolicy(now_nanos, keys, datagram, false);
     }
 
     /// Remove 0-RTT protection and queue CONNECTION_CLOSE on frame errors.
@@ -3839,21 +3839,21 @@ pub const Connection = struct {
     /// CONNECTION_CLOSE before returning `InvalidPacket`.
     pub fn processProtectedZeroRttDatagramOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedZeroRttDatagramWithFrameErrorPolicy(now_millis, keys, datagram, true);
+        try self.processProtectedZeroRttDatagramWithFrameErrorPolicy(now_nanos, keys, datagram, true);
     }
 
     fn processProtectedZeroRttDatagramWithFrameErrorPolicy(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         if (self.side != .server) return error.InvalidPacket;
         try self.validateReceivedUdpDatagramSize(datagram);
 
@@ -3862,7 +3862,7 @@ pub const Connection = struct {
             .packet_type = .zero_rtt,
             .frame_packet_type = .zero_rtt,
             .keys = keys,
-        }, now_millis, datagram.len, datagram, close_on_frame_payload_error);
+        }, now_nanos, datagram.len, datagram, close_on_frame_payload_error);
     }
 
     /// Remove 0-RTT long-header protection using installed peer early-data keys.
@@ -3873,12 +3873,12 @@ pub const Connection = struct {
     /// work.
     pub fn processProtectedZeroRttDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         const keys = self.peer_zero_rtt_keys orelse return error.InvalidPacket;
         if (!self.peer_zero_rtt_accepted) return error.InvalidPacket;
-        try self.processProtectedZeroRttDatagram(now_millis, keys, datagram);
+        try self.processProtectedZeroRttDatagram(now_nanos, keys, datagram);
     }
 
     /// Remove installed-key 0-RTT protection and queue CONNECTION_CLOSE on frame errors.
@@ -3888,12 +3888,12 @@ pub const Connection = struct {
     /// packet authentication succeeds.
     pub fn processProtectedZeroRttDatagramWithInstalledKeysOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         const keys = self.peer_zero_rtt_keys orelse return error.InvalidPacket;
         if (!self.peer_zero_rtt_accepted) return error.InvalidPacket;
-        try self.processProtectedZeroRttDatagramOrClose(now_millis, keys, datagram);
+        try self.processProtectedZeroRttDatagramOrClose(now_nanos, keys, datagram);
     }
 
     /// Remove Initial packet protection and process the decrypted frame payload.
@@ -3902,11 +3902,11 @@ pub const Connection = struct {
     /// through `processProtectedLongDatagramInSpace(.initial, ...)`.
     pub fn processInitialProtectedDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedLongDatagramInSpace(.initial, now_millis, keys, datagram);
+        try self.processProtectedLongDatagramInSpace(.initial, now_nanos, keys, datagram);
     }
 
     /// Remove 1-RTT short-header packet protection and process the frame payload.
@@ -3924,12 +3924,12 @@ pub const Connection = struct {
     /// remain future endpoint/TLS integration work.
     pub fn processProtectedShortDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithFrameErrorPolicy(now_millis, keys, dcid_len, datagram, false);
+        try self.processProtectedShortDatagramWithFrameErrorPolicy(now_nanos, keys, dcid_len, datagram, false);
     }
 
     /// Remove 1-RTT short-header protection and queue CONNECTION_CLOSE on frame errors.
@@ -3941,23 +3941,23 @@ pub const Connection = struct {
     /// `InvalidPacket`.
     pub fn processProtectedShortDatagramOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithFrameErrorPolicy(now_millis, keys, dcid_len, datagram, true);
+        try self.processProtectedShortDatagramWithFrameErrorPolicy(now_nanos, keys, dcid_len, datagram, true);
     }
 
     fn processProtectedShortDatagramWithFrameErrorPolicy(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.Aes128PacketProtectionKeys,
         dcid_len: usize,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         try self.validateReceivedUdpDatagramSize(datagram);
 
         const packet_space = self.packetNumberSpace(.application);
@@ -3976,7 +3976,7 @@ pub const Connection = struct {
         };
         defer protection.deinitProtectedShortPacket(&decoded, self.allocator);
 
-        try self.processDecodedProtectedShortDatagram(now_millis, &decoded, datagram.len, close_on_frame_payload_error);
+        try self.processDecodedProtectedShortDatagram(now_nanos, &decoded, datagram.len, close_on_frame_payload_error);
     }
 
     /// Remove 1-RTT short-header packet protection with current/next key phases.
@@ -3991,12 +3991,12 @@ pub const Connection = struct {
     /// future integration work.
     pub fn processProtectedShortDatagramWithKeyUpdate(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithKeyUpdateAndFrameErrorPolicy(now_millis, keys, dcid_len, datagram, false);
+        try self.processProtectedShortDatagramWithKeyUpdateAndFrameErrorPolicy(now_nanos, keys, dcid_len, datagram, false);
     }
 
     /// Remove 1-RTT protection with current/next keys and queue close on frame errors.
@@ -4006,23 +4006,23 @@ pub const Connection = struct {
     /// for authenticated plaintext frame payload errors.
     pub fn processProtectedShortDatagramWithKeyUpdateOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithKeyUpdateAndFrameErrorPolicy(now_millis, keys, dcid_len, datagram, true);
+        try self.processProtectedShortDatagramWithKeyUpdateAndFrameErrorPolicy(now_nanos, keys, dcid_len, datagram, true);
     }
 
     fn processProtectedShortDatagramWithKeyUpdateAndFrameErrorPolicy(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         keys: protection.ShortPacketKeyUpdateKeys,
         dcid_len: usize,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         try self.validateReceivedUdpDatagramSize(datagram);
 
         const packet_space = self.packetNumberSpace(.application);
@@ -4041,7 +4041,7 @@ pub const Connection = struct {
         };
         defer protection.deinitProtectedShortPacket(&decoded, self.allocator);
 
-        try self.processDecodedProtectedShortDatagram(now_millis, &decoded, datagram.len, close_on_frame_payload_error);
+        try self.processDecodedProtectedShortDatagram(now_nanos, &decoded, datagram.len, close_on_frame_payload_error);
     }
 
     /// Remove 1-RTT short-header packet protection with caller-owned key state.
@@ -4054,12 +4054,12 @@ pub const Connection = struct {
     /// server-side receive also discards installed 0-RTT receive keys.
     pub fn processProtectedShortDatagramWithKeyPhaseState(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithKeyPhaseStateAndFrameErrorPolicy(now_millis, key_phase_state, dcid_len, datagram, false);
+        try self.processProtectedShortDatagramWithKeyPhaseStateAndFrameErrorPolicy(now_nanos, key_phase_state, dcid_len, datagram, false);
     }
 
     /// Remove 1-RTT protection with caller-owned key state and queue close on frame errors.
@@ -4070,23 +4070,23 @@ pub const Connection = struct {
     /// unchanged.
     pub fn processProtectedShortDatagramWithKeyPhaseStateOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
-        try self.processProtectedShortDatagramWithKeyPhaseStateAndFrameErrorPolicy(now_millis, key_phase_state, dcid_len, datagram, true);
+        try self.processProtectedShortDatagramWithKeyPhaseStateAndFrameErrorPolicy(now_nanos, key_phase_state, dcid_len, datagram, true);
     }
 
     fn processProtectedShortDatagramWithKeyPhaseStateAndFrameErrorPolicy(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         key_phase_state: *protection.Aes128KeyPhaseState,
         dcid_len: usize,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         try self.validateReceivedUdpDatagramSize(datagram);
 
         const packet_space = self.packetNumberSpace(.application);
@@ -4118,7 +4118,7 @@ pub const Connection = struct {
         };
         defer protection.deinitProtectedShortPacket(&decoded, self.allocator);
 
-        try self.processDecodedProtectedShortDatagram(now_millis, &decoded, datagram.len, close_on_frame_payload_error);
+        try self.processDecodedProtectedShortDatagram(now_nanos, &decoded, datagram.len, close_on_frame_payload_error);
         // Only a packet that authenticated against the `next` key generation
         // signals a peer-initiated key update; a delayed packet opened with the
         // retained `previous` key must not advance key-phase state, even though
@@ -4128,7 +4128,7 @@ pub const Connection = struct {
                 // Retain the old peer receive key for one PTO so delayed packets
                 // protected with the previous key phase can still be opened
                 // (RFC 9001 §6.5 / RFC 9002 §6.2).
-                self.schedulePreviousKeyDiscard(key_phase_state, now_millis);
+                self.schedulePreviousKeyDiscard(key_phase_state, now_nanos);
             }
         }
     }
@@ -4142,12 +4142,12 @@ pub const Connection = struct {
     /// discards installed 0-RTT receive keys.
     pub fn processProtectedShortDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
         var state = self.peer_one_rtt_key_phase_state orelse return error.InvalidPacket;
-        try self.processProtectedShortDatagramWithKeyPhaseState(now_millis, &state, dcid_len, datagram);
+        try self.processProtectedShortDatagramWithKeyPhaseState(now_nanos, &state, dcid_len, datagram);
         self.peer_one_rtt_key_phase_state = state;
     }
 
@@ -4159,18 +4159,18 @@ pub const Connection = struct {
     /// CONNECTION_CLOSE and leave the installed key state unchanged.
     pub fn processProtectedShortDatagramWithInstalledKeysOrClose(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid_len: usize,
         datagram: []const u8,
     ) Error!void {
         var state = self.peer_one_rtt_key_phase_state orelse return error.InvalidPacket;
-        try self.processProtectedShortDatagramWithKeyPhaseStateOrClose(now_millis, &state, dcid_len, datagram);
+        try self.processProtectedShortDatagramWithKeyPhaseStateOrClose(now_nanos, &state, dcid_len, datagram);
         self.peer_one_rtt_key_phase_state = state;
     }
 
     fn processDecodedProtectedShortDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         decoded: *const protection.DecodedProtectedShortPacket,
         datagram_len: usize,
         close_on_frame_payload_error: bool,
@@ -4181,7 +4181,7 @@ pub const Connection = struct {
         try self.processDatagramInSpaceWithPacketTypeMaybeClose(
             .application,
             .one_rtt,
-            now_millis,
+            now_nanos,
             decoded.packet.plaintext,
             close_on_frame_payload_error,
             decoded.packet.header.packet_number,
@@ -4209,11 +4209,11 @@ pub const Connection = struct {
     /// remain endpoint/TLS integration work.
     pub fn pollProtectedShortDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        return self.pollProtectedShortDatagramWithKeyPhase(now_millis, dcid, keys, false);
+        return self.pollProtectedShortDatagramWithKeyPhase(now_nanos, dcid, keys, false);
     }
 
     /// Return one protected 1-RTT short-header datagram with an explicit key phase.
@@ -4223,15 +4223,15 @@ pub const Connection = struct {
     /// future endpoint/TLS state machine owns key-phase transitions.
     pub fn pollProtectedShortDatagramWithKeyPhase(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.pending_close != null) {
-            return try self.pollProtectedShortCloseDatagram(now_millis, dcid, keys, key_phase);
+            return try self.pollProtectedShortCloseDatagram(now_nanos, dcid, keys, key_phase);
         }
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
@@ -4243,7 +4243,7 @@ pub const Connection = struct {
         {
             const cwnd = self.recovery_state.congestion_window;
             const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
-            if (!self.tx_pacer.canSend(now_millis, self.maxTxDatagramSize(), cwnd, srtt)) {
+            if (!self.tx_pacer.canSend(now_nanos, self.maxTxDatagramSize(), cwnd, srtt)) {
                 return null;
             }
         }
@@ -4271,11 +4271,11 @@ pub const Connection = struct {
             self.outstanding_path_challenges.ensureUnusedCapacity(self.allocator, 1) catch return error.OutOfMemory;
         }
 
-        self.commitBuiltProtectedShortPacket(built, now_millis);
+        self.commitBuiltProtectedShortPacket(built, now_nanos);
         if (built.ack_eliciting) {
             const cwnd = self.recovery_state.congestion_window;
             const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
-            self.tx_pacer.onPacketSent(now_millis, built.datagram.len, cwnd, srtt);
+            self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
         return built.datagram;
     }
@@ -4286,12 +4286,12 @@ pub const Connection = struct {
     /// caller explicitly initiates updates on the state before polling.
     pub fn pollProtectedShortDatagramWithKeyPhaseState(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         key_phase_state: *const protection.Aes128KeyPhaseState,
     ) Error!?[]u8 {
         return self.pollProtectedShortDatagramWithKeyPhase(
-            now_millis,
+            now_nanos,
             dcid,
             key_phase_state.currentKeys(),
             key_phase_state.currentKeyPhase(),
@@ -4305,11 +4305,11 @@ pub const Connection = struct {
     /// 1-RTT traffic secrets before using this helper.
     pub fn pollProtectedShortDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
     ) Error!?[]u8 {
         const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
-        return self.pollProtectedShortDatagramWithKeyPhaseState(now_millis, dcid, &state);
+        return self.pollProtectedShortDatagramWithKeyPhaseState(now_nanos, dcid, &state);
     }
 
     fn protectedPathValidationPlaintextLen(
@@ -4331,7 +4331,7 @@ pub const Connection = struct {
 
     fn pollProtectedShortCloseDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
@@ -4349,7 +4349,7 @@ pub const Connection = struct {
             return null;
         }
 
-        self.commitBuiltProtectedShortPacket(built, now_millis);
+        self.commitBuiltProtectedShortPacket(built, now_nanos);
         return built.datagram;
     }
 
@@ -4364,13 +4364,13 @@ pub const Connection = struct {
     /// endpoint/TLS integration work.
     pub fn pollProtectedZeroRttDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
         const built = (try self.buildNextProtectedZeroRttPacket(dcid, scid, keys)) orelse return null;
@@ -4387,7 +4387,7 @@ pub const Connection = struct {
         }
 
         try self.ensureProtectedLongCommitCapacity(built);
-        self.commitBuiltProtectedLongPacket(built, now_millis);
+        self.commitBuiltProtectedLongPacket(built, now_nanos);
         return built.datagram;
     }
 
@@ -4398,12 +4398,12 @@ pub const Connection = struct {
     /// acceptance and replay policy remain endpoint/TLS work.
     pub fn pollProtectedZeroRttDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!?[]u8 {
         const keys = self.local_zero_rtt_keys orelse return error.InvalidPacket;
-        return self.pollProtectedZeroRttDatagram(now_millis, dcid, scid, keys);
+        return self.pollProtectedZeroRttDatagram(now_nanos, dcid, scid, keys);
     }
 
     /// Return one protected long datagram with queued Initial/0-RTT/Handshake frames.
@@ -4422,14 +4422,14 @@ pub const Connection = struct {
     /// key update remain endpoint/TLS integration work.
     pub fn pollProtectedLongDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         initial_token: []const u8,
         keys: ProtectedLongDatagramKeys,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
 
         var initial_packet: ?BuiltProtectedLongPacket = null;
         var zero_rtt_packet: ?BuiltProtectedLongPacket = null;
@@ -4623,21 +4623,21 @@ pub const Connection = struct {
         if (initial_packet) |built| {
             @memcpy(datagram[offset..][0..built.datagram.len], built.datagram);
             offset += built.datagram.len;
-            self.commitBuiltProtectedLongPacket(built, now_millis);
+            self.commitBuiltProtectedLongPacket(built, now_nanos);
             self.allocator.free(built.datagram);
             initial_packet = null;
         }
         if (zero_rtt_packet) |built| {
             @memcpy(datagram[offset..][0..built.datagram.len], built.datagram);
             offset += built.datagram.len;
-            self.commitBuiltProtectedLongPacket(built, now_millis);
+            self.commitBuiltProtectedLongPacket(built, now_nanos);
             self.allocator.free(built.datagram);
             zero_rtt_packet = null;
         }
         if (handshake_packet) |built| {
             @memcpy(datagram[offset..][0..built.datagram.len], built.datagram);
             offset += built.datagram.len;
-            self.commitBuiltProtectedLongPacket(built, now_millis);
+            self.commitBuiltProtectedLongPacket(built, now_nanos);
             self.allocator.free(built.datagram);
             handshake_packet = null;
         }
@@ -4654,16 +4654,16 @@ pub const Connection = struct {
     /// coalescing Initial and Handshake packets is required.
     pub fn pollProtectedHandshakeDatagramWithInstalledKeys(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
 
         const keys = self.local_handshake_keys orelse return error.InvalidPacket;
         if (self.pending_close != null) {
-            return try self.pollProtectedLongCloseDatagramInSpace(.handshake, now_millis, dcid, scid, &[_]u8{}, keys);
+            return try self.pollProtectedLongCloseDatagramInSpace(.handshake, now_nanos, dcid, scid, &[_]u8{}, keys);
         }
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
@@ -4688,14 +4688,14 @@ pub const Connection = struct {
         }
 
         try self.ensureProtectedLongCommitCapacity(built);
-        self.commitBuiltProtectedLongPacket(built, now_millis);
+        self.commitBuiltProtectedLongPacket(built, now_nanos);
         return built.datagram;
     }
 
     fn pollProtectedLongCloseDatagramInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         token: []const u8,
@@ -4710,7 +4710,7 @@ pub const Connection = struct {
             return null;
         }
 
-        self.commitBuiltProtectedLongPacket(built, now_millis);
+        self.commitBuiltProtectedLongPacket(built, now_nanos);
         return built.datagram;
     }
 
@@ -4727,14 +4727,14 @@ pub const Connection = struct {
     pub fn pollProtectedLongCryptoDatagramInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         token: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
         const min_datagram_len = self.minimumOutgoingInitialDatagramLen(space, true);
@@ -4747,7 +4747,7 @@ pub const Connection = struct {
         }
 
         try self.ensureProtectedLongCommitCapacity(built);
-        self.commitBuiltProtectedLongPacket(built, now_millis);
+        self.commitBuiltProtectedLongPacket(built, now_nanos);
         return built.datagram;
     }
 
@@ -4757,13 +4757,13 @@ pub const Connection = struct {
     /// `pollProtectedLongCryptoDatagramInSpace(.initial, ...)`.
     pub fn pollInitialProtectedDatagram(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         dcid: []const u8,
         scid: []const u8,
         token: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
     ) Error!?[]u8 {
-        return self.pollProtectedLongCryptoDatagramInSpace(.initial, now_millis, dcid, scid, token, keys);
+        return self.pollProtectedLongCryptoDatagramInSpace(.initial, now_nanos, dcid, scid, token, keys);
     }
 
     fn buildProtectedLongClosePacketInSpace(
@@ -5391,7 +5391,7 @@ pub const Connection = struct {
     fn commitBuiltProtectedLongPacket(
         self: *Connection,
         built: BuiltProtectedLongPacket,
-        now_millis: i64,
+        now_nanos: i64,
     ) void {
         var packet_space = self.packetNumberSpace(built.space);
         var sent_crypto_frame: ?PendingCryptoFrame = null;
@@ -5405,7 +5405,7 @@ pub const Connection = struct {
         if (built.ack_eliciting) {
             packet_space.sent_packets.appendAssumeCapacity(.{
                 .packet_number = built.packet_number,
-                .sent_time_millis = now_millis,
+                .sent_time_nanos = now_nanos,
                 .bytes = built.datagram.len,
                 .stream_frame = sent_stream_frame,
                 .crypto_frame = sent_crypto_frame,
@@ -5439,9 +5439,9 @@ pub const Connection = struct {
         if (built.clear_ack) packet_space.pending_ack_largest.* = null;
         packet_space.next_packet_number.* = built.packet_number + 1;
         if (built.ack_eliciting) self.recordAckElicitingSendInSpace(built.space, built.datagram.len);
-        if (built.close_packet and !self.closed) self.enterClosingState(now_millis);
+        if (built.close_packet and !self.closed) self.enterClosingState(now_nanos);
         self.recordPeerAddressBytesSent(built.datagram.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         if (built.local_original_destination_connection_id_len) |len| {
             self.recordOriginalDestinationConnectionId(built.local_original_destination_connection_id[0..len]);
         }
@@ -6501,7 +6501,7 @@ pub const Connection = struct {
     fn commitBuiltProtectedShortPacket(
         self: *Connection,
         built: BuiltProtectedShortPacket,
-        now_millis: i64,
+        now_nanos: i64,
     ) void {
         var sent_crypto_frame: ?PendingCryptoFrame = null;
         if (built.consume_crypto) {
@@ -6511,7 +6511,7 @@ pub const Connection = struct {
         if (built.ack_eliciting) {
             self.sent_packets.appendAssumeCapacity(.{
                 .packet_number = built.packet_number,
-                .sent_time_millis = now_millis,
+                .sent_time_nanos = now_nanos,
                 .bytes = built.datagram.len,
                 .stream_frame = built.sent_stream_frame,
                 .crypto_frame = sent_crypto_frame,
@@ -6531,7 +6531,7 @@ pub const Connection = struct {
             const transmissions = std.math.add(u8, removed.transmissions, 1) catch max_path_challenge_transmissions;
             self.outstanding_path_challenges.appendAssumeCapacity(.{
                 .data = removed.data,
-                .sent_time_millis = now_millis,
+                .sent_time_nanos = now_nanos,
                 .transmissions = transmissions,
             });
         }
@@ -6561,9 +6561,9 @@ pub const Connection = struct {
         if (built.clear_ack) self.pending_ack_largest = null;
         self.next_packet_number = built.packet_number + 1;
         if (built.ack_eliciting) self.recordAckElicitingSendInSpace(.application, built.datagram.len);
-        if (built.close_packet and !self.closed) self.enterClosingState(now_millis);
+        if (built.close_packet and !self.closed) self.enterClosingState(now_nanos);
         self.recordPeerAddressBytesSent(built.datagram.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
     }
 
     /// Process one frame-payload datagram using RFC 9000 packet-type frame rules.
@@ -6574,13 +6574,13 @@ pub const Connection = struct {
     pub fn processDatagramForPacketType(
         self: *Connection,
         packet_type: FramePacketType,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         try self.processDatagramInSpaceWithPacketType(
             packetNumberSpaceForFramePacketType(packet_type),
             packet_type,
-            now_millis,
+            now_nanos,
             datagram,
             null,
         );
@@ -6907,11 +6907,11 @@ pub const Connection = struct {
     pub fn processDatagramForPacketTypeOrClose(
         self: *Connection,
         packet_type: FramePacketType,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
     ) Error!void {
         if (self.isClosingOrClosed() or datagram.len > self.config.max_datagram_size) {
-            return self.processDatagramForPacketType(packet_type, now_millis, datagram);
+            return self.processDatagramForPacketType(packet_type, now_nanos, datagram);
         }
 
         if (try classifyFramePayloadCloseError(packet_type, datagram, self.allocator)) |close| {
@@ -6923,7 +6923,7 @@ pub const Connection = struct {
             return error.InvalidPacket;
         }
 
-        self.processDatagramForPacketType(packet_type, now_millis, datagram) catch |err| {
+        self.processDatagramForPacketType(packet_type, now_nanos, datagram) catch |err| {
             switch (err) {
                 error.InvalidPacket, error.InvalidStream => {
                     if (try self.classifyFrameProcessingCloseError(packet_type, datagram)) |close| {
@@ -6945,7 +6945,7 @@ pub const Connection = struct {
         self: *Connection,
         space: PacketNumberSpace,
         packet_type: FramePacketType,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         close_on_frame_payload_error: bool,
         received_packet_number: ?u64,
@@ -6960,7 +6960,7 @@ pub const Connection = struct {
                 return error.InvalidPacket;
             }
 
-            self.processDatagramInSpaceWithPacketType(space, packet_type, now_millis, datagram, received_packet_number) catch |err| {
+            self.processDatagramInSpaceWithPacketType(space, packet_type, now_nanos, datagram, received_packet_number) catch |err| {
                 switch (err) {
                     error.InvalidPacket, error.InvalidStream => {
                         if (try self.classifyFrameProcessingCloseError(packet_type, datagram)) |close| {
@@ -6978,18 +6978,18 @@ pub const Connection = struct {
             };
             return;
         }
-        return self.processDatagramInSpaceWithPacketType(space, packet_type, now_millis, datagram, received_packet_number);
+        return self.processDatagramInSpaceWithPacketType(space, packet_type, now_nanos, datagram, received_packet_number);
     }
 
     fn processDatagramInSpaceWithPacketType(
         self: *Connection,
         space: PacketNumberSpace,
         packet_type: FramePacketType,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         received_packet_number: ?u64,
     ) Error!void {
-        if (!try self.prepareInboundDatagramProcessing(now_millis)) return;
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
         if (datagram.len == 0 or datagram.len > self.config.max_datagram_size) return error.InvalidPacket;
 
         var packet_space = self.packetNumberSpace(space);
@@ -7008,9 +7008,9 @@ pub const Connection = struct {
             self.allocator.free(sent_packet_snapshots);
         }
         const largest_acknowledged_snapshot = packet_space.largest_acknowledged.*;
-        const first_rtt_sample_sent_time_snapshot = packet_space.first_rtt_sample_sent_time_millis.*;
-        const loss_deadline_millis_snapshot = packet_space.loss_deadline_millis.*;
-        const anti_deadlock_pto_start_millis_snapshot = self.anti_deadlock_pto_start_millis;
+        const first_rtt_sample_sent_time_snapshot = packet_space.first_rtt_sample_sent_time_nanos.*;
+        const loss_deadline_nanos_snapshot = packet_space.loss_deadline_nanos.*;
+        const anti_deadlock_pto_start_nanos_snapshot = self.anti_deadlock_pto_start_nanos;
         const congestion_probe_count_snapshot = packet_space.congestion_probe_count.*;
         const ecn_sent_ect0_snapshot = packet_space.ecn_sent_ect0.*;
         const ecn_sent_ect1_snapshot = packet_space.ecn_sent_ect1.*;
@@ -7068,7 +7068,7 @@ pub const Connection = struct {
         const peer_close_snapshot: PeerCloseSnapshot = if (self.peer_close == null) .absent else .present;
         const closed_snapshot = self.closed;
         const state_snapshot = self.state;
-        const close_deadline_millis_snapshot = self.close_deadline_millis;
+        const close_deadline_nanos_snapshot = self.close_deadline_nanos;
         const crypto_send_queue_snapshots = try self.clonePendingCryptoFrames(packet_space.crypto_send_queue.items);
         var crypto_send_queue_snapshots_restored = false;
         defer {
@@ -7152,7 +7152,7 @@ pub const Connection = struct {
             self.recv_max_streams_uni = recv_max_streams_uni_snapshot;
             self.closed = closed_snapshot;
             self.state = state_snapshot;
-            self.close_deadline_millis = close_deadline_millis_snapshot;
+            self.close_deadline_nanos = close_deadline_nanos_snapshot;
             if (peer_close_snapshot == .absent) self.clearPeerClose();
             self.rollbackCryptoFrameQueueFromSnapshots(packet_space.crypto_send_queue, crypto_send_queue_snapshots);
             crypto_send_queue_snapshots_restored = true;
@@ -7162,9 +7162,9 @@ pub const Connection = struct {
             self.rollbackSentPackets(packet_space.sent_packets, sent_packet_snapshots);
             sent_packet_snapshots_restored = true;
             packet_space.largest_acknowledged.* = largest_acknowledged_snapshot;
-            packet_space.first_rtt_sample_sent_time_millis.* = first_rtt_sample_sent_time_snapshot;
-            packet_space.loss_deadline_millis.* = loss_deadline_millis_snapshot;
-            self.anti_deadlock_pto_start_millis = anti_deadlock_pto_start_millis_snapshot;
+            packet_space.first_rtt_sample_sent_time_nanos.* = first_rtt_sample_sent_time_snapshot;
+            packet_space.loss_deadline_nanos.* = loss_deadline_nanos_snapshot;
+            self.anti_deadlock_pto_start_nanos = anti_deadlock_pto_start_nanos_snapshot;
             packet_space.congestion_probe_count.* = congestion_probe_count_snapshot;
             packet_space.ecn_sent_ect0.* = ecn_sent_ect0_snapshot;
             packet_space.ecn_sent_ect1.* = ecn_sent_ect1_snapshot;
@@ -7196,8 +7196,8 @@ pub const Connection = struct {
             }
 
             switch (decoded.frame) {
-                .ack => |ack| try self.receiveAckFrame(space, now_millis, ack, null),
-                .ack_ecn => |ack_ecn| try self.receiveAckFrame(space, now_millis, ack_ecn.ack, ack_ecn.ecn_counts),
+                .ack => |ack| try self.receiveAckFrame(space, now_nanos, ack, null),
+                .ack_ecn => |ack_ecn| try self.receiveAckFrame(space, now_nanos, ack_ecn.ack, ack_ecn.ecn_counts),
                 .max_data => |max_data| self.receiveMaxDataFrame(max_data),
                 .max_stream_data => |max_stream_data| try self.receiveMaxStreamDataFrame(max_stream_data),
                 .max_streams_bidi => |max_streams| try self.receiveMaxStreamsBidiFrame(max_streams),
@@ -7219,8 +7219,8 @@ pub const Connection = struct {
                     try self.receiveHandshakeDoneFrame();
                     received_handshake_done = true;
                 },
-                .connection_close => |connection_close| try self.receiveConnectionCloseFrame(now_millis, connection_close),
-                .application_close => |application_close| try self.receiveApplicationCloseFrame(now_millis, application_close),
+                .connection_close => |connection_close| try self.receiveConnectionCloseFrame(now_nanos, connection_close),
+                .application_close => |application_close| try self.receiveApplicationCloseFrame(now_nanos, application_close),
                 .datagram => |dg| {
                     if (self.config.max_datagram_frame_size > 0) {
                         const owned = self.allocator.alloc(u8, dg.data.len) catch return error.OutOfMemory;
@@ -7242,7 +7242,7 @@ pub const Connection = struct {
         }
         self.markHandshakeSpaceUsed(space);
         try self.drainPendingRecvStreams();
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         self.maybeDiscardInitialAfterHandshakePacketReceived(space);
         if (received_handshake_done and !self.isClosingOrClosed()) {
             try self.discardPacketNumberSpace(.handshake);
@@ -7257,13 +7257,13 @@ pub const Connection = struct {
     pub fn pollTxInSpace(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
-        if (space == .application) return self.pollTx(now_millis, out_buf);
+        if (space == .application) return self.pollTx(now_nanos, out_buf);
 
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
 
         const packet_space = self.packetNumberSpace(space);
@@ -7271,13 +7271,13 @@ pub const Connection = struct {
 
         const ack_to_send = self.pendingAckFrame(space);
         if (packet_space.crypto_send_queue.items.len != 0) {
-            return try self.pollCryptoFrame(space, ack_to_send, now_millis, out_buf);
+            return try self.pollCryptoFrame(space, ack_to_send, now_nanos, out_buf);
         }
         if (packet_space.pending_ping_count.* != 0) {
-            return try self.pollPingFrameInSpace(space, ack_to_send, now_millis, out_buf);
+            return try self.pollPingFrameInSpace(space, ack_to_send, now_nanos, out_buf);
         }
         if (ack_to_send) |ack| {
-            return try self.pollAckOnlyInSpace(space, ack, now_millis, out_buf);
+            return try self.pollAckOnlyInSpace(space, ack, now_nanos, out_buf);
         }
         return null;
     }
@@ -7285,64 +7285,64 @@ pub const Connection = struct {
     /// Return the next unencrypted packet payload to send, or null if idle.
     pub fn pollTx(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
-        self.expireIdleState(now_millis);
-        self.expireCloseState(now_millis);
-        if (self.pending_close != null) return try self.pollCloseFrame(now_millis, out_buf);
+        self.expireIdleState(now_nanos);
+        self.expireCloseState(now_nanos);
+        if (self.pending_close != null) return try self.pollCloseFrame(now_nanos, out_buf);
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
-        try self.expirePathChallenges(now_millis);
+        try self.expirePathChallenges(now_nanos);
 
         const ack_to_send = self.pendingAckFrame(.application);
         if (self.pending_path_responses.items.len != 0) {
-            return try self.pollPathResponse(ack_to_send, now_millis, out_buf);
+            return try self.pollPathResponse(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_reset_streams.items.len != 0) {
-            return try self.pollResetStream(ack_to_send, now_millis, out_buf);
+            return try self.pollResetStream(ack_to_send, now_nanos, out_buf);
         }
         self.dropObsoleteStopSendingFrames();
         if (self.pending_stop_sending.items.len != 0) {
-            return try self.pollStopSending(ack_to_send, now_millis, out_buf);
+            return try self.pollStopSending(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_retire_connection_ids.items.len != 0) {
-            return try self.pollRetireConnectionId(ack_to_send, now_millis, out_buf);
+            return try self.pollRetireConnectionId(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_handshake_done) {
-            return try self.pollHandshakeDone(ack_to_send, now_millis, out_buf);
+            return try self.pollHandshakeDone(ack_to_send, now_nanos, out_buf);
         }
         if (self.pendingNewConnectionIdCount() != 0) {
-            return try self.pollNewConnectionId(ack_to_send, now_millis, out_buf);
+            return try self.pollNewConnectionId(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_new_tokens.items.len != 0) {
-            return try self.pollNewToken(ack_to_send, now_millis, out_buf);
+            return try self.pollNewToken(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_path_challenges.items.len != 0) {
-            return try self.pollPathChallenge(ack_to_send, now_millis, out_buf);
+            return try self.pollPathChallenge(ack_to_send, now_nanos, out_buf);
         }
         self.dropObsoleteMaxFrames();
         if (self.pending_max_frames.items.len != 0) {
-            return try self.pollMaxFrame(ack_to_send, now_millis, out_buf);
+            return try self.pollMaxFrame(ack_to_send, now_nanos, out_buf);
         }
         self.dropObsoleteBlockedFrames();
         if (self.pending_blocked_frames.items.len != 0) {
-            return try self.pollBlockedFrame(ack_to_send, now_millis, out_buf);
+            return try self.pollBlockedFrame(ack_to_send, now_nanos, out_buf);
         }
         if (self.crypto_send_queue.items.len != 0) {
-            return try self.pollCryptoFrame(.application, ack_to_send, now_millis, out_buf);
+            return try self.pollCryptoFrame(.application, ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_ping_count != 0) {
-            return try self.pollPingFrame(ack_to_send, now_millis, out_buf);
+            return try self.pollPingFrame(ack_to_send, now_nanos, out_buf);
         }
         if (self.pending_datagrams.items.len != 0) {
-            return try self.pollDatagramFrame(ack_to_send, now_millis, out_buf);
+            return try self.pollDatagramFrame(ack_to_send, now_nanos, out_buf);
         }
 
         self.dropResetClosedStreamFrames();
 
         if (self.send_queue.items.len == 0) {
             if (ack_to_send) |ack| {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             }
             return null;
         }
@@ -7354,10 +7354,10 @@ pub const Connection = struct {
         var include_ack = false;
         if (ack_to_send) |ack| {
             stream_budget = std.math.sub(usize, max_tx_datagram_size, ack_encoded_len) catch {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             };
             if (try streamFrameWireLen(pending.stream_id, pending.offset, 0) > stream_budget) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             }
         }
 
@@ -7375,7 +7375,7 @@ pub const Connection = struct {
             {
                 include_ack = true;
             } else {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             }
         }
         if (!self.canSendAckElicitingInSpace(.application, encoded_len) or !self.canSendToPeerAddress(encoded_len)) return null;
@@ -7413,7 +7413,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
             .stream_frame = sent_stream_frame,
         }) catch return error.OutOfMemory;
@@ -7451,7 +7451,7 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
@@ -7486,9 +7486,9 @@ pub const Connection = struct {
             .reason_phrase = owned_reason,
         } };
         self.state = .closing;
-        self.close_deadline_millis = null;
+        self.close_deadline_nanos = null;
         if (self.qlog_writer) |qlog| {
-            qlog.emitConnectionState("closing", self.last_packet_activity_millis orelse 0);
+            qlog.emitConnectionState("closing", self.last_packet_activity_nanos orelse 0);
         }
     }
 
@@ -7520,7 +7520,7 @@ pub const Connection = struct {
             .reason_phrase = owned_reason,
         } };
         self.state = .closing;
-        self.close_deadline_millis = null;
+        self.close_deadline_nanos = null;
     }
 
     /// Open a locally initiated bidirectional stream and return its QUIC stream ID.
@@ -8896,7 +8896,7 @@ pub const Connection = struct {
     fn receiveAckFrame(
         self: *Connection,
         space: PacketNumberSpace,
-        now_millis: i64,
+        now_nanos: i64,
         ack: frame.AckFrame,
         ecn_counts: ?frame.EcnCounts,
     ) Error!void {
@@ -8931,7 +8931,7 @@ pub const Connection = struct {
             if (largest_acked_packet == null or removed.packet_number > largest_acked_packet.?.packet_number) {
                 largest_acked_packet = .{
                     .packet_number = removed.packet_number,
-                    .sent_time_millis = removed.sent_time_millis,
+                    .sent_time_nanos = removed.sent_time_nanos,
                     .bytes = removed.bytes,
                     .ecn_codepoint = removed.ecn_codepoint,
                 };
@@ -8957,12 +8957,12 @@ pub const Connection = struct {
 
         const latest_rtt_sample = if (largest_acked_packet != null and
             largest_acked_packet.?.packet_number == ack.largest_acknowledged)
-            elapsedMillis(largest_acked_packet.?.sent_time_millis, now_millis)
+            elapsedNanos(largest_acked_packet.?.sent_time_nanos, now_nanos)
         else
             null;
         if (latest_rtt_sample) |rtt_sample| {
             _ = rtt_sample;
-            self.rememberFirstRttSampleSentTime(largest_acked_packet.?.sent_time_millis);
+            self.rememberFirstRttSampleSentTime(largest_acked_packet.?.sent_time_nanos);
         }
         if (acked_bytes != 0) {
             if (packet_space.largest_acknowledged.*) |previous_largest| {
@@ -8976,24 +8976,24 @@ pub const Connection = struct {
             packet_space,
             packet_space.largest_acknowledged.* orelse ack.largest_acknowledged,
             latest_rtt_sample,
-            now_millis,
+            now_nanos,
         );
         refreshSendDataAckedStates(self);
         var congestion_probe_needed = false;
         if (ecn_result.ce_congestion_event) {
             if (largest_acked_packet) |acked_packet| {
-                congestion_probe_needed = packet_space.recovery_state.wouldStartCongestionRecovery(acked_packet.sent_time_millis);
-                packet_space.recovery_state.onCongestionEvent(acked_packet.sent_time_millis, now_millis);
+                congestion_probe_needed = packet_space.recovery_state.wouldStartCongestionRecovery(acked_packet.sent_time_nanos);
+                packet_space.recovery_state.onCongestionEvent(acked_packet.sent_time_nanos, now_nanos);
             }
         }
         const persistent_congestion_established = loss_result.persistentCongestionEstablished(space, packet_space.recovery_state.*);
         if (loss_result.lost_bytes != 0) {
             congestion_probe_needed = congestion_probe_needed or
-                packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_millis.?);
+                packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_nanos.?);
             packet_space.recovery_state.onPacketLostWithNumber(
                 loss_result.lost_bytes,
-                loss_result.largest_lost_sent_time_millis.?,
-                now_millis,
+                loss_result.largest_lost_sent_time_nanos.?,
+                now_nanos,
                 loss_result.largest_lost_packet_number,
             );
         }
@@ -9010,8 +9010,8 @@ pub const Connection = struct {
         if (latest_rtt_sample) |rtt_sample| {
             packet_space.recovery_state.onPacketAckedWithUtilization(
                 acked_bytes,
-                largest_acked_packet.?.sent_time_millis,
-                rtt_sample * 1_000_000, // ms→ns
+                largest_acked_packet.?.sent_time_nanos,
+                rtt_sample,
                 self.ackDelayForRtt(space, ack.ack_delay),
                 congestion_window_utilized,
             );
@@ -9019,7 +9019,7 @@ pub const Connection = struct {
         } else {
             packet_space.recovery_state.onPacketAckedWithoutRttSample(
                 acked_bytes,
-                largest_acked_packet.?.sent_time_millis,
+                largest_acked_packet.?.sent_time_nanos,
                 congestion_window_utilized,
             );
         }
@@ -9029,13 +9029,12 @@ pub const Connection = struct {
             self.restorePtoBackoffSnapshot(pto_backoff_before_ack);
         }
         if (persistent_congestion_established) {
-            const pc_rtt_sample_ns = if (latest_rtt_sample) |s| s * 1_000_000 else null; // ms→ns
-            packet_space.recovery_state.onPersistentCongestionWithRttSample(pc_rtt_sample_ns);
+            const pc_rtt_sample_ns = latest_rtt_sample;            packet_space.recovery_state.onPersistentCongestionWithRttSample(pc_rtt_sample_ns);
             if (latest_rtt_sample != null) {
                 self.syncRttEstimatesFromSpace(space);
             }
         }
-        self.refreshAntiDeadlockPtoTimer(space, now_millis);
+        self.refreshAntiDeadlockPtoTimer(space, now_nanos);
     }
 
     fn validateEcnAck(
@@ -9098,11 +9097,11 @@ pub const Connection = struct {
         self: *Connection,
         packet_space: PacketNumberSpaceView,
         largest_acknowledged: u64,
-        latest_rtt_sample_ms: ?u64,
-        now_millis: i64,
+        latest_rtt_sample_ns: ?u64,
+        now_nanos: i64,
     ) Error!LossDetectionResult {
         const loss_delay_ns = recovery.timeThresholdLossDelayNs(
-            (latest_rtt_sample_ms orelse 0) * 1_000_000, // ms→ns
+            (latest_rtt_sample_ns orelse 0),
             packet_space.recovery_state.smoothed_rtt_ns,
         );
 
@@ -9126,9 +9125,9 @@ pub const Connection = struct {
             if (sent_packet.packet_number > largest_acknowledged) continue;
             const packet_threshold_lost = largest_acknowledged >=
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
-            const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
+            const time_threshold_lost = sent_packet.sent_time_nanos + @as(i64, @intCast(loss_delay_ns)) <= now_nanos;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast((loss_delay_ns + 999_999) / 1_000_000));
+                const deadline = sent_packet.sent_time_nanos + @as(i64, @intCast(loss_delay_ns));
                 next_loss_deadline = if (next_loss_deadline) |current|
                     @min(current, deadline)
                 else
@@ -9163,7 +9162,7 @@ pub const Connection = struct {
         packet_space.crypto_send_queue.ensureUnusedCapacity(self.allocator, retransmit_crypto_frames.items.len) catch return error.OutOfMemory;
         self.pending_reset_streams.ensureUnusedCapacity(self.allocator, retransmit_reset_stream_frames.items.len) catch return error.OutOfMemory;
         self.pending_stop_sending.ensureUnusedCapacity(self.allocator, retransmit_stop_sending_frames.items.len) catch return error.OutOfMemory;
-        packet_space.loss_deadline_millis.* = next_loss_deadline;
+        packet_space.loss_deadline_nanos.* = next_loss_deadline;
         for (retransmit_reset_stream_frames.items, 0..) |reset, i| {
             self.pending_reset_streams.insertAssumeCapacity(i, reset);
         }
@@ -9191,10 +9190,10 @@ pub const Connection = struct {
             }
             const packet_threshold_lost = largest_acknowledged >=
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
-            const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
+            const time_threshold_lost = sent_packet.sent_time_nanos + @as(i64, @intCast(loss_delay_ns)) <= now_nanos;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast((loss_delay_ns + 999_999) / 1_000_000));
-                packet_space.loss_deadline_millis.* = if (packet_space.loss_deadline_millis.*) |current|
+                const deadline = sent_packet.sent_time_nanos + @as(i64, @intCast(loss_delay_ns));
+                packet_space.loss_deadline_nanos.* = if (packet_space.loss_deadline_nanos.*) |current|
                     @min(current, deadline)
                 else
                     deadline;
@@ -9203,34 +9202,34 @@ pub const Connection = struct {
             }
 
             var removed = packet_space.sent_packets.orderedRemove(i);
-            result.recordLostPacket(removed, packet_space.first_rtt_sample_sent_time_millis.*);
+            result.recordLostPacket(removed, packet_space.first_rtt_sample_sent_time_nanos.*);
             removed.deinit(self.allocator);
         }
         return result;
     }
 
-    fn expireLossDetectionTimeouts(self: *Connection, now_millis: i64) Error!void {
-        try self.expireLossDetectionTimeoutInSpace(.initial, now_millis);
-        try self.expireLossDetectionTimeoutInSpace(.handshake, now_millis);
-        try self.expireLossDetectionTimeoutInSpace(.application, now_millis);
+    fn expireLossDetectionTimeouts(self: *Connection, now_nanos: i64) Error!void {
+        try self.expireLossDetectionTimeoutInSpace(.initial, now_nanos);
+        try self.expireLossDetectionTimeoutInSpace(.handshake, now_nanos);
+        try self.expireLossDetectionTimeoutInSpace(.application, now_nanos);
     }
 
-    fn expireLossDetectionTimeoutInSpace(self: *Connection, space: PacketNumberSpace, now_millis: i64) Error!void {
+    fn expireLossDetectionTimeoutInSpace(self: *Connection, space: PacketNumberSpace, now_nanos: i64) Error!void {
         const packet_space = self.packetNumberSpace(space);
-        const deadline = packet_space.loss_deadline_millis.* orelse return;
-        if (deadline > now_millis) return;
+        const deadline = packet_space.loss_deadline_nanos.* orelse return;
+        if (deadline > now_nanos) return;
         const largest_acknowledged = packet_space.largest_acknowledged.* orelse {
-            packet_space.loss_deadline_millis.* = null;
+            packet_space.loss_deadline_nanos.* = null;
             return;
         };
-        const loss_result = try self.removeAckDrivenLosses(packet_space, largest_acknowledged, null, now_millis);
+        const loss_result = try self.removeAckDrivenLosses(packet_space, largest_acknowledged, null, now_nanos);
         if (loss_result.lost_bytes != 0) {
             const congestion_probe_needed =
-                packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_millis.?);
+                packet_space.recovery_state.wouldStartCongestionRecovery(loss_result.largest_lost_sent_time_nanos.?);
             packet_space.recovery_state.onPacketLostWithNumber(
                 loss_result.lost_bytes,
-                loss_result.largest_lost_sent_time_millis.?,
-                now_millis,
+                loss_result.largest_lost_sent_time_nanos.?,
+                now_nanos,
                 loss_result.largest_lost_packet_number,
             );
             if (congestion_probe_needed) {
@@ -9240,7 +9239,7 @@ pub const Connection = struct {
                 packet_space.recovery_state.onPersistentCongestion();
             }
         }
-        self.refreshAntiDeadlockPtoTimer(space, now_millis);
+        self.refreshAntiDeadlockPtoTimer(space, now_nanos);
     }
 
     fn hasPendingAckElicitingDataInSpace(self: *Connection, space: PacketNumberSpace) bool {
@@ -9324,25 +9323,25 @@ pub const Connection = struct {
         return null;
     }
 
-    fn antiDeadlockPtoDeadlineMillis(self: Connection, space: PacketNumberSpace, pto_count: u8) ?i64 {
+    fn antiDeadlockPtoDeadline(self: Connection, space: PacketNumberSpace, pto_count: u8) ?i64 {
         if (self.antiDeadlockPtoSpace() != space) return null;
-        const start_millis = self.anti_deadlock_pto_start_millis orelse return null;
+        const start_nanos = self.anti_deadlock_pto_start_nanos orelse return null;
         const recovery_state = switch (space) {
             .initial => self.initial_packet_space.recovery_state,
             .handshake => self.handshake_packet_space.recovery_state,
             .application => return null,
         };
-        return ptoDeadlineFromStart(start_millis, recovery_state, false, pto_count);
+        return ptoDeadlineFromStart(start_nanos, recovery_state, false, pto_count);
     }
 
-    fn refreshAntiDeadlockPtoTimer(self: *Connection, trigger_space: PacketNumberSpace, now_millis: i64) void {
+    fn refreshAntiDeadlockPtoTimer(self: *Connection, trigger_space: PacketNumberSpace, now_nanos: i64) void {
         if (self.antiDeadlockPtoSpace() == null) {
-            self.anti_deadlock_pto_start_millis = null;
+            self.anti_deadlock_pto_start_nanos = null;
             return;
         }
-        if (trigger_space == .application and self.anti_deadlock_pto_start_millis == null) return;
-        if (self.anti_deadlock_pto_start_millis == null) {
-            self.anti_deadlock_pto_start_millis = now_millis;
+        if (trigger_space == .application and self.anti_deadlock_pto_start_nanos == null) return;
+        if (self.anti_deadlock_pto_start_nanos == null) {
+            self.anti_deadlock_pto_start_nanos = now_nanos;
         }
     }
 
@@ -9449,13 +9448,13 @@ pub const Connection = struct {
         packet_space.pending_ping_count.* = std.math.add(usize, packet_space.pending_ping_count.*, 1) catch return error.Internal;
     }
 
-    fn expirePathChallenges(self: *Connection, now_millis: i64) Error!void {
+    fn expirePathChallenges(self: *Connection, now_nanos: i64) Error!void {
         if (self.outstanding_path_challenges.items.len == 0) return;
 
-        const retry_after_ms = (self.recovery_state.ptoNs() + 999_999) / 1_000_000;
+        const retry_after = self.recovery_state.ptoNs();
         var retry_count: usize = 0;
         for (self.outstanding_path_challenges.items) |challenge| {
-            if (elapsedMillis(challenge.sent_time_millis, now_millis) < retry_after_ms) continue;
+            if (elapsedNanos(challenge.sent_time_nanos, now_nanos) < retry_after) continue;
             if (challenge.transmissions < max_path_challenge_transmissions) retry_count += 1;
         }
         if (retry_count != 0) {
@@ -9465,7 +9464,7 @@ pub const Connection = struct {
         var i: usize = 0;
         while (i < self.outstanding_path_challenges.items.len) {
             const challenge = self.outstanding_path_challenges.items[i];
-            if (elapsedMillis(challenge.sent_time_millis, now_millis) < retry_after_ms) {
+            if (elapsedNanos(challenge.sent_time_nanos, now_nanos) < retry_after) {
                 i += 1;
                 continue;
             }
@@ -9486,7 +9485,7 @@ pub const Connection = struct {
 
     fn pollCloseFrame(
         self: *Connection,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const close = self.pending_close orelse return null;
@@ -9510,26 +9509,26 @@ pub const Connection = struct {
         const written = out.getWritten();
         std.debug.assert(written.len == encoded_len);
 
-        if (!self.closed) self.enterClosingState(now_millis);
+        if (!self.closed) self.enterClosingState(now_nanos);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollAckOnly(
         self: *Connection,
         ack: frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
-        return self.pollAckOnlyInSpace(.application, ack, now_millis, out_buf);
+        return self.pollAckOnlyInSpace(.application, ack, now_nanos, out_buf);
     }
 
     fn pollAckOnlyInSpace(
         self: *Connection,
         space: PacketNumberSpace,
         ack: frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const encoded_len = try ackFrameWireLen(ack);
@@ -9547,7 +9546,7 @@ pub const Connection = struct {
         packet_space.pending_ack_largest.* = null;
         const written = out.getWritten();
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         self.maybeDiscardInitialAfterHandshakePacketSent(space);
         return written;
     }
@@ -9555,7 +9554,7 @@ pub const Connection = struct {
     fn pollPathResponse(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const response_encoded_len = pathResponseFrameWireLen();
@@ -9573,7 +9572,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9591,7 +9590,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -9617,14 +9616,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollResetStream(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const reset = self.pending_reset_streams.items[0];
@@ -9643,7 +9642,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9661,7 +9660,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
             .reset_stream_frame = reset,
         }) catch return error.OutOfMemory;
@@ -9687,14 +9686,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollStopSending(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const stop_sending = self.pending_stop_sending.items[0];
@@ -9713,7 +9712,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9731,7 +9730,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
             .stop_sending_frame = stop_sending,
         }) catch return error.OutOfMemory;
@@ -9757,14 +9756,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollRetireConnectionId(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const sequence_number = self.pending_retire_connection_ids.items[0];
@@ -9783,7 +9782,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9801,7 +9800,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -9826,14 +9825,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollNewConnectionId(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const local_index = self.nextUnsentLocalConnectionIdIndex() orelse return null;
@@ -9853,7 +9852,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9871,7 +9870,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -9901,14 +9900,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollHandshakeDone(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const handshake_done_encoded_len = handshakeDoneFrameWireLen();
@@ -9926,7 +9925,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -9944,7 +9943,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -9970,14 +9969,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollNewToken(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const token = self.pending_new_tokens.items[0];
@@ -9996,7 +9995,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10014,7 +10013,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -10040,24 +10039,24 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollPingFrame(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
-        return self.pollPingFrameInSpace(.application, ack_to_send, now_millis, out_buf);
+        return self.pollPingFrameInSpace(.application, ack_to_send, now_nanos, out_buf);
     }
 
     fn pollPingFrameInSpace(
         self: *Connection,
         space: PacketNumberSpace,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         var packet_space = self.packetNumberSpace(space);
@@ -10078,7 +10077,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnlyInSpace(space, ack, now_millis, out_buf);
+                return try self.pollAckOnlyInSpace(space, ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10097,7 +10096,7 @@ pub const Connection = struct {
         const packet_number = packet_space.next_packet_number.*;
         packet_space.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -10122,7 +10121,7 @@ pub const Connection = struct {
         packet_space.next_packet_number.* = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(space, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         self.maybeDiscardInitialAfterHandshakePacketSent(space);
         return written;
     }
@@ -10130,11 +10129,11 @@ pub const Connection = struct {
     fn pollDatagramFrame(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         _ = ack_to_send;
-        _ = now_millis;
+        _ = now_nanos;
         const data = self.pending_datagrams.orderedRemove(0);
         defer self.allocator.free(data);
         const encoded_len = wire_len.datagramFrameWireLen(data.len) catch return error.BufferTooSmall;
@@ -10147,7 +10146,7 @@ pub const Connection = struct {
     fn pollPathChallenge(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const challenge_encoded_len = pathChallengeFrameWireLen();
@@ -10165,7 +10164,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10189,7 +10188,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -10211,7 +10210,7 @@ pub const Connection = struct {
         const transmissions = std.math.add(u8, pending_challenge.transmissions, 1) catch max_path_challenge_transmissions;
         self.outstanding_path_challenges.append(self.allocator, .{
             .data = challenge_data,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .transmissions = transmissions,
         }) catch return error.OutOfMemory;
         appended_outstanding_challenge = true;
@@ -10224,14 +10223,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollBlockedFrame(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const blocked = self.pending_blocked_frames.items[0];
@@ -10250,7 +10249,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10268,7 +10267,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -10307,14 +10306,14 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
     fn pollMaxFrame(
         self: *Connection,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         const max_frame = self.pending_max_frames.items[0];
@@ -10333,7 +10332,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnly(ack, now_millis, out_buf);
+                return try self.pollAckOnly(ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10351,7 +10350,7 @@ pub const Connection = struct {
         const packet_number = self.next_packet_number;
         self.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
@@ -10390,7 +10389,7 @@ pub const Connection = struct {
         self.next_packet_number = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(.application, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         return written;
     }
 
@@ -10398,7 +10397,7 @@ pub const Connection = struct {
         self: *Connection,
         space: PacketNumberSpace,
         ack_to_send: ?frame.AckFrame,
-        now_millis: i64,
+        now_nanos: i64,
         out_buf: []u8,
     ) Error!?[]u8 {
         var packet_space = self.packetNumberSpace(space);
@@ -10420,7 +10419,7 @@ pub const Connection = struct {
                 encoded_len = coalesced_len;
                 include_ack = true;
             } else if (ack_encoded_len <= max_tx_datagram_size and out_buf.len >= ack_encoded_len) {
-                return try self.pollAckOnlyInSpace(space, ack, now_millis, out_buf);
+                return try self.pollAckOnlyInSpace(space, ack, now_nanos, out_buf);
             } else {
                 return error.BufferTooSmall;
             }
@@ -10445,7 +10444,7 @@ pub const Connection = struct {
         const packet_number = packet_space.next_packet_number.*;
         packet_space.sent_packets.append(self.allocator, .{
             .packet_number = packet_number,
-            .sent_time_millis = now_millis,
+            .sent_time_nanos = now_nanos,
             .bytes = encoded_len,
             .crypto_frame = sent_crypto_frame,
         }) catch return error.OutOfMemory;
@@ -10476,7 +10475,7 @@ pub const Connection = struct {
         packet_space.next_packet_number.* = std.math.add(u64, packet_number, 1) catch return error.Internal;
         self.recordAckElicitingSendInSpace(space, written.len);
         self.recordPeerAddressBytesSent(written.len);
-        self.recordPacketActivity(now_millis);
+        self.recordPacketActivity(now_nanos);
         self.maybeDiscardInitialAfterHandshakePacketSent(space);
         self.maybeDiscardHandshakeAfterConfirmedCryptoSent(space);
         return written;
@@ -11598,14 +11597,14 @@ fn pollAndProcessUntilMaxStreams(
     expected_max: u64,
 ) !void {
     var datagram: [128]u8 = undefined;
-    var now_millis: i64 = 10;
+    var now_nanos: i64 = 10;
     var poll_count: usize = 0;
     while (poll_count < 4) : (poll_count += 1) {
-        const payload = (try sender.pollTx(now_millis, &datagram)) orelse break;
+        const payload = (try sender.pollTx(now_nanos, &datagram)) orelse break;
         const found = try payloadContainsExpectedMaxStreams(payload, kind, expected_max);
-        try receiver.processDatagram(now_millis + 1, payload);
+        try receiver.processDatagram(now_nanos + 1, payload);
         if (found) return;
-        now_millis += 10;
+        now_nanos += 10;
     }
     return error.TestUnexpectedResult;
 }
@@ -11630,6 +11629,10 @@ fn expectFramePacketTypeRejected(
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(space));
 }
 
+
+const duration_mod = @import("../time/duration.zig");
+const ms = duration_mod.ns_per_ms;
+const us = duration_mod.ns_per_us;
 test "Connection is the canonical public handle and QuicConnection remains an alias" {
     var canonical = try Connection.init(std.testing.allocator, .client, .{});
     defer canonical.deinit();
@@ -11909,7 +11912,7 @@ test "compatible version transport parameter bytes OrClose reports version negot
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try server.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -12201,7 +12204,7 @@ test "transport parameter TLS extension bytes roundtrip through connection API" 
     try client.applyPeerTransportParameterBytes(extension_bytes);
     try std.testing.expectEqual(@as(u64, 4096), client.peer_max_data);
     try std.testing.expectEqual(@as(usize, 1300), client.maxTxDatagramSize());
-    try std.testing.expectEqual(@as(?u64, 250), client.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 250), client.effectiveIdleTimeout());
     const peer_reset = client.peerStatelessResetToken() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualSlices(u8, &reset_token, &peer_reset);
     const peer_preferred = client.peerPreferredAddress() orelse return error.TestUnexpectedResult;
@@ -12253,7 +12256,7 @@ test "applyPeerTransportParameterBytesOrClose queues close for malformed extensi
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try conn.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -12289,7 +12292,7 @@ test "applyPeerTransportParameterBytesOrClose queues close for invalid peer para
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try conn.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -12332,7 +12335,7 @@ test "applyPeerTransportParameterBytesOrClose queues close for version negotiati
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try conn.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -12393,7 +12396,7 @@ test "applyPeerTransportParameters updates send limits and ACK policy" {
     try std.testing.expectEqual(recovery.initialCongestionWindow(1200), conn.congestionWindow(.application));
     try std.testing.expectEqual(@as(u64, 4), conn.peer_ack_delay_exponent);
     try std.testing.expectEqual(@as(u64, 250), conn.peer_max_idle_timeout_ms);
-    try std.testing.expectEqual(@as(?u64, 250), conn.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 250), conn.effectiveIdleTimeout());
     try std.testing.expect(conn.peerActiveMigrationDisabled());
     const stored_reset_token = conn.peerStatelessResetToken() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualSlices(u8, &reset_token, &stored_reset_token);
@@ -12464,16 +12467,16 @@ test "applyPeerTransportParameters rejects typed values outside wire bounds" {
     try std.testing.expectEqual(@as(usize, 1200), conn.peer_max_udp_payload_size);
 }
 
-test "effectiveIdleTimeoutMillis uses shorter non-zero endpoint value" {
+test "effectiveIdleTimeout uses shorter non-zero endpoint value" {
     var local_only = try Connection.init(std.testing.allocator, .client, .{
         .max_idle_timeout_ms = 1000,
     });
     defer local_only.deinit();
-    try std.testing.expectEqual(@as(?u64, 1000), local_only.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 1000), local_only.effectiveIdleTimeout());
 
     var disabled = try Connection.init(std.testing.allocator, .client, .{});
     defer disabled.deinit();
-    try std.testing.expectEqual(@as(?u64, null), disabled.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, null), disabled.effectiveIdleTimeout());
 
     var shorter_peer = try Connection.init(std.testing.allocator, .client, .{
         .max_idle_timeout_ms = 1000,
@@ -12482,7 +12485,7 @@ test "effectiveIdleTimeoutMillis uses shorter non-zero endpoint value" {
     try shorter_peer.applyPeerTransportParameters(.{
         .max_idle_timeout = 250,
     });
-    try std.testing.expectEqual(@as(?u64, 250), shorter_peer.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 250), shorter_peer.effectiveIdleTimeout());
 
     var shorter_local = try Connection.init(std.testing.allocator, .client, .{
         .max_idle_timeout_ms = 250,
@@ -12491,7 +12494,7 @@ test "effectiveIdleTimeoutMillis uses shorter non-zero endpoint value" {
     try shorter_local.applyPeerTransportParameters(.{
         .max_idle_timeout = 1000,
     });
-    try std.testing.expectEqual(@as(?u64, 250), shorter_local.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 250), shorter_local.effectiveIdleTimeout());
 
     // A local zero (no preference) with a non-zero peer value adopts the peer
     // timeout; RFC 9000 §10.1 treats zero as "no preference" rather than
@@ -12501,7 +12504,7 @@ test "effectiveIdleTimeoutMillis uses shorter non-zero endpoint value" {
     try local_zero_peer_nonzero.applyPeerTransportParameters(.{
         .max_idle_timeout = 400,
     });
-    try std.testing.expectEqual(@as(?u64, 400), local_zero_peer_nonzero.effectiveIdleTimeoutMillis());
+    try std.testing.expectEqual(@as(?u64, 400), local_zero_peer_nonzero.effectiveIdleTimeout());
 }
 
 test "successful send refreshes idle timeout and timeout closes connection" {
@@ -12512,14 +12515,14 @@ test "successful send refreshes idle timeout and timeout closes connection" {
 
     try conn.sendPing();
     var out_buf: [16]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
-    try std.testing.expectEqual(@as(?i64, 110), conn.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, 110 * ms), conn.idleTimeoutDeadline());
 
-    try conn.checkIdleTimeouts(109);
+    try conn.checkIdleTimeouts(109 * ms);
     try std.testing.expectEqual(ConnectionState.active, conn.connectionState());
 
-    try std.testing.expectError(error.ConnectionClosed, conn.checkIdleTimeouts(110));
+    try std.testing.expectError(error.ConnectionClosed, conn.checkIdleTimeouts(110 * ms));
     try std.testing.expectEqual(ConnectionState.closed, conn.connectionState());
     try std.testing.expectError(error.ConnectionClosed, conn.sendPing());
 }
@@ -12534,15 +12537,15 @@ test "successful receive refreshes idle timeout but invalid payload does not" {
     var payload_out = buffer.fixedWriter(&payload_buf);
     try frame.encodeFrame(payload_out.writer(), .{ .ping = {} });
 
-    try conn.processDatagram(10, payload_out.getWritten());
-    try std.testing.expectEqual(@as(?i64, 60), conn.idleTimeoutDeadlineMillis());
+    try conn.processDatagram(10 * ms, payload_out.getWritten());
+    try std.testing.expectEqual(@as(?i64, 60 * ms), conn.idleTimeoutDeadline());
     try std.testing.expectEqual(@as(?u64, 0), conn.pendingAckLargest(.application));
 
     const invalid_payload = [_]u8{0xff};
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(20, &invalid_payload));
-    try std.testing.expectEqual(@as(?i64, 60), conn.idleTimeoutDeadlineMillis());
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(20 * ms, &invalid_payload));
+    try std.testing.expectEqual(@as(?i64, 60 * ms), conn.idleTimeoutDeadline());
 
-    try std.testing.expectError(error.ConnectionClosed, conn.pollTx(60, &payload_buf));
+    try std.testing.expectError(error.ConnectionClosed, conn.pollTx(60 * ms, &payload_buf));
     try std.testing.expectEqual(ConnectionState.closed, conn.connectionState());
 }
 
@@ -12818,12 +12821,12 @@ test "address-bound NEW_TOKEN validates peer address without one-time Retry stat
     defer server.deinit();
     try server.sendPing();
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(1_010, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(1_010 * ms, &out_buf));
 
     try server.validateAddressValidationToken(secret, .new_token, 1_020, peer_address, new_token);
     try std.testing.expect(server.peerAddressValidated());
     try std.testing.expectEqual(@as(?usize, null), server.antiAmplificationLimitRemaining());
-    const payload = (try server.pollTx(1_021, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1_021 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
 
     var other_server = try Connection.init(std.testing.allocator, .server, .{});
@@ -12863,9 +12866,9 @@ test "EndpointConnectionLifecycle validates path token and arms unblocked server
 
     try server.confirmHandshake();
     try server.recordPeerAddressBytesReceived(1);
-    _ = try server.recordPacketSentInSpace(.application, 1_010, 1);
+    _ = try server.recordPacketSentInSpace(.application, 1_010 * ms, 1);
     var out_buf: [32]u8 = undefined;
-    try std.testing.expect(server.lossDetectionTimerDeadlineMillis() != null);
+    try std.testing.expect(server.lossDetectionTimerDeadline() != null);
 
     try server.sendCryptoInSpace(.handshake, "abc");
     try std.testing.expectEqual(@as(?[]u8, null), try server.pollTxInSpace(.handshake, 1_011, &out_buf));
@@ -12905,7 +12908,7 @@ test "EndpointConnectionLifecycle validates path token and arms unblocked server
     const recovery_timer = result.recovery_timer orelse return error.TestUnexpectedResult;
     const earliest = lifecycle.earliestRecoveryDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(connection_id, earliest.connection_id);
-    try std.testing.expectEqual(recovery_timer.deadline_millis, earliest.timer.deadline_millis);
+    try std.testing.expectEqual(recovery_timer.deadline_nanos, earliest.timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), policy.replayFilterEntryCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
@@ -12948,12 +12951,12 @@ test "EndpointConnectionLifecycle refreshes recovery timer when address token va
     defer server.deinit();
     try server.confirmHandshake();
     try server.recordPeerAddressBytesReceived(1);
-    _ = try server.recordPacketSentInSpace(.application, 1_010, 1);
+    _ = try server.recordPacketSentInSpace(.application, 1_010 * ms, 1);
     try lifecycle.armRecoveryTimerFromConnection(702, &server);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try server.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -13003,9 +13006,9 @@ test "EndpointConnectionLifecycle validates Retry token and consumes pending sta
 
     try server.confirmHandshake();
     try server.recordPeerAddressBytesReceived(1);
-    _ = try server.recordPacketSentInSpace(.application, 1_010, 1);
+    _ = try server.recordPacketSentInSpace(.application, 1_010 * ms, 1);
     var out_buf: [32]u8 = undefined;
-    try std.testing.expect(server.lossDetectionTimerDeadlineMillis() != null);
+    try std.testing.expect(server.lossDetectionTimerDeadline() != null);
 
     try server.sendCryptoInSpace(.handshake, "retry");
     try std.testing.expectEqual(@as(?[]u8, null), try server.pollTxInSpace(.handshake, 1_011, &out_buf));
@@ -13062,7 +13065,7 @@ test "EndpointConnectionLifecycle validates Retry token and consumes pending sta
     const recovery_timer = result.recovery_timer orelse return error.TestUnexpectedResult;
     const earliest = lifecycle.earliestRecoveryDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(connection_id, earliest.connection_id);
-    try std.testing.expectEqual(recovery_timer.deadline_millis, earliest.timer.deadline_millis);
+    try std.testing.expectEqual(recovery_timer.deadline_nanos, earliest.timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), policy.replayFilterEntryCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
@@ -13109,12 +13112,12 @@ test "EndpointConnectionLifecycle refreshes recovery timer when Retry token vali
     defer server.deinit();
     try server.confirmHandshake();
     try server.recordPeerAddressBytesReceived(1);
-    _ = try server.recordPacketSentInSpace(.application, 1_010, 1);
+    _ = try server.recordPacketSentInSpace(.application, 1_010 * ms, 1);
     try lifecycle.armRecoveryTimerFromConnection(703, &server);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try server.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -13167,7 +13170,7 @@ test "EndpointConnectionLifecycle accepts Retry follow-up Initial through lifecy
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "client after retry");
     const followup_initial = (try client.pollInitialProtectedDatagram(
-        1_010,
+        1_010 * ms,
         &retry_scid,
         &client_scid,
         token,
@@ -13324,7 +13327,7 @@ test "applyPeerTransportParameters validates original_destination_connection_id 
 
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &client_scid,
         &[_]u8{},
@@ -13367,7 +13370,7 @@ test "applyPeerTransportParameters validates initial_source_connection_id" {
 
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &client_scid,
         &[_]u8{},
@@ -13425,7 +13428,7 @@ test "pre-bound peer Initial source CID rejects mismatched protected Initial" {
     try server.setPeerInitialSourceConnectionId(&expected_client_scid);
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &mismatched_client_scid,
         &[_]u8{},
@@ -13452,7 +13455,7 @@ test "pre-bound peer Initial source CID accepts matching protected Initial" {
     try server.setPeerInitialSourceConnectionId(&client_scid);
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &client_scid,
         &[_]u8{},
@@ -13483,7 +13486,7 @@ test "openStream enforces peer bidirectional stream limit until MAX_STREAMS_BIDI
     var update_buf: [16]u8 = undefined;
     var update_out = buffer.fixedWriter(&update_buf);
     try frame.encodeFrame(update_out.writer(), .{ .max_streams_bidi = .{ .maximum_streams = 2 } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 4), try conn.openStream());
     try std.testing.expectEqual(@as(u64, 2), conn.opened_bidi_streams);
@@ -13504,7 +13507,7 @@ test "openUniStream allocates unidirectional stream ids and enforces MAX_STREAMS
     var update_buf: [16]u8 = undefined;
     var update_out = buffer.fixedWriter(&update_buf);
     try frame.encodeFrame(update_out.writer(), .{ .max_streams_uni = .{ .maximum_streams = 2 } });
-    try client.processDatagram(0, update_out.getWritten());
+    try client.processDatagram(0 * ms, update_out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 6), try client.openUniStream());
     try std.testing.expectEqual(@as(u64, 2), client.opened_uni_streams);
@@ -13530,7 +13533,7 @@ test "sendCrypto fragments and pollTx emits crypto frame payloads" {
 
     var out_buf: [8]u8 = undefined;
     for (expected) |want| {
-        const payload = (try conn.pollTx(0, &out_buf)).?;
+        const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
         try std.testing.expect(payload.len <= out_buf.len);
 
         var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
@@ -13546,7 +13549,7 @@ test "sendCrypto fragments and pollTx emits crypto frame payloads" {
     }
 
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_send_queue.items.len);
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "processDatagram and recvCrypto move crypto data" {
@@ -13559,14 +13562,14 @@ test "processDatagram and recvCrypto move crypto data" {
         .offset = 0,
         .data = "hello ",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .crypto = .{
         .offset = 6,
         .data = "world",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 1), conn.pending_ack_largest);
 
@@ -13588,11 +13591,11 @@ test "processDatagram buffers out-of-order CRYPTO and ignores duplicate pending 
     } });
     const pending = try std.testing.allocator.dupe(u8, out.getWritten());
     defer std.testing.allocator.free(pending);
-    try conn.processDatagram(0, pending);
+    try conn.processDatagram(0 * ms, pending);
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
 
-    try conn.processDatagram(1, pending);
+    try conn.processDatagram(1 * ms, pending);
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
 
     var read_buf: [16]u8 = undefined;
@@ -13603,7 +13606,7 @@ test "processDatagram buffers out-of-order CRYPTO and ignores duplicate pending 
         .offset = 0,
         .data = "hello ",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
 
     const n = (try conn.recvCrypto(&read_buf)).?;
@@ -13621,7 +13624,7 @@ test "processDatagram splits duplicate middle overlap with pending CRYPTO data" 
         .offset = 2,
         .data = "cd",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
 
@@ -13630,7 +13633,7 @@ test "processDatagram splits duplicate middle overlap with pending CRYPTO data" 
         .offset = 1,
         .data = "bXde",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
 
@@ -13639,7 +13642,7 @@ test "processDatagram splits duplicate middle overlap with pending CRYPTO data" 
         .offset = 1,
         .data = "bcde",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 3), conn.crypto_recv_pending.items.len);
 
@@ -13648,7 +13651,7 @@ test "processDatagram splits duplicate middle overlap with pending CRYPTO data" 
         .offset = 0,
         .data = "a",
     } });
-    try conn.processDatagram(3, out.getWritten());
+    try conn.processDatagram(3 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 3), conn.crypto_recv_pending.items.len);
 
     var read_buf: [8]u8 = undefined;
@@ -13670,10 +13673,10 @@ test "processDatagram discards duplicate CRYPTO data without appending bytes" {
     } });
     const original = try std.testing.allocator.dupe(u8, out.getWritten());
     defer std.testing.allocator.free(original);
-    try conn.processDatagram(0, original);
+    try conn.processDatagram(0 * ms, original);
     try std.testing.expectEqualStrings("hello", conn.crypto_recv_buffer.items);
 
-    try conn.processDatagram(1, original);
+    try conn.processDatagram(1 * ms, original);
     try std.testing.expectEqualStrings("hello", conn.crypto_recv_buffer.items);
 
     out = buffer.fixedWriter(&datagram);
@@ -13681,7 +13684,7 @@ test "processDatagram discards duplicate CRYPTO data without appending bytes" {
         .offset = 3,
         .data = "lo!",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqualStrings("hello!", conn.crypto_recv_buffer.items);
 
     var read_buf: [8]u8 = undefined;
@@ -13700,7 +13703,7 @@ test "processDatagram rejects conflicting CRYPTO overlap and rolls back pending 
         .data = "tail",
     } });
     try out.writeByte(0x02); // truncated ACK frame
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_pending.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
@@ -13711,14 +13714,14 @@ test "processDatagram rejects conflicting CRYPTO overlap and rolls back pending 
         .offset = 0,
         .data = "hello",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .crypto = .{
         .offset = 3,
         .data = "xx",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2 * ms, out.getWritten()));
     try std.testing.expectEqualStrings("hello", conn.crypto_recv_buffer.items);
 }
 
@@ -13791,7 +13794,7 @@ test "processDatagram enforces CRYPTO receive buffer limit" {
         .offset = 0,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqualStrings("hello", conn.crypto_recv_buffer.items);
 
     out = buffer.fixedWriter(&datagram);
@@ -13799,7 +13802,7 @@ test "processDatagram enforces CRYPTO receive buffer limit" {
         .offset = 5,
         .data = "!",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqualStrings("hello", conn.crypto_recv_buffer.items);
     try std.testing.expectEqual(@as(?u64, 0), conn.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
@@ -13829,7 +13832,7 @@ test "processDatagramOrClose queues crypto buffer exceeded close" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -14190,7 +14193,7 @@ test "driveCryptoBackendInSpace discards Handshake space after confirmed outboun
     try std.testing.expect(!protected_sender.hasHandshakeProtectionKeys());
     try std.testing.expectError(error.InvalidPacket, protected_sender.sendCryptoInSpace(.handshake, "late"));
 
-    try protected_receiver.processProtectedHandshakeDatagramWithInstalledKeys(3, protected);
+    try protected_receiver.processProtectedHandshakeDatagramWithInstalledKeys(3 * ms, protected);
     var crypto_buf: [64]u8 = undefined;
     const recv_len = (try protected_receiver.recvCryptoInSpace(.handshake, &crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("protected finished", crypto_buf[0..recv_len]);
@@ -15008,7 +15011,7 @@ test "driveCryptoBackendInSpaceWithCompatibleVersionOrClose queues version negot
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try server.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -15115,7 +15118,7 @@ test "driveCryptoBackendInSpaceOrClose queues close for invalid peer transport p
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try conn.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -15171,7 +15174,7 @@ test "driveCryptoBackendInSpaceOrClose queues crypto close for backend receive e
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
 
     var close_buf: [96]u8 = undefined;
-    const payload = (try conn.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -15245,15 +15248,15 @@ test "driveCryptoBackendInSpaceOrClose emits protected Handshake CONNECTION_CLOS
     try std.testing.expect(!backend.output_pulled);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
 
-    const close_packet = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(10, &client_dcid, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const close_packet = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(10 * ms, &client_dcid, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
-    try std.testing.expect(server.closeDeadlineMillis().? > 10);
+    try std.testing.expect(server.closeDeadline().? > 10);
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.handshake));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.handshake));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.handshake));
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -15276,10 +15279,10 @@ test "pollTx coalesces pending ACK with queued CRYPTO payload" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(20, (try client.pollTx(10, &datagram)).?);
+    try server.processDatagram(20 * ms, (try client.pollTx(10 * ms, &datagram)).?);
     try server.sendCrypto("hs");
 
-    const coalesced = (try server.pollTx(30, &datagram)).?;
+    const coalesced = (try server.pollTx(30 * ms, &datagram)).?;
     try std.testing.expectEqual(@as(usize, 1), server.sent_packets.items.len);
     try std.testing.expectEqual(@as(?u64, null), server.pending_ack_largest);
 
@@ -15310,7 +15313,7 @@ test "sendPing and pollTx emit ping frame payloads" {
     try std.testing.expectEqual(@as(usize, 2), conn.pending_ping_count);
 
     var out_buf: [16]u8 = undefined;
-    const first_payload = (try conn.pollTx(10, &out_buf)).?;
+    const first_payload = (try conn.pollTx(10 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, first_payload.len), conn.recovery_state.bytes_in_flight);
@@ -15322,7 +15325,7 @@ test "sendPing and pollTx emit ping frame payloads" {
         else => return error.TestUnexpectedResult,
     }
 
-    const second_payload = (try conn.pollTx(20, &out_buf)).?;
+    const second_payload = (try conn.pollTx(20 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 2), conn.sent_packets.items.len);
 
@@ -15343,13 +15346,13 @@ test "server anti-amplification blocks sends until peer bytes are recorded" {
 
     try server.sendPing();
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(0 * ms, &out_buf));
     try std.testing.expectEqual(@as(usize, 1), server.pending_ping_count);
 
     try server.recordPeerAddressBytesReceived(1);
     try std.testing.expectEqual(@as(?usize, 3), server.antiAmplificationLimitRemaining());
 
-    const payload = (try server.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
     try std.testing.expectEqual(@as(?usize, 2), server.antiAmplificationLimitRemaining());
     try std.testing.expectEqual(@as(usize, 0), server.pending_ping_count);
@@ -15368,7 +15371,7 @@ test "server anti-amplification budget is shared across packet number spaces" {
     try std.testing.expectEqual(@as(usize, 1), initial_payload.len);
     try std.testing.expectEqual(@as(?usize, 2), server.antiAmplificationLimitRemaining());
 
-    const app_payload = (try server.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const app_payload = (try server.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), app_payload.len);
     try std.testing.expectEqual(@as(?usize, 1), server.antiAmplificationLimitRemaining());
 
@@ -15389,13 +15392,13 @@ test "recordPacketSentInSpace respects server anti-amplification budget" {
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
 
-    try std.testing.expectError(error.FlowControlBlocked, server.recordPacketSentInSpace(.application, 0, 1));
+    try std.testing.expectError(error.FlowControlBlocked, server.recordPacketSentInSpace(.application, 0 * ms, 1));
 
     try server.recordPeerAddressBytesReceived(10);
-    try std.testing.expectEqual(@as(u64, 0), try server.recordPacketSentInSpace(.application, 0, 20));
+    try std.testing.expectEqual(@as(u64, 0), try server.recordPacketSentInSpace(.application, 0 * ms, 20));
     try std.testing.expectEqual(@as(?usize, 10), server.antiAmplificationLimitRemaining());
 
-    try std.testing.expectError(error.FlowControlBlocked, server.recordPacketSentInSpace(.application, 10, 11));
+    try std.testing.expectError(error.FlowControlBlocked, server.recordPacketSentInSpace(.application, 10 * ms, 11));
     try std.testing.expectEqual(@as(usize, 1), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(?usize, 10), server.antiAmplificationLimitRemaining());
 }
@@ -15410,14 +15413,14 @@ test "server Retry token validation consumes token and validates address" {
 
     try server.sendPing();
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try server.pollTx(0 * ms, &out_buf));
 
     try server.validateRetryToken("retry-token");
     try std.testing.expect(server.peerAddressValidated());
     try std.testing.expectEqual(@as(?usize, null), server.antiAmplificationLimitRemaining());
     try std.testing.expectEqual(@as(usize, 0), server.pendingRetryTokenCount());
 
-    const payload = (try server.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
     try std.testing.expectError(error.InvalidPacket, server.validateRetryToken("retry-token"));
 }
@@ -15449,7 +15452,7 @@ test "invalid datagram leaves explicit anti-amplification budget unchanged" {
     try std.testing.expectEqual(@as(?usize, 6), server.antiAmplificationLimitRemaining());
 
     const invalid_payload = [_]u8{0xff};
-    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0, &invalid_payload));
+    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0 * ms, &invalid_payload));
     try std.testing.expectEqual(@as(?usize, 6), server.antiAmplificationLimitRemaining());
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -15466,10 +15469,10 @@ test "pollTx coalesces pending ACK with queued PING payload" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(20, (try client.pollTx(10, &datagram)).?);
+    try server.processDatagram(20 * ms, (try client.pollTx(10 * ms, &datagram)).?);
     try server.sendPing();
 
-    const coalesced = (try server.pollTx(30, &datagram)).?;
+    const coalesced = (try server.pollTx(30 * ms, &datagram)).?;
     try std.testing.expectEqual(@as(usize, 1), server.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), server.pending_ping_count);
     try std.testing.expectEqual(@as(?u64, null), server.pending_ack_largest);
@@ -15500,7 +15503,7 @@ test "processDatagram buffers out-of-order crypto data" {
         .data = "world",
     } });
 
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.crypto_recv_pending.items.len);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
@@ -15510,7 +15513,7 @@ test "processDatagram buffers out-of-order crypto data" {
         .offset = 0,
         .data = "hello ",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     var read_buf: [16]u8 = undefined;
     const n = (try conn.recvCrypto(&read_buf)).?;
@@ -15530,7 +15533,7 @@ test "processDatagram rolls back crypto data when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_buffer.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_recv_pending.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_read_offset);
@@ -15547,7 +15550,7 @@ test "sendCrypto rejects unsendable crypto frames before mutating state" {
     try std.testing.expectEqual(@as(usize, 0), conn.crypto_send_queue.items.len);
 
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "sendCrypto rolls back partial fragmentation when later offsets cannot fit" {
@@ -15596,7 +15599,7 @@ test "sendOnStream and pollTx emit opened local unidirectional stream frames" {
     try conn.sendOnStream(stream_id, "uni", true);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
 
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
@@ -15625,7 +15628,7 @@ test "sendOnStream requires observed peer bidirectional streams" {
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try conn.sendOnStream(1, "reply", false);
     try std.testing.expectEqual(@as(usize, 1), conn.send_streams.items.len);
@@ -15643,7 +15646,7 @@ test "processDatagram rolls back MAX_STREAMS_BIDI updates when payload is invali
     try frame.encodeFrame(out.writer(), .{ .max_streams_bidi = .{ .maximum_streams = 2 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 1), conn.peer_max_streams_bidi);
     try std.testing.expectError(error.FlowControlBlocked, conn.openStream());
 }
@@ -15660,7 +15663,7 @@ test "processDatagram rolls back MAX_STREAMS_UNI updates when payload is invalid
     try frame.encodeFrame(out.writer(), .{ .max_streams_uni = .{ .maximum_streams = 2 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 1), conn.peer_max_streams_uni);
     try std.testing.expectError(error.FlowControlBlocked, conn.openUniStream());
 }
@@ -15673,7 +15676,7 @@ test "sendOnStream and pollTx emit stream frame payloads" {
     try conn.sendOnStream(stream_id, "hello", true);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
 
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
@@ -15689,7 +15692,7 @@ test "sendOnStream and pollTx emit stream frame payloads" {
         else => return error.TestUnexpectedResult,
     }
 
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "sendOnStream fragments stream data by max datagram size" {
@@ -15712,7 +15715,7 @@ test "sendOnStream fragments stream data by max datagram size" {
 
     var out_buf: [10]u8 = undefined;
     for (expected) |want| {
-        const payload = (try conn.pollTx(0, &out_buf)).?;
+        const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
         try std.testing.expect(payload.len <= out_buf.len);
 
         var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
@@ -15729,7 +15732,7 @@ test "sendOnStream fragments stream data by max datagram size" {
         }
     }
 
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
     try std.testing.expectEqual(@as(u64, 16), conn.findSendStream(stream_id).?.next_offset);
     try std.testing.expect(conn.findSendStream(stream_id).?.fin_sent);
 }
@@ -15752,8 +15755,8 @@ test "pollTx re-fragments queued stream data after the peer packet budget shrink
     // Make the first client payload also acknowledge a real server packet.
     try server.sendPing();
     var ping_buffer: [128]u8 = undefined;
-    const ping = (try server.pollTx(0, &ping_buffer)) orelse return error.TestUnexpectedResult;
-    try client.processDatagram(1, ping);
+    const ping = (try server.pollTx(0 * ms, &ping_buffer)) orelse return error.TestUnexpectedResult;
+    try client.processDatagram(1 * ms, ping);
     try std.testing.expect(client.pendingAckLargest(.application) != null);
 
     const stream_id = try client.openStream();
@@ -15763,8 +15766,8 @@ test "pollTx re-fragments queued stream data after the peer packet budget shrink
     client.peer_max_udp_payload_size = 1200;
 
     var datagram_buffer: [8192]u8 = undefined;
-    var now_millis: i64 = 2;
-    const first = (try client.pollTx(now_millis, &datagram_buffer)) orelse return error.TestUnexpectedResult;
+    var now_nanos: i64 = 2;
+    const first = (try client.pollTx(now_nanos, &datagram_buffer)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(first.len <= 1200);
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 1), client.send_queue.items.len);
@@ -15773,15 +15776,15 @@ test "pollTx re-fragments queued stream data after the peer packet budget shrink
     try std.testing.expect(!first_sent.fin);
     try std.testing.expectEqual(first_sent.offset + first_sent.data.len, client.send_queue.items[0].offset);
     try std.testing.expect(client.send_queue.items[0].fin);
-    try server.processDatagram(now_millis + 1, first);
-    now_millis += 2;
+    try server.processDatagram(now_nanos + 1, first);
+    now_nanos += 2;
 
     var packets_sent: usize = 1;
     while (client.send_queue.items.len != 0) {
-        const datagram = (try client.pollTx(now_millis, &datagram_buffer)) orelse return error.TestUnexpectedResult;
+        const datagram = (try client.pollTx(now_nanos, &datagram_buffer)) orelse return error.TestUnexpectedResult;
         try std.testing.expect(datagram.len <= 1200);
-        try server.processDatagram(now_millis + 1, datagram);
-        now_millis += 2;
+        try server.processDatagram(now_nanos + 1, datagram);
+        now_nanos += 2;
         packets_sent += 1;
     }
     try std.testing.expect(packets_sent > 1);
@@ -15803,11 +15806,11 @@ test "pollTx records sent packets for ACK-driven recovery" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)).?;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)).?;
 
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
-    try std.testing.expectEqual(@as(i64, 10), conn.sent_packets.items[0].sent_time_millis);
+    try std.testing.expectEqual(@as(i64, 10 * ms), conn.sent_packets.items[0].sent_time_nanos);
     try std.testing.expectEqual(payload.len, conn.sent_packets.items[0].bytes);
     try std.testing.expectEqual(@as(u64, 1), conn.next_packet_number);
 }
@@ -15820,7 +15823,7 @@ test "processDatagram ACK updates recovery and removes sent packets" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)).?;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)).?;
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
 
     var ack_buf: [32]u8 = undefined;
@@ -15831,7 +15834,7 @@ test "processDatagram ACK updates recovery and removes sent packets" {
         .first_ack_range = 0,
     } });
 
-    try conn.processDatagram(60, ack_out.getWritten());
+    try conn.processDatagram(60 * ms, ack_out.getWritten());
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
@@ -15842,8 +15845,8 @@ test "connection ACK APIs reject ACK ranges that compute negative packet numbers
     var conn = try Connection.init(std.testing.allocator, .client, .{});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 20, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     const ranges = [_]frame.AckRange{
         .{ .gap = 0, .ack_range = 0 },
@@ -15855,16 +15858,16 @@ test "connection ACK APIs reject ACK ranges that compute negative packet numbers
         .ranges = &ranges,
     };
 
-    try std.testing.expectError(error.InvalidPacket, conn.receiveAckInSpace(.application, 60, invalid_ack));
+    try std.testing.expectError(error.InvalidPacket, conn.receiveAckInSpace(.application, 60 * ms, invalid_ack));
     try std.testing.expectEqual(@as(usize, 2), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), conn.largest_acknowledged);
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadline());
 
     var ecn_conn = try Connection.init(std.testing.allocator, .client, .{});
     defer ecn_conn.deinit();
-    _ = try ecn_conn.recordPacketSentInSpace(.application, 10, 100);
-    try std.testing.expectError(error.InvalidPacket, ecn_conn.receiveAckEcnInSpace(.application, 60, .{
+    _ = try ecn_conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try std.testing.expectError(error.InvalidPacket, ecn_conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = invalid_ack,
         .ecn_counts = .{
             .ect0_count = 0,
@@ -15884,21 +15887,21 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
     });
     defer initial_conn.deinit();
 
-    _ = try initial_conn.recordPacketSentInSpace(.initial, 0, 100);
-    try initial_conn.receiveAckInSpace(.initial, 100, .{
+    _ = try initial_conn.recordPacketSentInSpace(.initial, 0 * ms, 100);
+    try initial_conn.receiveAckInSpace(.initial, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 1,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 100), initial_conn.smoothedRttMillis(.initial));
+    try std.testing.expectEqual(@as(u64, 100), initial_conn.smoothedRtt(.initial));
 
-    _ = try initial_conn.recordPacketSentInSpace(.initial, 100, 100);
-    try initial_conn.receiveAckInSpace(.initial, 220, .{
+    _ = try initial_conn.recordPacketSentInSpace(.initial, 100 * ms, 100);
+    try initial_conn.receiveAckInSpace(.initial, 220 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 1,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 102), initial_conn.smoothedRttMillis(.initial));
+    try std.testing.expectEqual(@as(u64, 102), initial_conn.smoothedRtt(.initial));
 
     var handshake_conn = try Connection.init(std.testing.allocator, .client, .{
         .enable_rtt_update = false,
@@ -15906,21 +15909,21 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
     });
     defer handshake_conn.deinit();
 
-    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 0, 100);
-    try handshake_conn.receiveAckInSpace(.handshake, 100, .{
+    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 0 * ms, 100);
+    try handshake_conn.receiveAckInSpace(.handshake, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 1,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 100), handshake_conn.smoothedRttMillis(.handshake));
+    try std.testing.expectEqual(@as(u64, 100), handshake_conn.smoothedRtt(.handshake));
 
-    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 100, 100);
-    try handshake_conn.receiveAckInSpace(.handshake, 220, .{
+    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 100 * ms, 100);
+    try handshake_conn.receiveAckInSpace(.handshake, 220 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 1,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 102), handshake_conn.smoothedRttMillis(.handshake));
+    try std.testing.expectEqual(@as(u64, 102), handshake_conn.smoothedRtt(.handshake));
 }
 
 test "RTT estimates are shared across packet number spaces" {
@@ -15931,21 +15934,21 @@ test "RTT estimates are shared across packet number spaces" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 10, 100);
-    try conn.receiveAckInSpace(.initial, 50, .{
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 10 * ms, 100);
+    try conn.receiveAckInSpace(.initial, 50 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 5,
         .first_ack_range = 0,
     });
 
-    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.initial));
-    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.handshake));
-    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.application));
-    try std.testing.expectEqual(@as(?i64, 0), conn.initial_packet_space.first_rtt_sample_sent_time_millis);
-    try std.testing.expectEqual(@as(?i64, 0), conn.handshake_packet_space.first_rtt_sample_sent_time_millis);
-    try std.testing.expectEqual(@as(?i64, 0), conn.first_rtt_sample_sent_time_millis);
-    try std.testing.expectEqual(@as(?i64, 160), conn.ptoDeadlineMillis(.handshake));
+    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRtt(.initial));
+    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRtt(.handshake));
+    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRtt(.application));
+    try std.testing.expectEqual(@as(?i64, 0 * ms), conn.initial_packet_space.first_rtt_sample_sent_time_nanos);
+    try std.testing.expectEqual(@as(?i64, 0 * ms), conn.handshake_packet_space.first_rtt_sample_sent_time_nanos);
+    try std.testing.expectEqual(@as(?i64, 0 * ms), conn.first_rtt_sample_sent_time_nanos);
+    try std.testing.expectEqual(@as(?i64, 160 * ms), conn.ptoDeadline(.handshake));
 }
 
 test "RTT sharing rolls back when datagram payload is rejected" {
@@ -15954,7 +15957,7 @@ test "RTT sharing rolls back when datagram payload is rejected" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 100);
 
     var datagram_buf: [96]u8 = undefined;
     var out = buffer.fixedWriter(&datagram_buf);
@@ -15980,12 +15983,12 @@ test "RTT sharing rolls back when datagram payload is rejected" {
     try std.testing.expectEqual(@as(?u64, null), conn.initial_packet_space.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.handshake_packet_space.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.initial));
-    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.handshake));
-    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.application));
-    try std.testing.expectEqual(@as(?i64, null), conn.initial_packet_space.first_rtt_sample_sent_time_millis);
-    try std.testing.expectEqual(@as(?i64, null), conn.handshake_packet_space.first_rtt_sample_sent_time_millis);
-    try std.testing.expectEqual(@as(?i64, null), conn.first_rtt_sample_sent_time_millis);
+    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRtt(.initial));
+    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRtt(.handshake));
+    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRtt(.application));
+    try std.testing.expectEqual(@as(?i64, null), conn.initial_packet_space.first_rtt_sample_sent_time_nanos);
+    try std.testing.expectEqual(@as(?i64, null), conn.handshake_packet_space.first_rtt_sample_sent_time_nanos);
+    try std.testing.expectEqual(@as(?i64, null), conn.first_rtt_sample_sent_time_nanos);
 }
 
 test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
@@ -16002,31 +16005,31 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
     try std.testing.expectEqual(@as(u64, 0), conn.ackDelayForRtt(.handshake, 20));
     try std.testing.expectEqual(@as(u64, 160_000), conn.ackDelayForRtt(.application, 20));
 
-    const first_packet_number = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 100, .{
+    const first_packet_number = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = first_packet_number,
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRtt(.application));
 
-    const second_packet_number = try conn.recordPacketSentInSpace(.application, 100, 100);
-    try conn.receiveAckInSpace(.application, 220, .{
+    const second_packet_number = try conn.recordPacketSentInSpace(.application, 100 * ms, 100);
+    try conn.receiveAckInSpace(.application, 220 * ms, .{
         .largest_acknowledged = second_packet_number,
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 102), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 102), conn.smoothedRtt(.application));
 
-    const third_packet_number = try conn.recordPacketSentInSpace(.application, 220, 100);
+    const third_packet_number = try conn.recordPacketSentInSpace(.application, 220 * ms, 100);
     try conn.confirmHandshake();
     try std.testing.expectEqual(@as(u64, 160_000), conn.ackDelayForRtt(.application, 20));
-    try conn.receiveAckInSpace(.application, 340, .{
+    try conn.receiveAckInSpace(.application, 340 * ms, .{
         .largest_acknowledged = third_packet_number,
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 104), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 104), conn.smoothedRtt(.application));
 }
 
 test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
@@ -16041,17 +16044,17 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
     });
     try conn.confirmHandshake();
 
-    const first_packet_number = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 50, .{
+    const first_packet_number = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 50 * ms, .{
         .largest_acknowledged = first_packet_number,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
     try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 50), conn.smoothedRtt(.application));
 
-    const second_packet_number = try conn.recordPacketSentInSpace(.application, 100, 100);
-    try conn.receiveAckInSpace(.application, 200, .{
+    const second_packet_number = try conn.recordPacketSentInSpace(.application, 100 * ms, 100);
+    try conn.receiveAckInSpace(.application, 200 * ms, .{
         .largest_acknowledged = second_packet_number,
         .ack_delay = 10,
         .first_ack_range = 0,
@@ -16059,7 +16062,7 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
 
     try std.testing.expectEqual(@as(?u64, 100_000_000), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(u64, 56), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 56), conn.smoothedRtt(.application));
     try std.testing.expectEqual(@as(u64, 31_230_000), conn.recovery_state.rttvar_ns);
 }
 
@@ -16070,23 +16073,23 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 90, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 110, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 90 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 110 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 200, .{
+    try conn.receiveAckInSpace(.application, 200 * ms, .{
         .largest_acknowledged = 2,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
     try std.testing.expectEqual(@as(?u64, 90_000_000), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 90), conn.smoothedRtt(.application));
 
     const lower_ranges = [_]frame.AckRange{
         .{ .gap = 0, .ack_range = 0 },
     };
     conn.recovery_state.onPtoExpired();
-    try conn.receiveAckInSpace(.application, 201, .{
+    try conn.receiveAckInSpace(.application, 201 * ms, .{
         .largest_acknowledged = 2,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16097,7 +16100,7 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
     try std.testing.expectEqual(@as(?u64, 90_000_000), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 90), conn.smoothedRtt(.application));
 }
 
 test "duplicate ACK does not trigger loss detection without newly acknowledged packets" {
@@ -16105,8 +16108,8 @@ test "duplicate ACK does not trigger loss detection without newly acknowledged p
         .enable_rtt_update = true,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 300, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 300 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
 
     const ack = frame.AckFrame{
         .largest_acknowledged = 1,
@@ -16114,17 +16117,17 @@ test "duplicate ACK does not trigger loss detection without newly acknowledged p
         .first_ack_range = 0,
     };
 
-    try conn.receiveAckInSpace(.application, 600, ack);
+    try conn.receiveAckInSpace(.application, 600 * ms, ack);
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
-    try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, 674 * ms + 625 * us), conn.lossDetectionDeadline(.application));
 
-    try conn.receiveAckInSpace(.application, 700, ack);
+    try conn.receiveAckInSpace(.application, 700 * ms, ack);
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
-    try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, 674 * ms + 625 * us), conn.lossDetectionDeadline(.application));
     try std.testing.expectEqual(@as(?u64, 100_000_000), conn.recovery_state.latest_rtt_ns);
 }
 
@@ -16132,13 +16135,13 @@ test "ACK marks packet-threshold losses in the selected packet number space" {
     var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 11, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 12, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 13, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 11 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 12 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 13 * ms, 100);
     try std.testing.expectEqual(@as(usize, 400), conn.bytesInFlight(.application));
 
-    try conn.receiveAckInSpace(.application, 70, .{
+    try conn.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16153,11 +16156,11 @@ test "ACK marks time-threshold losses in the selected packet number space" {
     var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
 
-    try conn.receiveAckInSpace(.application, 900, .{
+    try conn.receiveAckInSpace(.application, 900 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16173,10 +16176,10 @@ test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
         .enable_rtt_update = false,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 300, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 300 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 600, .{
+    try conn.receiveAckInSpace(.application, 600 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16185,16 +16188,16 @@ test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
-    try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, 674 * ms + 625 * us), conn.lossDetectionDeadline(.application));
 
-    try conn.checkLossDetectionTimeouts(674);
+    try conn.checkLossDetectionTimeouts(674 * ms);
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
 
-    try conn.checkLossDetectionTimeouts(675);
+    try conn.checkLossDetectionTimeouts(674 * ms + 625 * us);
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadline(.application));
 }
 
 test "loss detection timer reports loss-time before PTO across packet spaces" {
@@ -16202,20 +16205,20 @@ test "loss detection timer reports loss-time before PTO across packet spaces" {
         .enable_rtt_update = false,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 300, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 300 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 600, .{
+    try conn.receiveAckInSpace(.application, 600 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    const deadline = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 675), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 674 * ms + 625 * us), deadline.deadline_nanos);
 }
 
 test "loss detection timer reports earliest PTO when no loss time is armed" {
@@ -16225,14 +16228,14 @@ test "loss detection timer reports earliest PTO when no loss time is armed" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
 
-    const deadline = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 310), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 310 * ms), deadline.deadline_nanos);
 }
 
 test "loss detection timer is disarmed in closing and draining states" {
@@ -16242,13 +16245,13 @@ test "loss detection timer is disarmed in closing and draining states" {
     defer closing.deinit();
     try closing.confirmHandshake();
 
-    _ = try closing.recordPacketSentInSpace(.application, 10, 100);
-    try std.testing.expect(closing.lossDetectionTimerDeadlineMillis() != null);
+    _ = try closing.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try std.testing.expect(closing.lossDetectionTimerDeadline() != null);
     try closing.closeConnection(0, @intFromEnum(frame.FrameType.stream), "done");
 
     try std.testing.expectEqual(ConnectionState.closing, closing.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), closing.lossDetectionTimerDeadlineMillis());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try closing.serviceLossDetectionTimer(335));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), closing.lossDetectionTimerDeadline());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try closing.serviceLossDetectionTimer(335 * ms));
     try std.testing.expectEqual(@as(usize, 0), closing.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), closing.recovery_state.pto_count);
 
@@ -16258,8 +16261,8 @@ test "loss detection timer is disarmed in closing and draining states" {
     defer draining.deinit();
     try draining.confirmHandshake();
 
-    _ = try draining.recordPacketSentInSpace(.application, 20, 100);
-    try std.testing.expect(draining.lossDetectionTimerDeadlineMillis() != null);
+    _ = try draining.recordPacketSentInSpace(.application, 20 * ms, 100);
+    try std.testing.expect(draining.lossDetectionTimerDeadline() != null);
 
     var close_payload_buf: [32]u8 = undefined;
     var close_payload = buffer.fixedWriter(&close_payload_buf);
@@ -16268,11 +16271,11 @@ test "loss detection timer is disarmed in closing and draining states" {
         .frame_type = 0,
         .reason_phrase = "",
     } });
-    try draining.processDatagram(30, close_payload.getWritten());
+    try draining.processDatagram(30 * ms, close_payload.getWritten());
 
     try std.testing.expectEqual(ConnectionState.draining, draining.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), draining.lossDetectionTimerDeadlineMillis());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try draining.serviceLossDetectionTimer(335));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), draining.lossDetectionTimerDeadline());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try draining.serviceLossDetectionTimer(335 * ms));
     try std.testing.expectEqual(@as(usize, 0), draining.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), draining.recovery_state.pto_count);
 }
@@ -16283,19 +16286,19 @@ test "Application PTO is gated until handshake confirmation" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadlineMillis(.application));
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadlineMillis());
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadline(.application));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadline());
 
-    try conn.checkPtoTimeouts(10_000);
+    try conn.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
 
     try conn.confirmHandshake();
-    const deadline = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 335), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 335 * ms), deadline.deadline_nanos);
 }
 
 test "client no-in-flight Initial ACK arms anti-deadlock PTO" {
@@ -16305,8 +16308,8 @@ test "client no-in-flight Initial ACK arms anti-deadlock PTO" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 10, 100);
-    try client.receiveAckInSpace(.initial, 70, .{
+    _ = try client.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    try client.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16315,20 +16318,20 @@ test "client no-in-flight Initial ACK arms anti-deadlock PTO" {
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.initial));
     try std.testing.expectEqual(@as(usize, 0), client.totalBytesInFlight());
 
-    const deadline = client.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline = client.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 250), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 250 * ms), deadline.deadline_nanos);
 
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try client.serviceLossDetectionTimer(249));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try client.serviceLossDetectionTimer(249 * ms));
     try std.testing.expectEqual(@as(usize, 0), client.initial_packet_space.pending_ping_count);
 
-    const serviced = (try client.serviceLossDetectionTimer(250)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceLossDetectionTimer(250 * ms)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
     try std.testing.expectEqual(@as(usize, 1), client.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), client.initial_packet_space.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     var out_buf: [32]u8 = undefined;
     const probe = (try client.pollTxInSpace(.initial, 251, &out_buf)) orelse return error.TestUnexpectedResult;
@@ -16351,8 +16354,8 @@ test "client anti-deadlock PTO selects Handshake when keys are installed" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 10, 100);
-    try client.receiveAckInSpace(.initial, 70, .{
+    _ = try client.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    try client.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16362,18 +16365,18 @@ test "client anti-deadlock PTO selects Handshake when keys are installed" {
         .peer = secrets.server.secret,
     });
 
-    try std.testing.expectEqual(@as(?i64, null), client.ptoDeadlineMillis(.initial));
-    const deadline = client.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(?i64, null), client.ptoDeadline(.initial));
+    const deadline = client.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.handshake, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 250), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 250 * ms), deadline.deadline_nanos);
 
-    const serviced = (try client.serviceLossDetectionTimer(deadline.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceLossDetectionTimer(deadline.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.handshake, serviced.space);
     try std.testing.expectEqual(@as(usize, 1), client.handshake_packet_space.pending_ping_count);
 
     var out_buf: [32]u8 = undefined;
-    const probe = (try client.pollTxInSpace(.handshake, deadline.deadline_millis + 1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const probe = (try client.pollTxInSpace(.handshake, deadline.deadline_nanos + 1, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(probe, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -16391,20 +16394,20 @@ test "server anti-amplification limit disarms PTO until more peer bytes arrive" 
     defer server.deinit();
 
     try server.recordPeerAddressBytesReceived(1);
-    _ = try server.recordPacketSentInSpace(.initial, 10, 3);
+    _ = try server.recordPacketSentInSpace(.initial, 10 * ms, 3);
     try std.testing.expectEqual(@as(?usize, 0), server.antiAmplificationLimitRemaining());
-    try std.testing.expectEqual(@as(?i64, null), server.ptoDeadlineMillis(.initial));
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.ptoDeadline(.initial));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadline());
 
-    try server.checkPtoTimeouts(10_000);
+    try server.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(usize, 0), server.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), server.initial_packet_space.recovery_state.pto_count);
 
     try server.recordPeerAddressBytesReceived(1);
     try std.testing.expectEqual(@as(?usize, 3), server.antiAmplificationLimitRemaining());
-    try std.testing.expectEqual(@as(?i64, 310), server.ptoDeadlineMillis(.initial));
+    try std.testing.expectEqual(@as(?i64, 310 * ms), server.ptoDeadline(.initial));
 
-    const serviced = (try server.serviceLossDetectionTimer(310)) orelse return error.TestUnexpectedResult;
+    const serviced = (try server.serviceLossDetectionTimer(310 * ms)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
     try std.testing.expectEqual(@as(usize, 1), server.initial_packet_space.pending_ping_count);
@@ -16428,18 +16431,18 @@ test "received datagram re-arms anti-amplification PTO and services expired time
     defer rearmed.deinit();
 
     try rearmed.recordPeerAddressBytesReceived(1);
-    _ = try rearmed.recordPacketSentInSpace(.initial, 10, 3);
+    _ = try rearmed.recordPacketSentInSpace(.initial, 10 * ms, 3);
     try std.testing.expectEqual(@as(?usize, 0), rearmed.antiAmplificationLimitRemaining());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), rearmed.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), rearmed.lossDetectionTimerDeadline());
 
     try std.testing.expectEqual(
         @as(?LossDetectionTimerDeadline, null),
-        try rearmed.recordPeerAddressDatagramReceived(100, 1),
+        try rearmed.recordPeerAddressDatagramReceived(100 * ms, 1),
     );
-    const rearmed_timer = rearmed.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const rearmed_timer = rearmed.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, rearmed_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, rearmed_timer.kind);
-    try std.testing.expectEqual(@as(i64, 310), rearmed_timer.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 310 * ms), rearmed_timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 0), rearmed.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), rearmed.initial_packet_space.recovery_state.pto_count);
 
@@ -16449,13 +16452,13 @@ test "received datagram re-arms anti-amplification PTO and services expired time
     defer expired.deinit();
 
     try expired.recordPeerAddressBytesReceived(1);
-    _ = try expired.recordPacketSentInSpace(.initial, 10, 3);
+    _ = try expired.recordPacketSentInSpace(.initial, 10 * ms, 3);
     try std.testing.expectEqual(@as(?usize, 0), expired.antiAmplificationLimitRemaining());
 
-    const serviced = (try expired.recordPeerAddressDatagramReceived(10_000, 1)) orelse return error.TestUnexpectedResult;
+    const serviced = (try expired.recordPeerAddressDatagramReceived(10_000 * ms, 1)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.initial, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
-    try std.testing.expectEqual(@as(i64, 310), serviced.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 310 * ms), serviced.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), expired.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), expired.initial_packet_space.recovery_state.pto_count);
 
@@ -16477,13 +16480,13 @@ test "serviceLossDetectionTimer is no-op before aggregate deadline" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    const deadline = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    const deadline = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
-    try std.testing.expectEqual(@as(i64, 335), deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 335 * ms), deadline.deadline_nanos);
 
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try conn.serviceLossDetectionTimer(334));
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), try conn.serviceLossDetectionTimer(334 * ms));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
 }
@@ -16493,20 +16496,20 @@ test "serviceLossDetectionTimer handles loss-time before due PTO probes" {
         .enable_rtt_update = false,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 1300, .{
+    try conn.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    const serviced = (try conn.serviceLossDetectionTimer(1375)) orelse return error.TestUnexpectedResult;
+    const serviced = (try conn.serviceLossDetectionTimer(1374 * ms + 625 * us)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, serviced.kind);
-    try std.testing.expectEqual(@as(i64, 1375), serviced.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 1374 * ms + 625 * us), serviced.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.initial));
@@ -16521,12 +16524,12 @@ test "serviceLossDetectionTimer handles PTO deadline through aggregate timer" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
 
-    const serviced = (try conn.serviceLossDetectionTimer(335)) orelse return error.TestUnexpectedResult;
+    const serviced = (try conn.serviceLossDetectionTimer(335 * ms)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
-    try std.testing.expectEqual(@as(i64, 335), serviced.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 335 * ms), serviced.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
 }
@@ -16538,11 +16541,11 @@ test "PTO frame-payload probe bypasses congestion window once" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    const deadline = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    const deadline = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     conn.recovery_state.congestion_window = conn.bytesInFlight(.application);
 
-    const serviced = (try conn.serviceLossDetectionTimer(deadline.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try conn.serviceLossDetectionTimer(deadline.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
@@ -16550,7 +16553,7 @@ test "PTO frame-payload probe bypasses congestion window once" {
     try std.testing.expect(!conn.recovery_state.canSend(1));
 
     var out_buf: [32]u8 = undefined;
-    const payload = (try conn.pollTx(deadline.deadline_millis + 1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(deadline.deadline_nanos + 1, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -16577,12 +16580,12 @@ test "EndpointLossDetectionTimers selects and services earliest connection timer
     defer slow.deinit();
     try slow.confirmHandshake();
 
-    _ = try fast.recordPacketSentInSpace(.application, 10, 100);
-    _ = try slow.recordPacketSentInSpace(.application, 20, 100);
+    _ = try fast.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try slow.recordPacketSentInSpace(.application, 20 * ms, 100);
 
-    const fast_timer = fast.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
-    const slow_timer = slow.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
-    try std.testing.expect(fast_timer.deadline_millis < slow_timer.deadline_millis);
+    const fast_timer = fast.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
+    const slow_timer = slow.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
+    try std.testing.expect(fast_timer.deadline_nanos < slow_timer.deadline_nanos);
 
     try timers.armFromConnection(20, &slow);
     try timers.armFromConnection(10, &fast);
@@ -16592,24 +16595,24 @@ test "EndpointLossDetectionTimers selects and services earliest connection timer
     try std.testing.expectEqual(@as(u64, 10), earliest.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.application, earliest.timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, earliest.timer.kind);
-    try std.testing.expectEqual(fast_timer.deadline_millis, earliest.timer.deadline_millis);
+    try std.testing.expectEqual(fast_timer.deadline_nanos, earliest.timer.deadline_nanos);
 
     try std.testing.expectEqual(
         @as(?EndpointLossDetectionTimerDeadline, null),
-        try timers.serviceConnection(10, &fast, fast_timer.deadline_millis - 1),
+        try timers.serviceConnection(10, &fast, fast_timer.deadline_nanos - 1),
     );
     try std.testing.expectEqual(@as(usize, 0), fast.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 2), timers.count());
 
-    const serviced = (try timers.serviceConnection(10, &fast, fast_timer.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try timers.serviceConnection(10, &fast, fast_timer.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 10), serviced.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.timer.kind);
-    try std.testing.expectEqual(fast_timer.deadline_millis, serviced.timer.deadline_millis);
+    try std.testing.expectEqual(fast_timer.deadline_nanos, serviced.timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), fast.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), fast.recovery_state.pto_count);
 
-    try fast.receiveAckInSpace(.application, fast_timer.deadline_millis + 1, .{
+    try fast.receiveAckInSpace(.application, fast_timer.deadline_nanos + 1, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16619,7 +16622,7 @@ test "EndpointLossDetectionTimers selects and services earliest connection timer
 
     const remaining = timers.earliestDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 20), remaining.connection_id);
-    try std.testing.expectEqual(slow_timer.deadline_millis, remaining.timer.deadline_millis);
+    try std.testing.expectEqual(slow_timer.deadline_nanos, remaining.timer.deadline_nanos);
 }
 
 test "EndpointLossDetectionTimers disarms closing connections" {
@@ -16632,7 +16635,7 @@ test "EndpointLossDetectionTimers disarms closing connections" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try timers.armFromConnection(77, &conn);
     try std.testing.expectEqual(@as(usize, 1), timers.count());
 
@@ -16651,15 +16654,15 @@ test "EndpointLossDetectionTimers disarms connection after loss-time service" {
         .enable_rtt_update = false,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 300, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
-    try conn.receiveAckInSpace(.application, 600, .{
+    _ = try conn.recordPacketSentInSpace(.application, 300 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
+    try conn.receiveAckInSpace(.application, 600 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    const timer = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const timer = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, timer.kind);
     try timers.armFromConnection(99, &conn);
@@ -16667,12 +16670,12 @@ test "EndpointLossDetectionTimers disarms connection after loss-time service" {
 
     try std.testing.expectEqual(
         @as(?EndpointLossDetectionTimerDeadline, null),
-        try timers.serviceConnection(99, &conn, timer.deadline_millis - 1),
+        try timers.serviceConnection(99, &conn, timer.deadline_nanos - 1),
     );
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 1), timers.count());
 
-    const serviced = (try timers.serviceConnection(99, &conn, timer.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try timers.serviceConnection(99, &conn, timer.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 99), serviced.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, serviced.timer.kind);
@@ -16684,7 +16687,7 @@ test "EndpointLossDetectionTimers disarms connection after loss-time service" {
 
 test "PTO probe backoff doubles deadline across successive expirations on controlled clock" {
     // RFC 9002 §6.2.2: 每次 PTO 触发后 pto_count 递增，下一次 PTO deadline = basePto * 2^pto_count。
-    // 用固定 now_millis 推进时钟（controlled clock），不依赖真实丢包或 sleep。
+    // 用固定 now_nanos 推进时钟（controlled clock），不依赖真实丢包或 sleep。
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 100000000,
     });
@@ -16692,24 +16695,24 @@ test "PTO probe backoff doubles deadline across successive expirations on contro
     try conn.confirmHandshake();
 
     // basePto = smoothed_rtt(100) + max(4*rttvar(50), granularity(1)) + max_ack_delay(25) = 325
-    const base_pto_ms: i64 = 325;
+    const base_pto: i64 = 325 * ms;
 
     // 发送 ack-eliciting 包，sent_time=10；deadline1 = 10 + basePto = 335 (pto_count=0)
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    const deadline1 = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    const deadline1 = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline1.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline1.kind);
-    try std.testing.expectEqual(@as(i64, 10 + base_pto_ms), deadline1.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 10 * ms + base_pto), deadline1.deadline_nanos);
 
     // 推进到 deadline1，PTO 触发：pto_count 0->1，probe 排队
-    const serviced1 = (try conn.serviceLossDetectionTimer(deadline1.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced1 = (try conn.serviceLossDetectionTimer(deadline1.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced1.kind);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
 
     // poll probe1 (PING)，sent_time=336，成为下一次 PTO 基准
     var out_buf_1: [32]u8 = undefined;
-    const probe1 = (try conn.pollTx(336, &out_buf_1)) orelse return error.TestUnexpectedResult;
+    const probe1 = (try conn.pollTx(336 * ms, &out_buf_1)) orelse return error.TestUnexpectedResult;
     var decoded1 = try frame.decodeFrameSlice(probe1, std.testing.allocator);
     defer frame.deinitFrame(&decoded1.frame, std.testing.allocator);
     switch (decoded1.frame) {
@@ -16719,26 +16722,26 @@ test "PTO probe backoff doubles deadline across successive expirations on contro
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
 
     // deadline2 = 336 + 2*basePto = 986 (pto_count=1，backoff 翻倍)
-    const deadline2 = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline2 = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline2.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline2.kind);
-    try std.testing.expectEqual(@as(i64, 336 + 2 * base_pto_ms), deadline2.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 336 * ms + 2 * base_pto), deadline2.deadline_nanos);
 
     // 未到 deadline2，serviceLossDetectionTimer 为 no-op
     try std.testing.expectEqual(
         @as(?LossDetectionTimerDeadline, null),
-        try conn.serviceLossDetectionTimer(deadline2.deadline_millis - 1),
+        try conn.serviceLossDetectionTimer(deadline2.deadline_nanos - 1),
     );
 
     // 推进到 deadline2，PTO 再次触发：pto_count 1->2
-    const serviced2 = (try conn.serviceLossDetectionTimer(deadline2.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced2 = (try conn.serviceLossDetectionTimer(deadline2.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced2.kind);
     try std.testing.expectEqual(@as(u8, 2), conn.recovery_state.pto_count);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
 
     // poll probe2 (PING)，sent_time=987
     var out_buf_2: [32]u8 = undefined;
-    const probe2 = (try conn.pollTx(987, &out_buf_2)) orelse return error.TestUnexpectedResult;
+    const probe2 = (try conn.pollTx(987 * ms, &out_buf_2)) orelse return error.TestUnexpectedResult;
     var decoded2 = try frame.decodeFrameSlice(probe2, std.testing.allocator);
     defer frame.deinitFrame(&decoded2.frame, std.testing.allocator);
     switch (decoded2.frame) {
@@ -16747,10 +16750,10 @@ test "PTO probe backoff doubles deadline across successive expirations on contro
     }
 
     // deadline3 = 987 + 4*basePto = 2287 (pto_count=2，再次翻倍)
-    const deadline3 = conn.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline3 = conn.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, deadline3.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline3.kind);
-    try std.testing.expectEqual(@as(i64, 987 + 4 * base_pto_ms), deadline3.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 987 * ms + 4 * base_pto), deadline3.deadline_nanos);
 }
 
 test "ACK-driven packet loss reduces congestion window under controlled clock" {
@@ -16769,14 +16772,14 @@ test "ACK-driven packet loss reduces congestion window under controlled clock" {
     try std.testing.expectEqual(@as(usize, 12000), cwnd_initial);
 
     // 发送 pn 0..3，各 100 字节
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 11, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 12, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 13, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 11 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 12 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 13 * ms, 100);
     try std.testing.expectEqual(@as(usize, 400), conn.bytesInFlight(.application));
 
     // 手动构造 ACK 只确认 pn=3：pn 0 落入 packet-threshold (k=3) 窗口被标 lost
-    try conn.receiveAckInSpace(.application, 100, .{
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16809,30 +16812,30 @@ test "persistent congestion resets congestion window to minimum under controlled
     // persistentCongestionDuration = basePto * 3 = 975
     const cwnd_initial = conn.congestionWindow(.application);
     try std.testing.expectEqual(@as(usize, 12000), cwnd_initial);
-    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDuration());
 
     // 步骤 1：发送 pn 0 并 ACK，建立 first RTT sample（first_rtt_sample_sent_time=10）。
     // RFC 9002 §5.3 要求 persistent congestion 只考虑 first RTT sample 之后发送的包。
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    try conn.receiveAckInSpace(.application, 110, .{
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try conn.receiveAckInSpace(.application, 110 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?i64, 10), conn.first_rtt_sample_sent_time_millis);
+    try std.testing.expectEqual(@as(?i64, 10 * ms), conn.first_rtt_sample_sent_time_nanos);
 
     // 步骤 2：发送 pn 1..5。pn 1 与 pn 2 发送时间间隔 1000ms >= 975ms（PC duration）。
-    _ = try conn.recordPacketSentInSpace(.application, 200, 100); // pn 1
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100); // pn 2，与 pn 1 间隔 1000ms
-    _ = try conn.recordPacketSentInSpace(.application, 1201, 100); // pn 3
-    _ = try conn.recordPacketSentInSpace(.application, 1202, 100); // pn 4
-    _ = try conn.recordPacketSentInSpace(.application, 1203, 100); // pn 5
+    _ = try conn.recordPacketSentInSpace(.application, 200 * ms, 100); // pn 1
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100); // pn 2，与 pn 1 间隔 1000ms
+    _ = try conn.recordPacketSentInSpace(.application, 1201 * ms, 100); // pn 3
+    _ = try conn.recordPacketSentInSpace(.application, 1202 * ms, 100); // pn 4
+    _ = try conn.recordPacketSentInSpace(.application, 1203 * ms, 100); // pn 5
     try std.testing.expectEqual(@as(usize, 500), conn.bytesInFlight(.application));
 
     // 步骤 3：构造 ACK 只确认 pn 5。packet-threshold (k=3) 使 pn 1,2 都 lost
     //（5-1=4>=3, 5-2=3>=3）。pn 1,2 连续且发送间隔 1000ms >= 975ms -> persistent congestion。
     // pn 3,4 未达 packet threshold（5-3=2<3），也未达 time threshold（1201+113=1314>1300），存活。
-    try conn.receiveAckInSpace(.application, 1300, .{
+    try conn.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16865,24 +16868,24 @@ test "Application persistent congestion duration includes max_ack_delay" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
-    try std.testing.expectEqual(@as(u64, 900_000_000), conn.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDuration());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.recovery_state.persistentCongestionDurationWithoutMaxAckDelay());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    try conn.receiveAckInSpace(.application, 110, .{
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try conn.receiveAckInSpace(.application, 110 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?i64, 10), conn.first_rtt_sample_sent_time_millis);
+    try std.testing.expectEqual(@as(?i64, 10 * ms), conn.first_rtt_sample_sent_time_nanos);
 
-    _ = try conn.recordPacketSentInSpace(.application, 200, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1150, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1151, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1152, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1153, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 200 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1150 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1151 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1152 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1153 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 1250, .{
+    try conn.receiveAckInSpace(.application, 1250 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16903,24 +16906,24 @@ test "Initial persistent congestion duration excludes max_ack_delay" {
     defer conn.deinit();
 
     try std.testing.expectEqual(@as(usize, 12000), conn.congestionWindow(.initial));
-    try std.testing.expectEqual(@as(u64, 900_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
-    try std.testing.expectEqual(@as(u64, 975_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDurationWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.initial_packet_space.recovery_state.persistentCongestionDuration());
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
-    try conn.receiveAckInSpace(.initial, 110, .{
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    try conn.receiveAckInSpace(.initial, 110 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?i64, 10), conn.initial_packet_space.first_rtt_sample_sent_time_millis);
+    try std.testing.expectEqual(@as(?i64, 10 * ms), conn.initial_packet_space.first_rtt_sample_sent_time_nanos);
 
-    _ = try conn.recordPacketSentInSpace(.initial, 200, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 1101, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 1102, 100);
-    _ = try conn.recordPacketSentInSpace(.initial, 1103, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 200 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 1101 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 1102 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 1103 * ms, 100);
 
-    try conn.receiveAckInSpace(.initial, 1200, .{
+    try conn.receiveAckInSpace(.initial, 1200 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -16940,24 +16943,24 @@ test "Handshake persistent congestion duration excludes max_ack_delay" {
     defer conn.deinit();
 
     try std.testing.expectEqual(@as(usize, 12000), conn.congestionWindow(.handshake));
-    try std.testing.expectEqual(@as(u64, 900_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay());
-    try std.testing.expectEqual(@as(u64, 975_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 900_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDurationWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.handshake_packet_space.recovery_state.persistentCongestionDuration());
 
-    _ = try conn.recordPacketSentInSpace(.handshake, 10, 100);
-    try conn.receiveAckInSpace(.handshake, 110, .{
+    _ = try conn.recordPacketSentInSpace(.handshake, 10 * ms, 100);
+    try conn.receiveAckInSpace(.handshake, 110 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?i64, 10), conn.handshake_packet_space.first_rtt_sample_sent_time_millis);
+    try std.testing.expectEqual(@as(?i64, 10 * ms), conn.handshake_packet_space.first_rtt_sample_sent_time_nanos);
 
-    _ = try conn.recordPacketSentInSpace(.handshake, 200, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1101, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1102, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1103, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 200 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1101 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1102 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1103 * ms, 100);
 
-    try conn.receiveAckInSpace(.handshake, 1200, .{
+    try conn.receiveAckInSpace(.handshake, 1200 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -17013,7 +17016,7 @@ test "EndpointConnectionLifecycle retires routes with recovery timer" {
         else => return error.TestUnexpectedResult,
     }
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(41, &conn);
     const armed = lifecycle.earliestRecoveryDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 41), armed.connection_id);
@@ -17086,17 +17089,17 @@ test "EndpointConnectionLifecycle exposes socket-facing feed deadline and pendin
 
     try conn.sendPing();
     var tx_buf: [16]u8 = undefined;
-    const payload = (try conn.pollTx(10, &tx_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(10 * ms, &tx_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
     try lifecycle.armRecoveryTimerFromConnection(60, &conn);
 
     const next = lifecycle.nextDeadline(60, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 60), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(@as(i64, 40), next.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 40 * ms), next.deadline_nanos);
     try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), next.recovery);
 
-    const early = try lifecycle.processPendingWork(60, &conn, 39);
+    const early = try lifecycle.processPendingWork(60, &conn, 39 * ms);
     try std.testing.expectEqual(@as(?EndpointConnectionRetireResult, null), early.idle_retired);
     try std.testing.expectEqual(@as(?EndpointConnectionRetireResult, null), early.close_retired);
     try std.testing.expectEqual(@as(?EndpointLossDetectionTimerDeadline, null), early.recovery_serviced);
@@ -17107,12 +17110,12 @@ test "EndpointConnectionLifecycle exposes socket-facing feed deadline and pendin
     const due_work = (try lifecycle.processDueDeadlineAndPollDatagram(
         60,
         &conn,
-        40,
+        40 * ms,
         &cid,
         &[_]u8{},
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, due_work.deadline.kind);
-    try std.testing.expectEqual(@as(i64, 40), due_work.deadline.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 40 * ms), due_work.deadline.deadline_nanos);
     try std.testing.expectEqual(@as(?[]u8, null), due_work.datagram);
     const retired = due_work.pending_work.idle_retired orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), retired.routes_retired);
@@ -17145,7 +17148,7 @@ test "EndpointConnectionLifecycle sweeps pending work across caller-owned connec
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
     try lifecycle.armRecoveryTimerFromConnection(66, &idle_conn);
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
@@ -17153,19 +17156,19 @@ test "EndpointConnectionLifecycle sweeps pending work across caller-owned connec
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
-    _ = try recovery_conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try recovery_conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(67, &recovery_conn);
 
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
     const recovery_deadline = lifecycle.nextDeadline(67, &recovery_conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_deadline.kind);
-    const now_millis = @max(idle_deadline, recovery_deadline.deadline_millis);
+    const now_nanos = @max(idle_deadline, recovery_deadline.deadline_nanos);
 
     const connections = [_]EndpointConnectionReceiveView{
         .{ .connection_id = 66, .connection = &idle_conn },
         .{ .connection_id = 67, .connection = &recovery_conn },
     };
-    const sweep = try lifecycle.processPendingWorkAcrossConnections(&connections, now_millis);
+    const sweep = try lifecycle.processPendingWorkAcrossConnections(&connections, now_nanos);
 
     try std.testing.expectEqual(@as(usize, 1), sweep.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), sweep.close_retired_count);
@@ -17196,15 +17199,15 @@ test "EndpointConnectionLifecycle pending-work sweep selects next deadline" {
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 100000000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
-    _ = try recovery_conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try recovery_conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(67, &recovery_conn);
     const recovery_before = lifecycle.nextDeadline(67, &recovery_conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17234,7 +17237,7 @@ test "EndpointConnectionLifecycle pending-work sweep selects next deadline" {
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 67), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expectEqual(recovery_before.deadline_millis, next.deadline_millis);
+    try std.testing.expectEqual(recovery_before.deadline_nanos, next.deadline_nanos);
     try std.testing.expect(next.recovery != null);
 }
 
@@ -17247,7 +17250,7 @@ test "EndpointConnectionLifecycle single pending-work selects next deadline" {
     });
     defer conn.deinit();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(68, &conn);
     const recovery_before = lifecycle.nextDeadline(68, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17255,7 +17258,7 @@ test "EndpointConnectionLifecycle single pending-work selects next deadline" {
     const before = try lifecycle.processPendingWorkAndSelectNextDeadline(
         68,
         &conn,
-        recovery_before.deadline_millis - 1,
+        recovery_before.deadline_nanos - 1,
     );
     try std.testing.expectEqual(@as(usize, 0), before.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), before.pending_work.close_retired_count);
@@ -17263,13 +17266,13 @@ test "EndpointConnectionLifecycle single pending-work selects next deadline" {
     const unchanged = before.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 68), unchanged.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, unchanged.kind);
-    try std.testing.expectEqual(recovery_before.deadline_millis, unchanged.deadline_millis);
+    try std.testing.expectEqual(recovery_before.deadline_nanos, unchanged.deadline_nanos);
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
 
     const result = try lifecycle.processPendingWorkAndSelectNextDeadline(
         68,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
     );
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -17281,7 +17284,7 @@ test "EndpointConnectionLifecycle single pending-work selects next deadline" {
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 68), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -17316,7 +17319,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step selects 
     });
     defer conn.deinit();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(69, &conn);
     const recovery_before = lifecycle.nextDeadline(69, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17326,7 +17329,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step selects 
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         69,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -17344,7 +17347,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step selects 
     const next = result.backend.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 69), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -17391,8 +17394,8 @@ test "EndpointConnectionLifecycle single pending-work backend next deadline stop
 
     try conn.sendPing();
     var payload_buf: [16]u8 = undefined;
-    _ = (try conn.pollTx(10, &payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(10 * ms, &payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -17445,7 +17448,7 @@ test "EndpointConnectionLifecycle single pending-work close backend loop step se
     });
     defer conn.deinit();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(71, &conn);
     const recovery_before = lifecycle.nextDeadline(71, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17455,7 +17458,7 @@ test "EndpointConnectionLifecycle single pending-work close backend loop step se
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
         71,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -17473,7 +17476,7 @@ test "EndpointConnectionLifecycle single pending-work close backend loop step se
     const next = result.backend.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 71), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -17523,7 +17526,7 @@ test "EndpointConnectionLifecycle single pending-work close backend returns curr
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(72, &conn);
     const recovery_before = lifecycle.nextDeadline(72, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17533,7 +17536,7 @@ test "EndpointConnectionLifecycle single pending-work close backend returns curr
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
         72,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -17547,7 +17550,7 @@ test "EndpointConnectionLifecycle single pending-work close backend returns curr
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
     try std.testing.expect(conn.pending_close != null);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
     try std.testing.expectEqual(@as(?EndpointConnectionDeadline, null), lifecycle.nextDeadline(72, &conn));
 }
 
@@ -17610,7 +17613,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend loop st
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(73, &conn);
     const recovery_before = lifecycle.nextDeadline(73, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17620,7 +17623,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend loop st
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
         73,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -17643,7 +17646,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend loop st
     const next = result.backend.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 73), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -17711,7 +17714,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space compatible bac
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(177, &conn);
     const recovery_before = lifecycle.nextDeadline(177, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17722,7 +17725,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space compatible bac
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         177,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         &spaces,
         backend.backend(),
         &scratch,
@@ -17804,7 +17807,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space compatible bac
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(178, &conn);
     const recovery_before = lifecycle.nextDeadline(178, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -17815,7 +17818,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space compatible bac
     const before = try lifecycle.processDueDeadlineAndDriveCryptoBackendAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         178,
         &conn,
-        recovery_before.deadline_millis - 1,
+        recovery_before.deadline_nanos - 1,
         &spaces,
         backend.backend(),
         &scratch,
@@ -17827,7 +17830,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space compatible bac
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         178,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         &spaces,
         backend.backend(),
         &scratch,
@@ -17907,7 +17910,7 @@ test "EndpointConnectionLifecycle cross-connection pending-work cross-space comp
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(179, &conn);
     const recovery_before = lifecycle.nextDeadline(179, &conn) orelse return error.TestUnexpectedResult;
 
@@ -17931,7 +17934,7 @@ test "EndpointConnectionLifecycle cross-connection pending-work cross-space comp
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         &pending_connections,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         &spaces,
         &drive_views,
         &compatibilities,
@@ -18121,9 +18124,9 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -18183,7 +18186,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &spaces,
         &drive_views,
         &compatibilities,
@@ -18270,7 +18273,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(180, &conn);
     const recovery_before = lifecycle.nextDeadline(180, &conn) orelse return error.TestUnexpectedResult;
 
@@ -18294,7 +18297,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
         &due_connections,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         &spaces,
         &drive_views,
         &compatibilities,
@@ -18371,8 +18374,8 @@ test "EndpointConnectionLifecycle single pending-work compatible backend stops a
 
     try conn.sendPing();
     var payload_buf: [16]u8 = undefined;
-    _ = (try conn.pollTx(10, &payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(10 * ms, &payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend = Backend{ .peer_transport_parameters = peer_params_out.getWritten() };
     var scratch: [256]u8 = undefined;
@@ -18456,7 +18459,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend l
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(75, &conn);
     const recovery_before = lifecycle.nextDeadline(75, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -18466,7 +18469,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend l
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         75,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -18489,7 +18492,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend l
     const next = result.backend.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 75), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -18556,8 +18559,8 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend s
 
     try conn.sendPing();
     var payload_buf: [16]u8 = undefined;
-    _ = (try conn.pollTx(10, &payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(10 * ms, &payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend = Backend{ .peer_transport_parameters = peer_params_out.getWritten() };
     var scratch: [256]u8 = undefined;
@@ -18641,7 +18644,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend r
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(77, &conn);
     const recovery_before = lifecycle.nextDeadline(77, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -18651,7 +18654,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend r
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         77,
         &conn,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -18666,7 +18669,7 @@ test "EndpointConnectionLifecycle single pending-work compatible close backend r
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
     try std.testing.expect(conn.pending_close != null);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
     try std.testing.expectEqual(@as(?EndpointConnectionDeadline, null), lifecycle.nextDeadline(77, &conn));
 }
 
@@ -18720,7 +18723,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection poll waits for r
 
     const recovered = try lifecycle.processPendingWorkAcrossConnectionsAndPollDatagram(
         &pending_connections,
-        deadline.deadline_millis,
+        deadline.deadline_nanos,
         &poll_views,
         .application,
     );
@@ -18784,7 +18787,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain returns bo
     const second_deadline = lifecycle.nextDeadline(203, &second) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, first_deadline.kind);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, second_deadline.kind);
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     const pending_connections = [_]EndpointConnectionReceiveView{
         .{ .connection_id = 202, .connection = &first },
@@ -18806,7 +18809,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain returns bo
 
     const drained = try lifecycle.processPendingWorkAcrossConnectionsAndDrainDatagrams(
         &pending_connections,
-        now_millis,
+        now_nanos,
         &poll_views,
         .application,
         &out,
@@ -18885,7 +18888,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection poll keeps expli
 
     const early = try lifecycle.processPendingWorkAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis - 1,
+        timer.deadline_nanos - 1,
         &poll_views,
     );
     try std.testing.expectEqual(@as(usize, 0), early.pending_work.recovery_serviced_count);
@@ -18898,7 +18901,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection poll keeps expli
 
     const due = try lifecycle.processPendingWorkAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         &poll_views,
     );
     try std.testing.expectEqual(@as(usize, 1), due.pending_work.recovery_serviced_count);
@@ -18979,7 +18982,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain keeps expl
     const first_timer = first_deadline.recovery orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(213, &second) orelse return error.TestUnexpectedResult;
     const second_timer = second_deadline.recovery orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_timer.deadline_millis, second_timer.deadline_millis);
+    const now_nanos = @max(first_timer.deadline_nanos, second_timer.deadline_nanos);
 
     const pending_connections = [_]EndpointConnectionReceiveView{
         .{ .connection_id = 212, .connection = &first },
@@ -19001,7 +19004,7 @@ test "EndpointConnectionLifecycle pending-work cross-connection drain keeps expl
 
     const drained = try lifecycle.processPendingWorkAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         &poll_views,
         &out,
     );
@@ -19070,7 +19073,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step polls PTO outpu
     }};
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
         &pending_connections,
-        deadline.deadline_millis,
+        deadline.deadline_nanos,
         .application,
         &[_]EndpointCryptoBackendDriveView{},
         &poll_views,
@@ -19181,7 +19184,7 @@ test "EndpointConnectionLifecycle pending-work backend poll keeps explicit zero 
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         &drive_views,
         &poll_views,
@@ -19281,7 +19284,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend poll keeps ex
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &poll_views,
@@ -19379,7 +19382,7 @@ test "EndpointConnectionLifecycle pending-work backend drain keeps explicit zero
     defer std.testing.allocator.free(second_sent);
     const first_deadline = lifecycle.nextDeadline(216, &first) orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(217, &second) orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -19413,7 +19416,7 @@ test "EndpointConnectionLifecycle pending-work backend drain keeps explicit zero
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         .handshake,
         &drive_views,
         &poll_views,
@@ -19519,7 +19522,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend drain keeps e
     defer std.testing.allocator.free(second_sent);
     const first_deadline = lifecycle.nextDeadline(306, &first) orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(307, &second) orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -19554,7 +19557,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend drain keeps e
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         &backend_spaces,
         &drive_views,
         &poll_views,
@@ -19623,15 +19626,15 @@ test "EndpointConnectionLifecycle pending-work backend loop step selects next de
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -19722,7 +19725,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
     });
     defer timer_connection.deinit();
     try timer_connection.confirmHandshake();
-    _ = try timer_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try timer_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(301, &timer_connection);
     const recovery_before = lifecycle.nextDeadline(301, &timer_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_before.kind);
@@ -19753,7 +19756,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
         &pending_connections,
-        recovery_before.deadline_millis,
+        recovery_before.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &deadline_connections,
@@ -19782,7 +19785,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
     const next = result.backend.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 301), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > recovery_before.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > recovery_before.deadline_nanos);
 }
 
 test "EndpointConnectionLifecycle pending-work cross-space close backend loop returns current deadline on peer error" {
@@ -19899,15 +19902,15 @@ test "EndpointConnectionLifecycle pending-work close backend loop step selects n
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 100000000,
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -20030,7 +20033,7 @@ test "EndpointConnectionLifecycle pending-work close backend poll keeps explicit
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         &drive_views,
         &poll_views,
@@ -20128,7 +20131,7 @@ test "EndpointConnectionLifecycle pending-work close backend drain keeps explici
     defer std.testing.allocator.free(second_sent);
     const first_deadline = lifecycle.nextDeadline(221, &first) orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(222, &second) orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -20162,7 +20165,7 @@ test "EndpointConnectionLifecycle pending-work close backend drain keeps explici
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         .handshake,
         &drive_views,
         &poll_views,
@@ -20258,8 +20261,8 @@ test "EndpointConnectionLifecycle pending-work compatible backend loop step sele
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -20269,7 +20272,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend loop step sele
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -20385,8 +20388,8 @@ test "EndpointConnectionLifecycle pending-work compatible close backend loop ste
 
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -20396,7 +20399,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend loop ste
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -20648,7 +20651,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step drains i
     try std.testing.expect(rest.datagrams_written >= 1);
     try std.testing.expectEqual(@as(?Error, null), rest.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, first_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, first_out[0].datagram);
     for (rest_out[0..rest.datagrams_written], 0..) |entry, index| {
         try client.processProtectedHandshakeDatagramWithInstalledKeys(13 + @as(i64, @intCast(index)), entry.datagram);
     }
@@ -20736,7 +20739,7 @@ test "EndpointConnectionLifecycle single pending-work backend loop step polls in
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expectEqual(@as(u64, 192), polled.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, polled.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single pending poll output", response_crypto[0..response_len]);
@@ -20815,7 +20818,7 @@ test "EndpointConnectionLifecycle single pending-work backend poll keeps explici
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceAndPollDatagramWithInstalledKeyOptions(
         234,
         &client,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -20913,7 +20916,7 @@ test "EndpointConnectionLifecycle single pending-work backend drain keeps explic
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         235,
         &client,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -21013,7 +21016,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space backend poll k
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         323,
         &client,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         &backend_spaces,
         backend.backend(),
         &scratch,
@@ -21112,7 +21115,7 @@ test "EndpointConnectionLifecycle single pending-work cross-space backend drain 
     const result = try lifecycle.processPendingWorkAndDriveCryptoBackendAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         324,
         &client,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         &backend_spaces,
         backend.backend(),
         &scratch,
@@ -21732,7 +21735,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend drain a
     try std.testing.expectEqual(@as(?Error, null), result.backend.drain.first_error);
     try std.testing.expectEqual(@as(u64, 190), out[0].connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, out[0].datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single pending compatible output", response_crypto[0..response_len]);
@@ -21860,7 +21863,7 @@ test "EndpointConnectionLifecycle single pending-work compatible backend poll ap
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expectEqual(@as(u64, 194), polled.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, polled.datagram);
     var response_crypto: [80]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single pending compatible poll output", response_crypto[0..response_len]);
@@ -22421,7 +22424,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend poll keeps exp
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -22547,7 +22550,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend drain keeps ex
     defer std.testing.allocator.free(second_sent);
     const first_deadline = lifecycle.nextDeadline(226, &first) orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(227, &second) orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     var server = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -22584,7 +22587,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend drain keeps ex
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -22722,7 +22725,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend poll kee
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -22848,7 +22851,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend drain ke
     defer std.testing.allocator.free(second_sent);
     const first_deadline = lifecycle.nextDeadline(231, &first) orelse return error.TestUnexpectedResult;
     const second_deadline = lifecycle.nextDeadline(232, &second) orelse return error.TestUnexpectedResult;
-    const now_millis = @max(first_deadline.deadline_millis, second_deadline.deadline_millis);
+    const now_nanos = @max(first_deadline.deadline_nanos, second_deadline.deadline_nanos);
 
     var server = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -22885,7 +22888,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend drain ke
 
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
-        now_millis,
+        now_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -23024,15 +23027,15 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     try idle_conn.confirmHandshake();
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = try idle_conn.pollTx(10, &idle_payload_buf);
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = try idle_conn.pollTx(10 * ms, &idle_payload_buf);
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 10_000_000_000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
-    _ = try recovery_conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try recovery_conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(72, &recovery_conn);
 
     var closing_conn = try Connection.init(std.testing.allocator, .client, .{
@@ -23041,8 +23044,8 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     defer closing_conn.deinit();
     try closing_conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var close_payload_buf: [64]u8 = undefined;
-    _ = (try closing_conn.pollTx(20, &close_payload_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = closing_conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try closing_conn.pollTx(20 * ms, &close_payload_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = closing_conn.closeDeadline() orelse return error.TestUnexpectedResult;
 
     var no_deadline_conn = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 100000000,
@@ -23059,7 +23062,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     const first = lifecycle.nextDeadlineAcrossConnections(&connections) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 73), first.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.close_timeout, first.kind);
-    try std.testing.expectEqual(close_deadline, first.deadline_millis);
+    try std.testing.expectEqual(close_deadline, first.deadline_nanos);
     try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), first.recovery);
 
     const after_close_connections = [_]EndpointConnectionView{
@@ -23070,7 +23073,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     const second = lifecycle.nextDeadlineAcrossConnections(&after_close_connections) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 71), second.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, second.kind);
-    try std.testing.expectEqual(idle_deadline, second.deadline_millis);
+    try std.testing.expectEqual(idle_deadline, second.deadline_nanos);
 
     idle_conn.checkIdleTimeouts(idle_deadline) catch |err| switch (err) {
         error.ConnectionClosed => {},
@@ -23098,7 +23101,7 @@ test "EndpointConnectionLifecycle single due-deadline step selects next deadline
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(80, &conn);
     const due_deadline = lifecycle.nextDeadline(80, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23109,7 +23112,7 @@ test "EndpointConnectionLifecycle single due-deadline step selects next deadline
     const before = try lifecycle.processDueDeadlineAndSelectNextDeadline(
         80,
         &conn,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
     );
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -23118,7 +23121,7 @@ test "EndpointConnectionLifecycle single due-deadline step selects next deadline
     const due = (try lifecycle.processDueDeadlineAndSelectNextDeadline(
         80,
         &conn,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 80), due.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.deadline.kind);
@@ -23134,7 +23137,7 @@ test "EndpointConnectionLifecycle single due-deadline step selects next deadline
     const next = due.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 80), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > due.deadline.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > due.deadline.deadline_nanos);
     const next_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, next_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, next_timer.kind);
@@ -23159,19 +23162,19 @@ test "EndpointConnectionLifecycle due-deadline cleanup selects next deadline" {
     try lifecycle.registerConnectionId(81, &idle_cid, idle_path, .{ .sequence_number = 0 });
     try idle_conn.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle_conn.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle_conn.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle_conn.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
         .initial_rtt_ns = 1000000000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
-    _ = try recovery_conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try recovery_conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(82, &recovery_conn);
     const recovery_deadline = lifecycle.nextDeadline(82, &recovery_conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, recovery_deadline.kind);
-    try std.testing.expect(recovery_deadline.deadline_millis > idle_deadline);
+    try std.testing.expect(recovery_deadline.deadline_nanos > idle_deadline);
 
     const due_connections = [_]EndpointConnectionReceiveView{
         .{ .connection_id = 81, .connection = &idle_conn },
@@ -23210,7 +23213,7 @@ test "EndpointConnectionLifecycle due-deadline cleanup selects next deadline" {
     const next = due.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 82), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expectEqual(recovery_deadline.deadline_millis, next.deadline_millis);
+    try std.testing.expectEqual(recovery_deadline.deadline_nanos, next.deadline_nanos);
 }
 
 test "EndpointConnectionLifecycle single due-deadline backend loop step selects next deadline" {
@@ -23243,7 +23246,7 @@ test "EndpointConnectionLifecycle single due-deadline backend loop step selects 
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(200, &conn);
     const due_deadline = lifecycle.nextDeadline(200, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23253,7 +23256,7 @@ test "EndpointConnectionLifecycle single due-deadline backend loop step selects 
     const before = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         200,
         &conn,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23266,7 +23269,7 @@ test "EndpointConnectionLifecycle single due-deadline backend loop step selects 
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         200,
         &conn,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23290,7 +23293,7 @@ test "EndpointConnectionLifecycle single due-deadline backend loop step selects 
     const next = backend_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 200), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > result.due_work.deadline.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > result.due_work.deadline.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -23327,7 +23330,7 @@ test "EndpointConnectionLifecycle single due-deadline close backend loop step se
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(201, &conn);
     const due_deadline = lifecycle.nextDeadline(201, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23337,7 +23340,7 @@ test "EndpointConnectionLifecycle single due-deadline close backend loop step se
     const before = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
         201,
         &conn,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23350,7 +23353,7 @@ test "EndpointConnectionLifecycle single due-deadline close backend loop step se
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
         201,
         &conn,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23374,7 +23377,7 @@ test "EndpointConnectionLifecycle single due-deadline close backend loop step se
     const next = backend_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 201), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > result.due_work.deadline.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > result.due_work.deadline.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -23440,7 +23443,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend loop st
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(202, &conn);
     const due_deadline = lifecycle.nextDeadline(202, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23450,7 +23453,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend loop st
     const before = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
         202,
         &conn,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23464,7 +23467,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend loop st
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
         202,
         &conn,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23493,7 +23496,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend loop st
     const next = backend_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 202), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > result.due_work.deadline.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > result.due_work.deadline.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -23558,7 +23561,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible close backend l
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(203, &conn);
     const due_deadline = lifecycle.nextDeadline(203, &conn) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23568,7 +23571,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible close backend l
     const before = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         203,
         &conn,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23582,7 +23585,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible close backend l
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         203,
         &conn,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -23611,7 +23614,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible close backend l
     const next = backend_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 203), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next.kind);
-    try std.testing.expect(next.deadline_millis > result.due_work.deadline.deadline_millis);
+    try std.testing.expect(next.deadline_nanos > result.due_work.deadline.deadline_nanos);
     const recovery_timer = next.recovery orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, recovery_timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, recovery_timer.kind);
@@ -23646,7 +23649,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(201, &due_connection);
     const due_deadline = lifecycle.nextDeadline(201, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23656,7 +23659,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -23677,7 +23680,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         &drive_views,
         &deadline_connections,
@@ -23688,7 +23691,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &deadline_connections,
@@ -23747,7 +23750,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(203, &due_connection);
     const due_deadline = lifecycle.nextDeadline(203, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23757,7 +23760,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
     });
     defer backend_connection.deinit();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -23778,7 +23781,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         &drive_views,
         &deadline_connections,
@@ -23789,7 +23792,7 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &deadline_connections,
@@ -23865,7 +23868,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(309, &due_connection);
     const due_deadline = lifecycle.nextDeadline(309, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -23896,7 +23899,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         &backend_spaces,
         &drive_views,
         &deadline_connections,
@@ -23907,7 +23910,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &deadline_connections,
@@ -23986,7 +23989,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space close backend loop re
     defer due_connection.deinit();
     try due_connection.validatePeerAddress();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(311, &due_connection);
     const due_deadline = lifecycle.nextDeadline(311, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -24011,7 +24014,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space close backend loop re
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &deadline_connections,
@@ -24082,7 +24085,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(205, &due_connection);
     const due_deadline = lifecycle.nextDeadline(205, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -24095,7 +24098,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -24116,7 +24119,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -24128,7 +24131,7 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -24218,7 +24221,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
     });
     defer due_connection.deinit();
     try due_connection.confirmHandshake();
-    _ = try due_connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(207, &due_connection);
     const due_deadline = lifecycle.nextDeadline(207, &due_connection) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due_deadline.kind);
@@ -24231,7 +24234,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
     defer backend_connection.deinit();
     try backend_connection.validatePeerAddress();
     try backend_connection.confirmHandshake();
-    _ = try backend_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try backend_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -24252,7 +24255,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis - 1,
+        due_deadline.deadline_nanos - 1,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -24264,7 +24267,7 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         &due_connections,
-        due_deadline.deadline_millis,
+        due_deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &compatibilities,
@@ -24304,31 +24307,31 @@ test "EndpointConnectionDeadline derives installed-key poll options" {
 
     const idle = EndpointConnectionDeadline{
         .connection_id = 7,
-        .deadline_millis = 10,
+        .deadline_nanos = 10,
         .kind = .idle_timeout,
     };
     try std.testing.expect(idle.installedKeyPollOptions(&dcid, &scid) == null);
 
     const initial = EndpointConnectionDeadline{
         .connection_id = 7,
-        .deadline_millis = 10,
+        .deadline_nanos = 10,
         .kind = .recovery,
         .recovery = .{
             .space = .initial,
             .kind = .pto,
-            .deadline_millis = 10,
+            .deadline_nanos = 10,
         },
     };
     try std.testing.expect(initial.installedKeyPollOptions(&dcid, &scid) == null);
 
     const handshake = EndpointConnectionDeadline{
         .connection_id = 7,
-        .deadline_millis = 10,
+        .deadline_nanos = 10,
         .kind = .recovery,
         .recovery = .{
             .space = .handshake,
             .kind = .pto,
-            .deadline_millis = 10,
+            .deadline_nanos = 10,
         },
     };
     const handshake_options = handshake.installedKeyPollOptions(&dcid, &scid) orelse return error.TestUnexpectedResult;
@@ -24338,12 +24341,12 @@ test "EndpointConnectionDeadline derives installed-key poll options" {
 
     const application = EndpointConnectionDeadline{
         .connection_id = 7,
-        .deadline_millis = 10,
+        .deadline_nanos = 10,
         .kind = .recovery,
         .recovery = .{
             .space = .application,
             .kind = .pto,
-            .deadline_millis = 10,
+            .deadline_nanos = 10,
         },
     };
     const application_options = application.installedKeyPollOptions(&dcid, &scid) orelse return error.TestUnexpectedResult;
@@ -24544,9 +24547,9 @@ test "EndpointConnectionLifecycle installed-key feed drains routed stateless res
         .connection_id = &dcid,
         .stateless_reset_token = reset_token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(95, &conn);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
@@ -24573,7 +24576,7 @@ test "EndpointConnectionLifecycle installed-key feed drains routed stateless res
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis() != null);
+    try std.testing.expect(conn.closeDeadline() != null);
     try std.testing.expect(conn.pending_close == null);
     try std.testing.expectEqual(@as(usize, 0), lifecycle.recoveryTimerCount());
     try std.testing.expectEqual(@as(?EndpointLossDetectionTimerDeadline, null), lifecycle.earliestRecoveryDeadline());
@@ -24605,9 +24608,9 @@ test "EndpointConnectionLifecycle feed pending-work step reports reset close dea
         .connection_id = &dcid,
         .stateless_reset_token = reset_token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(99, &conn);
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
@@ -24637,11 +24640,11 @@ test "EndpointConnectionLifecycle feed pending-work step reports reset close dea
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 0), lifecycle.recoveryTimerCount());
-    const close_deadline = conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = conn.closeDeadline() orelse return error.TestUnexpectedResult;
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 99), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.close_timeout, next.kind);
-    try std.testing.expectEqual(close_deadline, next.deadline_millis);
+    try std.testing.expectEqual(close_deadline, next.deadline_nanos);
 }
 
 test "EndpointConnectionLifecycle feed pending-work step retires due close" {
@@ -24659,12 +24662,12 @@ test "EndpointConnectionLifecycle feed pending-work step retires due close" {
     };
     const dcid = [_]u8{ 0x57, 0x58, 0x59, 0x5a };
     try lifecycle.registerConnectionId(100, &dcid, path, .{ .sequence_number = 0 });
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(100, &conn);
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = conn.closeDeadline() orelse return error.TestUnexpectedResult;
 
     var out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
@@ -24839,12 +24842,12 @@ test "EndpointConnectionLifecycle feed pending-work poll step retires due close 
     const local_dcid = [_]u8{ 0x5d, 0x6e, 0x5f, 0x70 };
     const peer_dcid = [_]u8{ 0xad, 0xbe, 0xaf, 0xc0 };
     try lifecycle.registerConnectionId(105, &local_dcid, path, .{ .sequence_number = 0 });
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(105, &conn);
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = conn.closeDeadline() orelse return error.TestUnexpectedResult;
 
     var feed_out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
@@ -24972,12 +24975,12 @@ test "EndpointConnectionLifecycle feed pending-work drain step retires due close
     const local_dcid = [_]u8{ 0x5d, 0x5e, 0x5f, 0x60 };
     const peer_dcid = [_]u8{ 0xad, 0xae, 0xaf, 0xb0 };
     try lifecycle.registerConnectionId(102, &local_dcid, path, .{ .sequence_number = 0 });
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(102, &conn);
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = conn.closeDeadline() orelse return error.TestUnexpectedResult;
 
     var feed_out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
@@ -25267,12 +25270,12 @@ test "EndpointConnectionLifecycle single feed pending-work explicit drain stops 
     const local_dcid = [_]u8{ 0x5d, 0x61, 0x5f, 0x62 };
     const peer_dcid = [_]u8{ 0xad, 0xb1, 0xaf, 0xb2 };
     try lifecycle.registerConnectionId(109, &local_dcid, path, .{ .sequence_number = 0 });
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(109, &conn);
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = conn.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = conn.closeDeadline() orelse return error.TestUnexpectedResult;
 
     const poll_views = [_]EndpointConnectionInstalledKeyPollView{.{
         .connection_id = 109,
@@ -25342,9 +25345,9 @@ test "EndpointConnectionLifecycle installed-key feed keeps long packets out of s
         .connection_id = &dcid,
         .stateless_reset_token = reset_token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(98, &conn);
 
     var long_buf: [96]u8 = undefined;
@@ -25383,7 +25386,7 @@ test "EndpointConnectionLifecycle installed-key feed keeps long packets out of s
         else => {},
     };
     try std.testing.expectEqual(ConnectionState.active, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis() == null);
+    try std.testing.expect(conn.closeDeadline() == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 }
 
@@ -25419,9 +25422,9 @@ test "EndpointConnectionLifecycle across-connections feed drains routed stateles
         .connection_id = &dcid,
         .stateless_reset_token = reset_token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(96, &conn);
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
@@ -25547,7 +25550,7 @@ test "EndpointConnectionLifecycle installed-key feed selects next deadline" {
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 112), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
 
     try client.sendPing();
     const second_datagram = (try client_lifecycle.pollDatagram(111, &client, 12, .{
@@ -25714,7 +25717,7 @@ test "EndpointConnectionLifecycle feed pending-work backend deadline step queues
     const next = first.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 186), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
 
     const response = (try server_lifecycle.pollDatagram(186, &server, 12, .{
         .space = .handshake,
@@ -25722,7 +25725,7 @@ test "EndpointConnectionLifecycle feed pending-work backend deadline step queues
         .source_connection_id = &server_dcid,
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, response);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, response);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server feed deadline response", response_crypto[0..response_len]);
@@ -26003,7 +26006,7 @@ test "EndpointConnectionLifecycle feed pending-work cross-space backend poll ste
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next_deadline.kind);
     try std.testing.expectEqual(@as(u64, 250), next_deadline.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, polled.datagram);
     var response: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server cross-space poll response", response[0..response_len]);
@@ -26103,7 +26106,7 @@ test "EndpointConnectionLifecycle feed pending-work cross-space backend drain st
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
     defer std.testing.allocator.free(drained[0].datagram);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
     var response: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server cross-space drain response", response[0..response_len]);
@@ -26200,7 +26203,7 @@ test "EndpointConnectionLifecycle feed pending-work cross-space backend drain st
     try std.testing.expectEqual(@as(u64, 280), next_deadline.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
     defer std.testing.allocator.free(drained[0].datagram);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
     var response: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server explicit-options drain", response[0..response_len]);
@@ -26313,9 +26316,9 @@ test "EndpointConnectionLifecycle feed pending-work close backend deadline step 
         .source_connection_id = &server_dcid,
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
-    try std.testing.expect(server.closeDeadlineMillis().? > 12);
+    try std.testing.expect(server.closeDeadline().? > 12);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -26437,7 +26440,7 @@ test "EndpointConnectionLifecycle feed pending-work cross-space close backend de
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -26831,7 +26834,7 @@ test "EndpointConnectionLifecycle feed pending-work close backend poll queues cl
     try std.testing.expect(!backend.output_pulled);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, close_packet.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, close_packet.datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -26981,7 +26984,7 @@ test "EndpointConnectionLifecycle feed pending-work backend poll step returns ou
     const response = backend_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response.datagram);
     try std.testing.expectEqual(@as(u64, 188), response.connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server feed poll response", response_crypto[0..response_len]);
@@ -27024,7 +27027,7 @@ test "EndpointConnectionLifecycle feed pending-work backend poll step returns ou
     try std.testing.expectEqualStrings("client single feed poll", single_backend.received[0..single_backend.received_len]);
     const single_response = single_backend_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(single_response.datagram);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(15, single_response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(15 * ms, single_response.datagram);
     const single_response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server single poll response", response_crypto[0..single_response_len]);
 }
@@ -27173,7 +27176,7 @@ test "EndpointConnectionLifecycle feed pending-work backend drain step returns b
     try std.testing.expectEqual(@as(?Error, null), backend_result.drain.first_error);
     try std.testing.expectEqualStrings("client feed backend drain", backend.received[0..backend.received_len]);
     try std.testing.expectEqual(@as(u64, 191), drain_out[0].connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drain_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drain_out[0].datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server feed drain response", response_crypto[0..response_len]);
@@ -27222,7 +27225,7 @@ test "EndpointConnectionLifecycle feed pending-work backend drain step returns b
     try std.testing.expectEqual(@as(usize, 1), single_backend_result.drain.datagrams_written);
     try std.testing.expectEqual(@as(?Error, null), single_backend_result.drain.first_error);
     try std.testing.expectEqualStrings("client single feed drain", single_backend.received[0..single_backend.received_len]);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(15, single_drain_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(15 * ms, single_drain_out[0].datagram);
     const single_response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server single drain response", response_crypto[0..single_response_len]);
 }
@@ -27365,7 +27368,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
     const response = backend_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response.datagram);
     try std.testing.expectEqual(@as(u64, 194), response.connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server explicit poll response", response_crypto[0..response_len]);
@@ -27424,7 +27427,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
     try std.testing.expectEqual(@as(?Error, null), drain_result.drain.first_error);
     try std.testing.expectEqualStrings("client explicit feed drain", drain_backend.received[0..drain_backend.received_len]);
     try std.testing.expectEqual(@as(u64, 194), drain_out[0].connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(15, drain_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(15 * ms, drain_out[0].datagram);
     const drain_response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server explicit drain response", response_crypto[0..drain_response_len]);
 
@@ -27464,7 +27467,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
     const close_poll_response = close_poll_backend_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_poll_response.datagram);
     try std.testing.expectEqual(@as(u64, 194), close_poll_response.connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(18, close_poll_response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(18 * ms, close_poll_response.datagram);
     const close_poll_response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server explicit close poll response", response_crypto[0..close_poll_response_len]);
 
@@ -27510,7 +27513,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
     try std.testing.expectEqual(@as(?Error, null), close_drain_backend_result.drain.first_error);
     try std.testing.expectEqualStrings("client explicit close feed drain", close_drain_backend.received[0..close_drain_backend.received_len]);
     try std.testing.expectEqual(@as(u64, 194), close_drain_out[0].connection_id);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(21, close_drain_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(21 * ms, close_drain_out[0].datagram);
     const close_drain_response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server explicit close drain response", response_crypto[0..close_drain_response_len]);
 }
@@ -28537,7 +28540,7 @@ test "EndpointConnectionLifecycle feeds installed-key datagram then drives backe
     defer std.testing.allocator.free(response.datagram);
     try std.testing.expectEqual(@as(u64, 152), response.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server backend response", response_crypto[0..response_len]);
@@ -29256,7 +29259,7 @@ test "EndpointConnectionLifecycle single feed backend poll step returns response
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next_deadline.kind);
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server single poll output", response_crypto[0..response_len]);
@@ -29402,8 +29405,8 @@ test "EndpointConnectionLifecycle feeds installed-key datagram then drives backe
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, next_deadline.kind);
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, drained[1].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, drained[1].datagram);
     var response_crypto: [96]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings(
@@ -31093,7 +31096,7 @@ test "EndpointConnectionLifecycle single feed backend drain step uses bounded ou
     try std.testing.expect(rest.datagrams_written >= 1);
     try std.testing.expectEqual(@as(?Error, null), rest.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, first_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, first_out[0].datagram);
     for (rest_out[0..rest.datagrams_written], 0..) |entry, index| {
         try client.processProtectedHandshakeDatagramWithInstalledKeys(14 + @as(i64, @intCast(index)), entry.datagram);
     }
@@ -31516,7 +31519,7 @@ test "EndpointConnectionLifecycle compatible feed backend deadline step applies 
         .source_connection_id = &server_dcid,
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, response);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, response);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server compatible deadline", response_crypto[0..response_len]);
@@ -32299,7 +32302,7 @@ test "EndpointConnectionLifecycle single compatible feed backend drain applies p
     try std.testing.expectEqual(@as(?Error, null), backend_result.drain.first_error);
     defer std.testing.allocator.free(drained[0].datagram);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server compatible feed output", response_crypto[0..response_len]);
@@ -32463,7 +32466,7 @@ test "EndpointConnectionLifecycle single compatible feed backend poll applies pe
     defer std.testing.allocator.free(response.datagram);
     try std.testing.expectEqual(@as(u64, 169), response.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server compatible poll output", response_crypto[0..response_len]);
@@ -33347,7 +33350,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalled
     try std.testing.expectEqual(EndpointInstalledKeyDatagramSpace.application, options.space);
     try std.testing.expectEqual(PacketNumberSpace.application, options.recoveryPacketNumberSpace());
 
-    const early = try lifecycle.processPendingWorkAndPollDatagram(63, &client, recovery_timer.deadline_millis - 1, options);
+    const early = try lifecycle.processPendingWorkAndPollDatagram(63, &client, recovery_timer.deadline_nanos - 1, options);
     try std.testing.expectEqual(@as(?EndpointConnectionRetireResult, null), early.pending_work.idle_retired);
     try std.testing.expectEqual(@as(?EndpointConnectionRetireResult, null), early.pending_work.close_retired);
     try std.testing.expectEqual(@as(?EndpointLossDetectionTimerDeadline, null), early.pending_work.recovery_serviced);
@@ -33362,7 +33365,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndPollDatagramWithInstalled
     const due = try lifecycle.processPendingWorkAndPollDatagramWithInstalledKeyOptions(
         63,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         options,
     );
     try std.testing.expectEqual(@as(?EndpointConnectionRetireResult, null), due.pending_work.idle_retired);
@@ -33432,7 +33435,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagramsWithInstall
     const early = try lifecycle.processPendingWorkAndDrainDatagrams(
         65,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         options,
         &early_out,
     );
@@ -33451,7 +33454,7 @@ test "EndpointConnectionLifecycle processPendingWorkAndDrainDatagramsWithInstall
     const due = try lifecycle.processPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
         65,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         options,
         &due_out,
     );
@@ -33543,7 +33546,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagramWithInstalled
     const before_deadline = try lifecycle.processDueDeadlineAndPollDatagramWithInstalledKeyOptions(
         66,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         options,
     );
     try std.testing.expect(before_deadline == null);
@@ -33554,7 +33557,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagramWithInstalled
     try std.testing.expectError(error.InvalidPacket, lifecycle.processDueDeadlineAndPollDatagramWithInstalledKeyOptions(
         66,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .{
             .space = .handshake,
             .destination_connection_id = &server_dcid,
@@ -33569,7 +33572,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagramWithInstalled
     const due = (try lifecycle.processDueDeadlineAndPollDatagramWithInstalledKeyOptions(
         66,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         options,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.deadline.kind);
@@ -33644,7 +33647,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagramsWithInstall
     const before_deadline = try lifecycle.processDueDeadlineAndDrainDatagramsWithInstalledKeyOptions(
         67,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         options,
         &before_out,
     );
@@ -33657,7 +33660,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagramsWithInstall
     const due = (try lifecycle.processDueDeadlineAndDrainDatagramsWithInstalledKeyOptions(
         67,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         options,
         &due_out,
     )) orelse return error.TestUnexpectedResult;
@@ -33757,7 +33760,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     const fast_timer = fast_deadline.recovery orelse return error.TestUnexpectedResult;
     const slow_deadline = lifecycle.nextDeadline(69, &slow) orelse return error.TestUnexpectedResult;
     const slow_timer = slow_deadline.recovery orelse return error.TestUnexpectedResult;
-    try std.testing.expect(fast_timer.deadline_millis < slow_timer.deadline_millis);
+    try std.testing.expect(fast_timer.deadline_nanos < slow_timer.deadline_nanos);
 
     const connections = [_]EndpointConnectionInstalledKeyPollView{
         .{
@@ -33773,7 +33776,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     };
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         &connections,
-        fast_timer.deadline_millis - 1,
+        fast_timer.deadline_nanos - 1,
     );
     try std.testing.expect(before_deadline == null);
     try std.testing.expectEqual(@as(usize, 1), fast.sentPacketCount(.application));
@@ -33781,7 +33784,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         &connections,
-        fast_timer.deadline_millis,
+        fast_timer.deadline_nanos,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.deadline.kind);
     const serviced = due.pending_work.recovery_serviced orelse return error.TestUnexpectedResult;
@@ -33874,7 +33877,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     const fast_timer = fast_deadline.recovery orelse return error.TestUnexpectedResult;
     const slow_deadline = lifecycle.nextDeadline(71, &slow) orelse return error.TestUnexpectedResult;
     const slow_timer = slow_deadline.recovery orelse return error.TestUnexpectedResult;
-    try std.testing.expect(fast_timer.deadline_millis < slow_timer.deadline_millis);
+    try std.testing.expect(fast_timer.deadline_nanos < slow_timer.deadline_nanos);
 
     const connections = [_]EndpointConnectionInstalledKeyPollView{
         .{
@@ -33891,7 +33894,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     var before_out: [1]EndpointPolledDatagramResult = undefined;
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         &connections,
-        fast_timer.deadline_millis - 1,
+        fast_timer.deadline_nanos - 1,
         &before_out,
     );
     try std.testing.expect(before_deadline == null);
@@ -33901,7 +33904,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     var due_out: [1]EndpointPolledDatagramResult = undefined;
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         &connections,
-        fast_timer.deadline_millis,
+        fast_timer.deadline_nanos,
         &due_out,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.deadline.kind);
@@ -33993,7 +33996,7 @@ test "EndpointConnectionLifecycle due-deadline backend poll keeps explicit zero 
     const before_deadline = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagram(
         72,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         .application,
         backend.backend(),
         &scratch,
@@ -34005,7 +34008,7 @@ test "EndpointConnectionLifecycle due-deadline backend poll keeps explicit zero 
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagram(
         72,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         backend.backend(),
         &scratch,
@@ -34103,7 +34106,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain keeps explicit zero
     const before_deadline = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndDrainDatagrams(
         73,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         .application,
         backend.backend(),
         &scratch,
@@ -34117,7 +34120,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain keeps explicit zero
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndDrainDatagrams(
         73,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         backend.backend(),
         &scratch,
@@ -34181,9 +34184,9 @@ test "EndpointConnectionLifecycle single due-deadline backend poll keeps separat
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34228,7 +34231,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll keeps separat
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagramWithInstalledKeyOptions(
         207,
         &due_connection,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         backend.backend(),
         &scratch,
@@ -34291,9 +34294,9 @@ test "EndpointConnectionLifecycle single due-deadline backend drain keeps separa
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34339,7 +34342,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain keeps separa
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         209,
         &due_connection,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         backend.backend(),
         &scratch,
@@ -34404,9 +34407,9 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend poll k
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34452,7 +34455,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend poll k
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         319,
         &due_connection,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &backend_spaces,
         backend.backend(),
         &scratch,
@@ -34515,9 +34518,9 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend drain 
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34564,7 +34567,7 @@ test "EndpointConnectionLifecycle single due-deadline cross-space backend drain 
     const due = (try lifecycle.processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         321,
         &due_connection,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &backend_spaces,
         backend.backend(),
         &scratch,
@@ -34620,7 +34623,7 @@ test "EndpointConnectionLifecycle single due-deadline explicit backend variants 
         .initial_rtt_ns = 100000000,
     });
     defer client.deinit();
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(211, &client);
     const deadline = lifecycle.nextDeadline(211, &client) orelse return error.TestUnexpectedResult;
     const recovery_timer = deadline.recovery orelse return error.TestUnexpectedResult;
@@ -34636,7 +34639,7 @@ test "EndpointConnectionLifecycle single due-deadline explicit backend variants 
     const poll_views = [_]EndpointConnectionInstalledKeyPollView{};
     const backend_spaces = [_]PacketNumberSpace{ .handshake, .application };
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const before_deadline = recovery_timer.deadline_millis - 1;
+    const before_deadline = recovery_timer.deadline_nanos - 1;
 
     try std.testing.expect(try lifecycle.processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         211,
@@ -34791,9 +34794,9 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34850,7 +34853,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         &drive_views,
         &poll_views,
@@ -34910,9 +34913,9 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend poll ke
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -34970,7 +34973,7 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend poll ke
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &poll_views,
@@ -35030,9 +35033,9 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -35090,7 +35093,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .application,
         &drive_views,
         &poll_views,
@@ -35152,9 +35155,9 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend drain k
         .local = secrets.client.secret,
         .peer = secrets.server.secret,
     });
-    _ = try due_connection.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try due_connection.recordPacketSentInSpace(.application, 1200, 100);
-    try due_connection.receiveAckInSpace(.application, 1300, .{
+    _ = try due_connection.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try due_connection.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try due_connection.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -35213,7 +35216,7 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend drain k
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &backend_spaces,
         &drive_views,
         &poll_views,
@@ -35324,7 +35327,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
     const fast_deadline = lifecycle.nextDeadline(74, &fast) orelse return error.TestUnexpectedResult;
     const fast_timer = fast_deadline.recovery orelse return error.TestUnexpectedResult;
     const slow_deadline = lifecycle.nextDeadline(75, &slow) orelse return error.TestUnexpectedResult;
-    try std.testing.expect(fast_deadline.deadline_millis < slow_deadline.deadline_millis);
+    try std.testing.expect(fast_deadline.deadline_nanos < slow_deadline.deadline_nanos);
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -35352,7 +35355,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
 
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        fast_timer.deadline_millis - 1,
+        fast_timer.deadline_nanos - 1,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35362,7 +35365,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        fast_timer.deadline_millis,
+        fast_timer.deadline_nanos,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35476,7 +35479,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     const fast_deadline = lifecycle.nextDeadline(77, &fast) orelse return error.TestUnexpectedResult;
     const fast_timer = fast_deadline.recovery orelse return error.TestUnexpectedResult;
     const slow_deadline = lifecycle.nextDeadline(78, &slow) orelse return error.TestUnexpectedResult;
-    try std.testing.expect(fast_deadline.deadline_millis < slow_deadline.deadline_millis);
+    try std.testing.expect(fast_deadline.deadline_nanos < slow_deadline.deadline_nanos);
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -35505,7 +35508,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
 
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        fast_timer.deadline_millis - 1,
+        fast_timer.deadline_nanos - 1,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35516,7 +35519,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        fast_timer.deadline_millis,
+        fast_timer.deadline_nanos,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35622,7 +35625,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend poll keeps ex
 
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        timer.deadline_millis - 1,
+        timer.deadline_nanos - 1,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35632,7 +35635,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend poll keeps ex
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
         &deadline_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35736,7 +35739,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend drain keeps e
 
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        timer.deadline_millis - 1,
+        timer.deadline_nanos - 1,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35747,7 +35750,7 @@ test "EndpointConnectionLifecycle cross due-deadline close backend drain keeps e
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         &deadline_connections,
-        timer.deadline_millis,
+        timer.deadline_nanos,
         .application,
         &drive_views,
         &[_]EndpointConnectionInstalledKeyPollView{},
@@ -35871,7 +35874,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         const before_deadline = if (close_path)
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis - 1,
+                timer.deadline_nanos - 1,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35881,7 +35884,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         else
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis - 1,
+                timer.deadline_nanos - 1,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35894,7 +35897,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         const due = (if (close_path)
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis,
+                timer.deadline_nanos,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35904,7 +35907,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         else
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis,
+                timer.deadline_nanos,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35932,7 +35935,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         const before_deadline = if (close_path)
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis - 1,
+                timer.deadline_nanos - 1,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35941,7 +35944,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         else
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis - 1,
+                timer.deadline_nanos - 1,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35953,7 +35956,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         const due = (if (close_path)
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis,
+                timer.deadline_nanos,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -35962,7 +35965,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
         else
             try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
                 &deadline_connections,
-                timer.deadline_millis,
+                timer.deadline_nanos,
                 .application,
                 &drive_views,
                 &compatibilities,
@@ -36062,7 +36065,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagram gates recove
     const before_deadline = try lifecycle.processDueDeadlineAndPollDatagram(
         64,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         &server_dcid,
         &[_]u8{},
     );
@@ -36074,7 +36077,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndPollDatagram gates recove
     const due = (try lifecycle.processDueDeadlineAndPollDatagram(
         64,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &server_dcid,
         &[_]u8{},
     )) orelse return error.TestUnexpectedResult;
@@ -36137,7 +36140,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagrams drains rec
     const before_deadline = try lifecycle.processDueDeadlineAndDrainDatagrams(
         66,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         &server_dcid,
         &[_]u8{},
         &early_out,
@@ -36151,7 +36154,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAndDrainDatagrams drains rec
     const due = (try lifecycle.processDueDeadlineAndDrainDatagrams(
         66,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         &server_dcid,
         &[_]u8{},
         &due_out,
@@ -36243,7 +36246,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
         .peer = secrets.client.secret,
     });
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(190, &client);
     const deadline = lifecycle.nextDeadline(190, &client) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36256,7 +36259,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
     const before_deadline = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndDrainDatagrams(
         190,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36276,7 +36279,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndDrainDatagrams(
         190,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36318,7 +36321,7 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
     var rest_out: [2]EndpointPolledDatagramResult = undefined;
     const rest = lifecycle.drainDatagramsAcrossConnections(
         &poll_views,
-        recovery_timer.deadline_millis + 1,
+        recovery_timer.deadline_nanos + 1,
         .handshake,
         &rest_out,
     );
@@ -36329,12 +36332,12 @@ test "EndpointConnectionLifecycle single due-deadline backend drain continues af
     try std.testing.expectEqual(@as(?Error, null), rest.first_error);
 
     try server.processProtectedHandshakeDatagramWithInstalledKeys(
-        recovery_timer.deadline_millis + 2,
+        recovery_timer.deadline_nanos + 2,
         first_out[0].datagram,
     );
     for (rest_out[0..rest.datagrams_written], 0..) |entry, index| {
         try server.processProtectedHandshakeDatagramWithInstalledKeys(
-            recovery_timer.deadline_millis + 3 + @as(i64, @intCast(index)),
+            recovery_timer.deadline_nanos + 3 + @as(i64, @intCast(index)),
             entry.datagram,
         );
     }
@@ -36396,7 +36399,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll continues aft
         .peer = secrets.client.secret,
     });
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(196, &client);
     const deadline = lifecycle.nextDeadline(196, &client) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36408,7 +36411,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll continues aft
     const before_deadline = try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagram(
         196,
         &client,
-        recovery_timer.deadline_millis - 1,
+        recovery_timer.deadline_nanos - 1,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36426,7 +36429,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll continues aft
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagram(
         196,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36459,7 +36462,7 @@ test "EndpointConnectionLifecycle single due-deadline backend poll continues aft
     try std.testing.expectEqual(PacketNumberSpace.handshake, next_deadline.recovery.?.space);
 
     try server.processProtectedHandshakeDatagramWithInstalledKeys(
-        recovery_timer.deadline_millis + 1,
+        recovery_timer.deadline_nanos + 1,
         polled.datagram,
     );
     var response_crypto: [64]u8 = undefined;
@@ -36519,7 +36522,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     });
     try client.sendCryptoInSpace(.handshake, "queued before due bad backend");
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(191, &client);
     const deadline = lifecycle.nextDeadline(191, &client) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36532,7 +36535,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
         191,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36606,7 +36609,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     });
     try client.sendCryptoInSpace(.handshake, "queued before due bad backend poll");
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(197, &client);
     const deadline = lifecycle.nextDeadline(197, &client) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36618,7 +36621,7 @@ test "EndpointConnectionLifecycle single due-deadline backend OrClose stops befo
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram(
         197,
         &client,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36721,7 +36724,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend drain a
         .peer = secrets.client.secret,
     });
 
-    _ = try server.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try server.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(192, &server);
     const deadline = lifecycle.nextDeadline(192, &server) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36737,7 +36740,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend drain a
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
         192,
         &server,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36777,7 +36780,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend drain a
     try std.testing.expectEqual(@as(u64, 192), out[0].connection_id);
 
     try client.processProtectedHandshakeDatagramWithInstalledKeys(
-        recovery_timer.deadline_millis + 1,
+        recovery_timer.deadline_nanos + 1,
         out[0].datagram,
     );
     var response_crypto: [64]u8 = undefined;
@@ -36868,7 +36871,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend poll ap
         .peer = secrets.client.secret,
     });
 
-    _ = try server.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try server.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(198, &server);
     const deadline = lifecycle.nextDeadline(198, &server) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -36883,7 +36886,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend poll ap
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
         198,
         &server,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -36920,7 +36923,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible backend poll ap
     try std.testing.expectEqual(@as(u64, 198), polled.connection_id);
 
     try client.processProtectedHandshakeDatagramWithInstalledKeys(
-        recovery_timer.deadline_millis + 1,
+        recovery_timer.deadline_nanos + 1,
         polled.datagram,
     );
     var response_crypto: [80]u8 = undefined;
@@ -36996,7 +36999,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose drains 
     });
     try server.sendCryptoInSpace(.handshake, "queued before due compatible close");
 
-    _ = try server.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try server.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(193, &server);
     const deadline = lifecycle.nextDeadline(193, &server) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -37009,7 +37012,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose drains 
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
         193,
         &server,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -37105,7 +37108,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose polls c
     });
     try server.sendCryptoInSpace(.handshake, "queued before due compatible poll close");
 
-    _ = try server.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try server.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(199, &server);
     const deadline = lifecycle.nextDeadline(199, &server) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, deadline.kind);
@@ -37117,7 +37120,7 @@ test "EndpointConnectionLifecycle single due-deadline compatible OrClose polls c
     const result = (try lifecycle.processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
         199,
         &server,
-        recovery_timer.deadline_millis,
+        recovery_timer.deadline_nanos,
         .handshake,
         backend.backend(),
         &scratch,
@@ -37190,7 +37193,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     const slow_deadline = lifecycle.nextDeadline(82, &slow) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, fast_deadline.kind);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, slow_deadline.kind);
-    try std.testing.expect(fast_deadline.deadline_millis < slow_deadline.deadline_millis);
+    try std.testing.expect(fast_deadline.deadline_nanos < slow_deadline.deadline_nanos);
 
     const connections = [_]EndpointConnectionPollView{
         .{
@@ -37207,7 +37210,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
 
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndPollDatagram(
         &connections,
-        fast_deadline.deadline_millis - 1,
+        fast_deadline.deadline_nanos - 1,
     );
     try std.testing.expect(before_deadline == null);
     try std.testing.expectEqual(@as(usize, 1), fast.sentPacketCount(.application));
@@ -37217,7 +37220,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
 
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndPollDatagram(
         &connections,
-        fast_deadline.deadline_millis,
+        fast_deadline.deadline_nanos,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 81), due.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.deadline.kind);
@@ -37293,7 +37296,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     const slow_deadline = lifecycle.nextDeadline(84, &slow) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, fast_deadline.kind);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, slow_deadline.kind);
-    try std.testing.expect(fast_deadline.deadline_millis < slow_deadline.deadline_millis);
+    try std.testing.expect(fast_deadline.deadline_nanos < slow_deadline.deadline_nanos);
 
     const connections = [_]EndpointConnectionPollView{
         .{
@@ -37311,7 +37314,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     var early_out: [1]EndpointPolledDatagramResult = undefined;
     const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagrams(
         &connections,
-        fast_deadline.deadline_millis - 1,
+        fast_deadline.deadline_nanos - 1,
         &early_out,
     );
     try std.testing.expect(before_deadline == null);
@@ -37321,7 +37324,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     var zero_out: [0]EndpointPolledDatagramResult = .{};
     try std.testing.expectError(error.BufferTooSmall, lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagrams(
         &connections,
-        fast_deadline.deadline_millis,
+        fast_deadline.deadline_nanos,
         &zero_out,
     ));
     const preserved_deadline = lifecycle.nextDeadline(83, &fast) orelse return error.TestUnexpectedResult;
@@ -37333,7 +37336,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     var due_out: [1]EndpointPolledDatagramResult = undefined;
     const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagrams(
         &connections,
-        fast_deadline.deadline_millis,
+        fast_deadline.deadline_nanos,
         &due_out,
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 83), due.deadline.connection_id);
@@ -37415,7 +37418,7 @@ test "EndpointConnectionLifecycle due-deadline backend loop returns recovery dat
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
         &deadline_connections,
-        deadline.deadline_millis,
+        deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &[_]EndpointConnectionPollView{},
@@ -37495,7 +37498,7 @@ test "EndpointConnectionLifecycle due-deadline backend drain returns recovery da
 
     const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
         &deadline_connections,
-        deadline.deadline_millis,
+        deadline.deadline_nanos,
         .handshake,
         &drive_views,
         &[_]EndpointConnectionPollView{},
@@ -37540,8 +37543,8 @@ test "EndpointConnectionLifecycle due-deadline backend poll skips terminal clean
     try idle.confirmHandshake();
     try idle.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -37613,8 +37616,8 @@ test "EndpointConnectionLifecycle due-deadline backend drain skips terminal clea
     try idle.confirmHandshake();
     try idle.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var backend_connection = try Connection.init(std.testing.allocator, .server, .{});
     defer backend_connection.deinit();
@@ -37726,8 +37729,8 @@ test "EndpointConnectionLifecycle due-deadline close-propagating backend poll sk
     try idle.confirmHandshake();
     try idle.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
@@ -37821,8 +37824,8 @@ test "EndpointConnectionLifecycle due-deadline compatible-version backend poll s
     try idle.confirmHandshake();
     try idle.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var server = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -37920,8 +37923,8 @@ test "EndpointConnectionLifecycle due-deadline compatible-version close path ski
     try idle.confirmHandshake();
     try idle.sendPing();
     var idle_payload_buf: [16]u8 = undefined;
-    _ = (try idle.pollTx(10, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
-    const idle_deadline = idle.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try idle.pollTx(10 * ms, &idle_payload_buf)) orelse return error.TestUnexpectedResult;
+    const idle_deadline = idle.idleTimeoutDeadline() orelse return error.TestUnexpectedResult;
 
     var server = try Connection.init(std.testing.allocator, .server, .{
         .chosen_version = .v2,
@@ -39028,7 +39031,7 @@ test "EndpointConnectionLifecycle single backend drive drains bounded output" {
     try std.testing.expect(rest.datagrams_written >= 1);
     try std.testing.expectEqual(@as(?Error, null), rest.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, first_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, first_out[0].datagram);
     for (rest_out[0..rest.datagrams_written], 0..) |entry, index| {
         try client.processProtectedHandshakeDatagramWithInstalledKeys(13 + @as(i64, @intCast(index)), entry.datagram);
     }
@@ -39112,7 +39115,7 @@ test "EndpointConnectionLifecycle single backend drive polls datagram" {
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expectEqual(@as(u64, 114), polled.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, polled.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single backend poll output", response_crypto[0..response_len]);
@@ -39554,7 +39557,7 @@ test "EndpointConnectionLifecycle single compatible backend drive drains after p
     try std.testing.expectEqual(@as(?Error, null), result.drain.first_error);
     try std.testing.expectEqual(@as(u64, 112), out[0].connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, out[0].datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single compatible backend output", response_crypto[0..response_len]);
@@ -39677,7 +39680,7 @@ test "EndpointConnectionLifecycle single compatible backend drive polls after pe
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expectEqual(@as(u64, 116), polled.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, polled.datagram);
     var response_crypto: [80]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("single compatible backend poll output", response_crypto[0..response_len]);
@@ -41492,22 +41495,22 @@ test "EndpointConnectionLifecycle retires route and timer after idle timeout clo
 
     try conn.sendPing();
     var out_buf: [16]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), payload.len);
     try lifecycle.armRecoveryTimerFromConnection(55, &conn);
     try std.testing.expectEqual(@as(usize, 2), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
-    try std.testing.expectEqual(@as(?i64, 40), conn.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, 40 * ms), conn.idleTimeoutDeadline());
     try std.testing.expectEqual(
         @as(?EndpointConnectionRetireResult, null),
-        try lifecycle.checkIdleTimeoutsAndRetireConnection(55, &conn, 39),
+        try lifecycle.checkIdleTimeoutsAndRetireConnection(55, &conn, 39 * ms),
     );
     try std.testing.expectEqual(ConnectionState.active, conn.connectionState());
     try std.testing.expectEqual(@as(usize, 2), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
-    const retired = (try lifecycle.checkIdleTimeoutsAndRetireConnection(55, &conn, 40)) orelse return error.TestUnexpectedResult;
+    const retired = (try lifecycle.checkIdleTimeoutsAndRetireConnection(55, &conn, 40 * ms)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(ConnectionState.closed, conn.connectionState());
     try std.testing.expectEqual(@as(usize, 2), retired.routes_retired);
     try std.testing.expect(retired.recovery_timer_disarmed);
@@ -41531,12 +41534,12 @@ test "EndpointConnectionLifecycle retires route and timer after close timeout cl
     defer closing.deinit();
     try closing.confirmHandshake();
     try lifecycle.registerConnectionId(56, &closing_cid, path, .{ .sequence_number = 0 });
-    _ = try closing.recordPacketSentInSpace(.application, 10, 100);
+    _ = try closing.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(56, &closing);
     try closing.closeConnection(0, @intFromEnum(frame.FrameType.ping), "done");
     var out_buf: [64]u8 = undefined;
-    _ = (try closing.pollTx(11, &out_buf)) orelse return error.TestUnexpectedResult;
-    const closing_deadline = closing.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try closing.pollTx(11 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
+    const closing_deadline = closing.closeDeadline() orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(
         @as(?EndpointConnectionRetireResult, null),
@@ -41558,7 +41561,7 @@ test "EndpointConnectionLifecycle retires route and timer after close timeout cl
     try draining.confirmHandshake();
     try draining.validatePeerAddress();
     try lifecycle.registerConnectionId(57, &draining_cid, path, .{ .sequence_number = 0 });
-    _ = try draining.recordPacketSentInSpace(.application, 20, 100);
+    _ = try draining.recordPacketSentInSpace(.application, 20 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(57, &draining);
 
     var close_buf: [64]u8 = undefined;
@@ -41567,8 +41570,8 @@ test "EndpointConnectionLifecycle retires route and timer after close timeout cl
         .error_code = 0,
         .reason_phrase = "remote",
     } });
-    try draining.processDatagram(21, close_out.getWritten());
-    const draining_deadline = draining.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    try draining.processDatagram(21 * ms, close_out.getWritten());
+    const draining_deadline = draining.closeDeadline() orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(
         @as(?EndpointConnectionRetireResult, null),
@@ -41615,7 +41618,7 @@ test "EndpointConnectionLifecycle processes Version Negotiation and retires old 
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(91, &client_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(91, &client);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -41669,7 +41672,7 @@ test "EndpointConnectionLifecycle ignores Version Negotiation without retiring e
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(92, &client_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(92, &client);
 
     try std.testing.expect((try lifecycle.processVersionNegotiationDatagram(
@@ -41713,13 +41716,13 @@ test "EndpointConnectionLifecycle refreshes recovery timer when Version Negotiat
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(93, &client_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(93, &client);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(error.ConnectionClosed, lifecycle.processVersionNegotiationDatagram(
         93,
@@ -41766,13 +41769,13 @@ test "EndpointConnectionLifecycle refreshes recovery timer when Version Negotiat
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(94, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(94, &client);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(error.ConnectionClosed, lifecycle.processVersionNegotiationFollowupDatagram(
         94,
@@ -41826,7 +41829,7 @@ test "EndpointConnectionLifecycle registers Version Negotiation follow-up route"
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(101, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(101, &client);
 
     const result = (try lifecycle.processVersionNegotiationFollowupDatagram(
@@ -41887,7 +41890,7 @@ test "EndpointConnectionLifecycle ignores Version Negotiation follow-up route on
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(103, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(103, &client);
 
     try std.testing.expect((try lifecycle.processVersionNegotiationFollowupDatagram(
@@ -41939,7 +41942,7 @@ test "EndpointConnectionLifecycle can reuse client Initial Source CID after Vers
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(105, &client_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     const result = (try lifecycle.processVersionNegotiationFollowupDatagram(
         105,
         106,
@@ -41990,7 +41993,7 @@ test "EndpointConnectionLifecycle hands off Version Negotiation follow-up connec
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(107, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(107, &client);
 
     var handoff = (try lifecycle.processVersionNegotiationHandoffDatagram(
@@ -42052,7 +42055,7 @@ test "EndpointConnectionLifecycle cleans follow-up route when Version Negotiatio
     client.config.active_connection_id_limit = 1;
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(109, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(109, &client);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -42110,7 +42113,7 @@ test "EndpointConnectionLifecycle emits protected Version Negotiation follow-up 
     defer old_client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(111, &old_scid, path, .{});
-    _ = try old_client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try old_client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(111, &old_client);
 
     var result = (try lifecycle.processVersionNegotiationProtectedInitialDatagram(
@@ -42160,7 +42163,7 @@ test "EndpointConnectionLifecycle emits protected Version Negotiation follow-up 
     try server.validatePeerAddress();
     try server.sendCryptoInSpace(.initial, "vn server initial");
     const server_initial = (try server.pollInitialProtectedDatagram(
-        12,
+        12 * ms,
         &followup_scid,
         &server_scid,
         &[_]u8{},
@@ -42210,7 +42213,7 @@ test "EndpointConnectionLifecycle cleans follow-up route when protected Version 
     defer old_client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(113, &old_scid, path, .{});
-    _ = try old_client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try old_client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(113, &old_client);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
@@ -42257,7 +42260,7 @@ test "EndpointConnectionLifecycle processes accepted protected Initial after aut
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "accepted protected initial");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -42345,7 +42348,7 @@ test "EndpointConnectionLifecycle emits accepted protected Initial response" {
     _ = try client_lifecycle.registerClientInitialSourceConnectionId(101, &client_scid, client_path, .{});
     try client.sendCryptoInSpace(.initial, "client hello for response");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -42473,7 +42476,7 @@ test "EndpointConnectionLifecycle accepts Initial and drives backend response" {
     _ = try client_lifecycle.registerClientInitialSourceConnectionId(121, &client_scid, client_path, .{});
     try client.sendCryptoInSpace(.initial, "client hello for backend");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -42600,7 +42603,7 @@ test "EndpointConnectionLifecycle accepts Initial and selects backend deadline w
     _ = try client_lifecycle.registerClientInitialSourceConnectionId(124, &client_scid, client_path, .{});
     try client.sendCryptoInSpace(.initial, "client hello deadline");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -42628,7 +42631,7 @@ test "EndpointConnectionLifecycle accepts Initial and selects backend deadline w
     const result = try lifecycle.processAcceptedProtectedInitialWithCryptoBackendAndSelectNextDeadline(
         209,
         &server,
-        11,
+        11 * ms,
         accept,
         &server_scid,
         initial,
@@ -42649,13 +42652,13 @@ test "EndpointConnectionLifecycle accepts Initial and selects backend deadline w
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 209), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(@as(i64, 41), next.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 41 * ms), next.deadline_nanos);
 
     const response = (try lifecycle.pollProtectedLongCryptoDatagramInSpace(
         209,
         &server,
         .initial,
-        12,
+        12 * ms,
         &client_scid,
         &server_scid,
         &[_]u8{},
@@ -42739,7 +42742,7 @@ test "EndpointConnectionLifecycle accepts Initial and drains backend response da
     _ = try client_lifecycle.registerClientInitialSourceConnectionId(123, &client_scid, client_path, .{});
     try client.sendCryptoInSpace(.initial, "client hello for backend drain");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -42911,7 +42914,7 @@ test "EndpointConnectionLifecycle accepted Initial backend OrClose polls Initial
     _ = try client_lifecycle.registerClientInitialSourceConnectionId(122, &client_scid, client_path, .{});
     try client.sendCryptoInSpace(.initial, "client hello with bad params");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -43042,7 +43045,7 @@ test "EndpointConnectionLifecycle accepted Initial backend OrClose deadline stop
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "client hello bad params deadline");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -43156,7 +43159,7 @@ test "EndpointConnectionLifecycle accepted Initial backend OrClose drains Initia
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "client hello bad params drain");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -43232,7 +43235,7 @@ test "EndpointConnectionLifecycle rejects accepted Initial without installing ro
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "tampered protected initial");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -43300,7 +43303,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when accepted Initial
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "closed accepted initial");
     const initial = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -43327,12 +43330,12 @@ test "EndpointConnectionLifecycle refreshes recovery timer when accepted Initial
     defer server.deinit();
     try server.validatePeerAddress();
     try server.confirmHandshake();
-    _ = try server.recordPacketSentInSpace(.application, 10, 100);
+    _ = try server.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(203, &server);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try server.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), server.lossDetectionTimerDeadline());
 
     try std.testing.expectError(error.ConnectionClosed, lifecycle.processAcceptedProtectedInitialDatagram(
         203,
@@ -43384,7 +43387,7 @@ test "EndpointConnectionLifecycle does not hand off connection for ignored Versi
     defer client.deinit();
 
     _ = try lifecycle.registerClientInitialSourceConnectionId(109, &old_scid, path, .{});
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try lifecycle.armRecoveryTimerFromConnection(109, &client);
 
     try std.testing.expect((try lifecycle.processVersionNegotiationHandoffDatagram(
@@ -43489,7 +43492,7 @@ test "EndpointConnectionLifecycle updates route path after protected PATH_RESPON
     const challenge = (try server.pollProtectedShortDatagram(3, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
-    try client.processProtectedShortDatagram(4, secrets.server, client_dcid.len, challenge);
+    try client.processProtectedShortDatagram(4 * ms, secrets.server, client_dcid.len, challenge);
 
     const response = (try client.pollProtectedShortDatagram(5, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
@@ -43603,7 +43606,7 @@ test "EndpointConnectionLifecycle installed-key path update commits after PATH_R
 
     // PING 从新路径到达：检测 path_changed，但不 commit（outstanding 未减少）。
     try client.sendPing();
-    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(migrated_ping);
     const ping_result = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrClose(
         88,
@@ -43619,12 +43622,12 @@ test "EndpointConnectionLifecycle installed-key path update commits after PATH_R
     // PATH_CHALLENGE/RESPONSE 交换后，outstanding 1->0 触发 route commit。
     const challenge_data = [_]u8{ 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb };
     try server.sendPathChallenge(challenge_data);
-    const challenge = (try server.pollProtectedShortDatagramWithInstalledKeys(3, &client_dcid)) orelse return error.TestUnexpectedResult;
+    const challenge = (try server.pollProtectedShortDatagramWithInstalledKeys(3 * ms, &client_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
-    try client.processProtectedShortDatagramWithInstalledKeys(4, client_dcid.len, challenge);
+    try client.processProtectedShortDatagramWithInstalledKeys(4 * ms, client_dcid.len, challenge);
 
-    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(5, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(5 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
     const validation_result = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrClose(
         88,
@@ -43688,7 +43691,7 @@ test "EndpointConnectionLifecycle feed installed-key path update commits after P
     });
 
     try client.sendPing();
-    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(1 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(migrated_ping);
     const ping_result = try lifecycle.feedDatagramWithInstalledKeysAndUpdatePathOrCloseAndPollDatagram(
         188,
@@ -43722,7 +43725,7 @@ test "EndpointConnectionLifecycle feed installed-key path update commits after P
     try std.testing.expect((try lifecycle.routeDatagram(new_path, migrated_ping)).path_changed);
 
     try client.sendPing();
-    const duplicate_migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(3, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const duplicate_migrated_ping = (try client.pollProtectedShortDatagramWithInstalledKeys(3 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(duplicate_migrated_ping);
     const duplicate_ping_result = try lifecycle.feedDatagramWithInstalledKeysAndUpdatePathOrClose(
         188,
@@ -43737,9 +43740,9 @@ test "EndpointConnectionLifecycle feed installed-key path update commits after P
     try std.testing.expectEqual(@as(usize, 0), server.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
 
-    try client.processProtectedShortDatagramWithInstalledKeys(5, client_dcid.len, challenge_packet.datagram);
+    try client.processProtectedShortDatagramWithInstalledKeys(5 * ms, client_dcid.len, challenge_packet.datagram);
 
-    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(6, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(6 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
     const validation_result = try lifecycle.feedDatagramWithInstalledKeysAndUpdatePathOrCloseAndPollDatagram(
         188,
@@ -43803,7 +43806,7 @@ test "EndpointConnectionLifecycle installed-key path update OrClose queues close
     // 先发 PATH_CHALLENGE 让 outstanding=1，验证 close 时 outstanding 不被消耗。
     const challenge_data = [_]u8{ 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb };
     try server.sendPathChallenge(challenge_data);
-    const challenge = (try server.pollProtectedShortDatagramWithInstalledKeys(3, &client_dcid)) orelse return error.TestUnexpectedResult;
+    const challenge = (try server.pollProtectedShortDatagramWithInstalledKeys(3 * ms, &client_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
 
@@ -43924,7 +43927,7 @@ test "EndpointConnectionLifecycle path-update feed poll surfaces close only afte
     const close_next_deadline = close_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 189), close_next_deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.close_timeout, close_next_deadline.kind);
-    try client.processProtectedShortDatagramWithInstalledKeys(4, client_dcid.len, close_datagram.datagram);
+    try client.processProtectedShortDatagramWithInstalledKeys(4 * ms, client_dcid.len, close_datagram.datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
 }
 
@@ -44104,12 +44107,12 @@ test "EndpointConnectionLifecycle refreshes recovery timer when issuing connecti
     defer conn.deinit();
     try conn.confirmHandshake();
     try conn.validatePeerAddress();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(51, &conn);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -44144,7 +44147,7 @@ test "EndpointConnectionLifecycle mirrors and retires ECN validation by connecti
     defer validated.deinit();
 
     _ = try validated.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
-    try validated.receiveAckEcnInSpace(.application, 60, .{
+    try validated.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -44168,7 +44171,7 @@ test "EndpointConnectionLifecycle mirrors and retires ECN validation by connecti
     defer failed.deinit();
 
     _ = try failed.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
-    try failed.receiveAckInSpace(.application, 60, .{
+    try failed.receiveAckInSpace(.application, 60 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -44222,11 +44225,11 @@ test "EndpointConnectionLifecycle resets spin bit after route path update" {
     const first_ping = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first_ping);
     try std.testing.expect(!try protection.peekShortPacketSpinBit(first_ping));
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, first_ping);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, first_ping);
 
     const first_ack = (try server.pollProtectedShortDatagram(12, &original_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first_ack);
-    try client.processProtectedShortDatagram(13, secrets.server, original_dcid.len, first_ack);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, original_dcid.len, first_ack);
     try std.testing.expect(client.nextOutgoingSpinBit());
 
     try client.sendPing();
@@ -44237,7 +44240,7 @@ test "EndpointConnectionLifecycle resets spin bit after route path update" {
     const migrated_route = try lifecycle.routeDatagram(new_path, second_ping);
     try std.testing.expectEqual(@as(u64, 51), migrated_route.connection_id);
     try std.testing.expect(migrated_route.path_changed);
-    try server.processProtectedShortDatagram(15, secrets.client, server_dcid.len, second_ping);
+    try server.processProtectedShortDatagram(15 * ms, secrets.client, server_dcid.len, second_ping);
     try std.testing.expect(server.nextOutgoingSpinBit());
 
     const updated_route = try lifecycle.updateRoutePathAndResetSpinBit(&server_dcid, old_path, new_path, &server);
@@ -44400,11 +44403,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long r
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -44438,7 +44441,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long i
         41,
         &client,
         .initial,
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -44449,11 +44452,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long i
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -44488,7 +44491,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long c
         41,
         &client,
         .initial,
-        10,
+        10 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -44499,11 +44502,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long c
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -44511,7 +44514,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long c
             41,
             &client,
             .initial,
-            11,
+            11 * ms,
             &original_dcid,
             &client_scid,
             &[_]u8{},
@@ -44550,11 +44553,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when protected long p
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -44618,7 +44621,7 @@ test "EndpointConnectionLifecycle refreshes protected long CRYPTO space timer li
         server_connection_id,
         &server,
         .handshake,
-        10,
+        10 * ms,
         &client_scid,
         &server_scid,
         &[_]u8{},
@@ -45417,7 +45420,7 @@ test "EndpointConnectionLifecycle refreshes caller-keyed zero RTT timer lifecycl
     const early = (try client_lifecycle.pollProtectedZeroRttDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -45454,7 +45457,7 @@ test "EndpointConnectionLifecycle refreshes caller-keyed zero RTT timer lifecycl
     const ack = (try server_lifecycle.pollProtectedShortDatagram(
         server_connection_id,
         &server,
-        12,
+        12 * ms,
         &client_scid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
@@ -45480,7 +45483,7 @@ test "EndpointConnectionLifecycle refreshes caller-keyed zero RTT timer lifecycl
     const final_ack = (try client_lifecycle.pollProtectedShortDatagram(
         client_connection_id,
         &client,
-        14,
+        14 * ms,
         &server_scid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -45551,7 +45554,7 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and polls
     const early = (try client_lifecycle.pollProtectedZeroRttDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         &client_dcid,
         secrets.client,
@@ -45654,7 +45657,7 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and drain
     const early = (try client_lifecycle.pollProtectedZeroRttDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         &client_dcid,
         secrets.client,
@@ -46520,7 +46523,7 @@ test "EndpointConnectionLifecycle refreshes caller-keyed protected short timer l
     const ping = (try client_lifecycle.pollProtectedShortDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -46544,7 +46547,7 @@ test "EndpointConnectionLifecycle refreshes caller-keyed protected short timer l
     const ack = (try server_lifecycle.pollProtectedShortDatagram(
         server_connection_id,
         &server,
-        12,
+        12 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
@@ -46623,7 +46626,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and polls AC
     const ping = (try client_lifecycle.pollProtectedShortDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -46700,7 +46703,7 @@ test "EndpointConnectionLifecycle caller-keyed short receive selects deadline wi
     const ping = (try client_lifecycle.pollProtectedShortDatagram(
         16,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -46716,14 +46719,14 @@ test "EndpointConnectionLifecycle caller-keyed short receive selects deadline wi
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 26), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
     const ack = (try server_lifecycle.pollProtectedShortDatagram(
         26,
         &server,
-        12,
+        12 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
@@ -46845,7 +46848,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and drains A
     const ping = (try client_lifecycle.pollProtectedShortDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -46950,7 +46953,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
     const ping = (try client_lifecycle.pollProtectedShortDatagram(
         client_connection_id,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -46965,7 +46968,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
         ping,
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try server_lifecycle.processRoutedProtectedShortDatagramAndSelectNextDeadline(
         server_connection_id,
@@ -46986,7 +46989,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
     const ack = (try server_lifecycle.pollProtectedShortDatagram(
         server_connection_id,
         &server,
-        12,
+        12 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
@@ -47108,7 +47111,7 @@ test "EndpointConnectionLifecycle caller-keyed short OrClose drain rejects zero 
     const close_datagram = (try lifecycle.pollProtectedShortDatagram(
         26,
         &server,
-        12,
+        12 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
@@ -47169,7 +47172,7 @@ test "EndpointConnectionLifecycle routed protected OrClose queues close after au
 
         const close_packet = (try lifecycle.pollProtectedShortDatagram(connection_id, &server, 11, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
         defer std.testing.allocator.free(close_packet);
-        try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, close_packet);
+        try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, close_packet);
         switch (client.peerClose() orelse return error.TestUnexpectedResult) {
             .connection => |close| {
                 try std.testing.expectEqual(transport_error.codeValue(.frame_encoding_error), close.error_code);
@@ -47523,7 +47526,7 @@ test "EndpointConnectionLifecycle explicit key update receive selects deadline w
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 46), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
@@ -47794,7 +47797,7 @@ test "EndpointConnectionLifecycle routes explicit key update receive and selects
         ping,
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
         server_connection_id,
@@ -48241,7 +48244,7 @@ test "EndpointConnectionLifecycle caller-owned key phase receive selects deadlin
     try std.testing.expect(server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(u64, 44), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
@@ -48517,7 +48520,7 @@ test "EndpointConnectionLifecycle routes caller-owned key phase receive and sele
     ));
     try std.testing.expect(!server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
         server_connection_id,
@@ -48918,7 +48921,7 @@ test "EndpointConnectionLifecycle installed-key short receive selects deadline w
     )) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 64), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
@@ -49040,7 +49043,7 @@ test "EndpointConnectionLifecycle installed-key short receive drives application
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 65), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
@@ -49488,7 +49491,7 @@ test "EndpointConnectionLifecycle routes installed-key short receive then drives
     ));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         server_connection_id,
@@ -49624,7 +49627,7 @@ test "EndpointConnectionLifecycle routed installed-key short compatible backend 
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
     try std.testing.expectEqual(ConnectionState.active, server.connectionState());
 }
 
@@ -49746,7 +49749,7 @@ test "EndpointConnectionLifecycle installed-key short compatible backend OrClose
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), result.backend.connections_driven);
-    try std.testing.expectEqual(@as(?i64, null), server.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.closeDeadline());
     try std.testing.expect(result.next_deadline == null);
 }
 
@@ -51041,7 +51044,7 @@ test "EndpointConnectionLifecycle installed-key short backend OrClose returns cu
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), result.backend.connections_driven);
-    try std.testing.expectEqual(@as(?i64, null), server.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.closeDeadline());
     try std.testing.expect(result.next_deadline == null);
 }
 
@@ -51139,7 +51142,7 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose val
     ));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 }
 
 test "EndpointConnectionLifecycle installed-key short receive drives application backend and polls output" {
@@ -51611,7 +51614,7 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose pol
     ));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 }
 
 test "EndpointConnectionLifecycle installed-key short receive drives application backend and drains output" {
@@ -52100,7 +52103,7 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose dra
     ));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 }
 
 test "EndpointConnectionLifecycle installed-key short OrClose receive polls close output directly" {
@@ -52510,7 +52513,7 @@ test "EndpointConnectionLifecycle routes installed-key short receive and selects
         ping,
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
         server_connection_id,
@@ -52834,7 +52837,7 @@ test "EndpointConnectionLifecycle installed-key Handshake receive polls output" 
     const recv_len = (try server.recvCryptoInSpace(.handshake, &crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("installed handshake poll", crypto_buf[0..recv_len]);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.handshake));
 }
 
@@ -52869,11 +52872,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key Ha
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -52951,7 +52954,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake receive and pol
     try std.testing.expectEqual(server_connection_id, next_deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next_deadline.kind);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.handshake));
 }
 
@@ -53031,7 +53034,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake receive and dra
     try std.testing.expectEqual(server_connection_id, drained[0].connection_id);
     try std.testing.expectEqual(@as(?EndpointConnectionDeadline, null), result.next_deadline);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.handshake));
 }
 
@@ -53087,7 +53090,7 @@ test "EndpointConnectionLifecycle installed-key Handshake OrClose polls close ou
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.handshake));
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.handshake));
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, result.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, result.datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
 }
 
@@ -53187,11 +53190,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key Ha
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -53328,7 +53331,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake then drives bac
     try std.testing.expectEqual(server_connection_id, response.connection_id);
     defer std.testing.allocator.free(response.datagram);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, response.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, response.datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("routed installed response", response_crypto[0..response_len]);
@@ -53458,7 +53461,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake then drives bac
     try std.testing.expectEqual(@as(?Error, null), result.backend.drain.first_error);
     try std.testing.expectEqual(server_connection_id, drained[0].connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, drained[0].datagram);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("routed installed response", response_crypto[0..response_len]);
@@ -53577,7 +53580,7 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend OrClose
     try std.testing.expectEqual(server_connection_id, close_packet.connection_id);
     defer std.testing.allocator.free(close_packet.datagram);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, close_packet.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, close_packet.datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -53702,7 +53705,7 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend OrClose
     try std.testing.expectEqual(@as(usize, 1), result.backend.drain.datagrams_written);
     try std.testing.expectEqual(@as(?Error, null), result.backend.drain.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, drained[0].datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -53800,7 +53803,7 @@ test "EndpointConnectionLifecycle installed-key Handshake backend select queues 
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 98), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
 
     const response = (try lifecycle.pollProtectedHandshakeDatagramWithInstalledKeys(
         98,
@@ -53810,7 +53813,7 @@ test "EndpointConnectionLifecycle installed-key Handshake backend select queues 
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, response);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, response);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("select installed response", response_crypto[0..response_len]);
@@ -53908,7 +53911,7 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend select 
     );
     try std.testing.expect(!backend.sent);
     try std.testing.expectEqual(@as(usize, 0), backend.received_len);
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         server_connection_id,
@@ -53936,7 +53939,7 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend select 
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, response);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, response);
     var response_crypto: [64]u8 = undefined;
     const response_len = (try client.recvCryptoInSpace(.handshake, &response_crypto)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("routed select response", response_crypto[0..response_len]);
@@ -53958,7 +53961,7 @@ test "EndpointLossDetectionTimers drives protected short PTO and ACK disarm" {
     try client.confirmHandshake();
 
     try client.sendPing();
-    const first = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
+    const first = (try client.pollProtectedShortDatagram(10 * ms, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
 
@@ -53967,22 +53970,22 @@ test "EndpointLossDetectionTimers drives protected short PTO and ACK disarm" {
     try std.testing.expectEqual(@as(u64, 41), deadline.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.application, deadline.timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.timer.kind);
-    try std.testing.expectEqual(@as(i64, 335), deadline.timer.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 335 * ms), deadline.timer.deadline_nanos);
 
     try std.testing.expectEqual(
         @as(?EndpointLossDetectionTimerDeadline, null),
-        try timers.serviceConnection(41, &client, deadline.timer.deadline_millis - 1),
+        try timers.serviceConnection(41, &client, deadline.timer.deadline_nanos - 1),
     );
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), timers.count());
 
-    const serviced = (try timers.serviceConnection(41, &client, deadline.timer.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try timers.serviceConnection(41, &client, deadline.timer.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 41), serviced.connection_id);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.timer.kind);
     try std.testing.expectEqual(@as(usize, 1), client.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), client.recovery_state.pto_count);
 
-    const probe = (try client.pollProtectedShortDatagram(deadline.timer.deadline_millis + 1, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
+    const probe = (try client.pollProtectedShortDatagram(deadline.timer.deadline_nanos + 1, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(probe);
     try std.testing.expectEqual(@as(usize, 2), client.sentPacketCount(.application));
     try timers.armFromConnection(41, &client);
@@ -54010,7 +54013,7 @@ test "EndpointLossDetectionTimers drives protected short PTO and ACK disarm" {
     );
     defer std.testing.allocator.free(ack_packet);
 
-    try client.processProtectedShortDatagram(deadline.timer.deadline_millis + 2, secrets.server, client_dcid.len, ack_packet);
+    try client.processProtectedShortDatagram(deadline.timer.deadline_nanos + 2, secrets.server, client_dcid.len, ack_packet);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
     try timers.armFromConnection(41, &client);
@@ -54366,13 +54369,13 @@ test "EndpointConnectionLifecycle refreshes recovery timer after strict backend 
     });
     defer conn.deinit();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(52, &conn);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(lifecycle.earliestRecoveryDeadline() != null);
 
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadline());
 
     var backend = TrackingBackend{};
     var scratch: [16]u8 = undefined;
@@ -54426,12 +54429,12 @@ test "EndpointConnectionLifecycle refreshes recovery timer after compatible back
     defer conn.deinit();
     try conn.validatePeerAddress();
     try conn.confirmHandshake();
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
     try lifecycle.armRecoveryTimerFromConnection(53, &conn);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
 
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), conn.lossDetectionTimerDeadline());
 
     var backend = TrackingBackend{};
     var scratch: [16]u8 = undefined;
@@ -54588,7 +54591,7 @@ test "EndpointConnectionLifecycle drives backend and drains caller-keyed long cr
         61,
         &client,
         .handshake,
-        10,
+        10 * ms,
         &server_dcid,
         &client_dcid,
         &[_]u8{},
@@ -56096,7 +56099,7 @@ test "EndpointConnectionLifecycle processes long datagram then drives backend an
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 74), next.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.idle_timeout, next.kind);
-    try std.testing.expectEqual(server.idleTimeoutDeadlineMillis().?, next.deadline_millis);
+    try std.testing.expectEqual(server.idleTimeoutDeadline().?, next.deadline_nanos);
 
     const response = (try lifecycle.pollProtectedLongDatagram(
         74,
@@ -56212,7 +56215,7 @@ test "EndpointConnectionLifecycle routes long datagram backend select before dri
     );
     try std.testing.expect(!backend.sent);
     try std.testing.expectEqual(@as(usize, 0), backend.received_len);
-    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
     const result = try lifecycle.processRoutedProtectedLongDatagramInSpaceAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         server_connection_id,
@@ -56355,7 +56358,7 @@ test "EndpointConnectionLifecycle backend drive selects next deadline" {
     });
     defer connection.deinit();
     try connection.confirmHandshake();
-    _ = try connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try connection.recordPacketSentInSpace(.application, 10 * ms, 100);
     try std.testing.expectEqual(@as(usize, 0), lifecycle.recoveryTimerCount());
 
     var backend = NoopBackend{};
@@ -56391,7 +56394,7 @@ test "EndpointConnectionLifecycle backend drive selects next deadline" {
     });
     defer single_connection.deinit();
     try single_connection.confirmHandshake();
-    _ = try single_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try single_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     const single = try lifecycle.driveCryptoBackendInSpaceAndSelectNextDeadline(
         122,
@@ -56431,7 +56434,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive selects next d
     });
     defer connection.deinit();
     try connection.confirmHandshake();
-    _ = try connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try connection.recordPacketSentInSpace(.application, 10 * ms, 100);
 
     var backend = NoopBackend{};
     var scratch: [8]u8 = undefined;
@@ -56466,7 +56469,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive selects next d
     });
     defer single_connection.deinit();
     try single_connection.confirmHandshake();
-    _ = try single_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try single_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     const single = try lifecycle.driveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
         132,
@@ -56565,7 +56568,7 @@ test "EndpointConnectionLifecycle drives crypto backend sweep and polls installe
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expectEqual(@as(u64, 151), polled.connection_id);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, polled.datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, polled.datagram);
     var crypto_buf: [64]u8 = undefined;
     const crypto_len = (try client.recvCryptoInSpace(.handshake, &crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("backend handshake", crypto_buf[0..crypto_len]);
@@ -56686,7 +56689,7 @@ test "EndpointConnectionLifecycle processes installed-key Handshake then drives 
     try std.testing.expect(rest.datagrams_written >= 1);
     try std.testing.expectEqual(@as(?Error, null), rest.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, first_out[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, first_out[0].datagram);
     for (rest_out[0..rest.datagrams_written], 0..) |entry, index| {
         try client.processProtectedHandshakeDatagramWithInstalledKeys(14 + @as(i64, @intCast(index)), entry.datagram);
     }
@@ -56798,7 +56801,7 @@ test "EndpointConnectionLifecycle installed-key Handshake backend OrClose drains
     try std.testing.expectEqual(@as(usize, 1), result.drain.datagrams_written);
     try std.testing.expectEqual(@as(?Error, null), result.drain.first_error);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, drained[0].datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, drained[0].datagram);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -56896,7 +56899,7 @@ test "EndpointConnectionLifecycle drives close-propagating crypto backend and re
     try std.testing.expectEqual(@as(usize, 0), lifecycle.recoveryTimerCount());
     try std.testing.expectEqual(@as(?EndpointLossDetectionTimerDeadline, null), lifecycle.earliestRecoveryDeadline());
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -57200,7 +57203,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
     defer connection.deinit();
     try connection.validatePeerAddress();
     try connection.confirmHandshake();
-    _ = try connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try connection.recordPacketSentInSpace(.application, 10 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -57243,7 +57246,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
     defer close_connection.deinit();
     try close_connection.validatePeerAddress();
     try close_connection.confirmHandshake();
-    _ = try close_connection.recordPacketSentInSpace(.application, 20, 100);
+    _ = try close_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var close_backend = Backend{ .peer_transport_parameters = peer_params };
     const close_result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
@@ -57476,7 +57479,7 @@ test "EndpointConnectionLifecycle drives compatible-version crypto backends acro
     defer connection.deinit();
     try connection.validatePeerAddress();
     try connection.confirmHandshake();
-    _ = try connection.recordPacketSentInSpace(.application, 10, 100);
+    _ = try connection.recordPacketSentInSpace(.application, 10 * ms, 100);
 
     var backend = Backend{ .peer_transport_parameters = peer_params };
     var scratch: [256]u8 = undefined;
@@ -57634,7 +57637,7 @@ test "EndpointConnectionLifecycle drives compatible-version close path and refre
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(11, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -58004,7 +58007,7 @@ test "EndpointConnectionLifecycle refreshes installed-key Handshake OrClose erro
     defer std.testing.allocator.free(handshake_datagram);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(lifecycle.earliestRecoveryDeadline() != null);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(10, handshake_datagram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(10 * ms, handshake_datagram);
 
     var invalid_payload: [1200]u8 = undefined;
     @memset(&invalid_payload, 0);
@@ -58043,7 +58046,7 @@ test "EndpointConnectionLifecycle refreshes installed-key Handshake OrClose erro
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(13, close_packet);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(13 * ms, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -58081,14 +58084,14 @@ test "EndpointConnectionLifecycle refreshes protected short OrClose error state"
     const server_ping = (try lifecycle.pollProtectedShortDatagram(
         56,
         &server,
-        10,
+        10 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ping);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(lifecycle.earliestRecoveryDeadline() != null);
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, server_ping);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, server_ping);
 
     const unknown_frame = [_]u8{ 0x1f, 0, 0, 0 };
     const invalid_short = try protection.protectShortPacketAes128(std.testing.allocator, .{
@@ -58104,7 +58107,7 @@ test "EndpointConnectionLifecycle refreshes protected short OrClose error state"
         lifecycle.processProtectedShortDatagramOrClose(
             56,
             &server,
-            12,
+            12 * ms,
             secrets.client,
             server_dcid.len,
             invalid_short,
@@ -58118,13 +58121,13 @@ test "EndpointConnectionLifecycle refreshes protected short OrClose error state"
     const close_packet = (try lifecycle.pollProtectedShortDatagram(
         56,
         &server,
-        13,
+        13 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
 
-    try client.processProtectedShortDatagram(14, secrets.server, client_dcid.len, close_packet);
+    try client.processProtectedShortDatagram(14 * ms, secrets.server, client_dcid.len, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -58176,7 +58179,7 @@ test "EndpointConnectionLifecycle refreshes installed-key protected short OrClos
     defer std.testing.allocator.free(server_ping);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(lifecycle.earliestRecoveryDeadline() != null);
-    try client.processProtectedShortDatagramWithInstalledKeys(11, client_dcid.len, server_ping);
+    try client.processProtectedShortDatagramWithInstalledKeys(11 * ms, client_dcid.len, server_ping);
 
     const client_keys = protection.deriveAes128PacketProtectionKeys(secrets.client.secret);
     const unknown_frame = [_]u8{ 0x1f, 0, 0, 0 };
@@ -58211,7 +58214,7 @@ test "EndpointConnectionLifecycle refreshes installed-key protected short OrClos
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
 
-    try client.processProtectedShortDatagramWithInstalledKeys(14, client_dcid.len, close_packet);
+    try client.processProtectedShortDatagramWithInstalledKeys(14 * ms, client_dcid.len, close_packet);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
@@ -58237,8 +58240,8 @@ test "EndpointConnectionLifecycle services and polls protected long Handshake PT
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 10, 100);
-    try client.receiveAckInSpace(.initial, 70, .{
+    _ = try client.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    try client.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -58257,7 +58260,7 @@ test "EndpointConnectionLifecycle services and polls protected long Handshake PT
     const early = try lifecycle.serviceRecoveryTimerAndPollProtectedLongDatagram(
         41,
         &client,
-        deadline.timer.deadline_millis - 1,
+        deadline.timer.deadline_nanos - 1,
         &server_dcid,
         &client_dcid,
         &[_]u8{},
@@ -58271,7 +58274,7 @@ test "EndpointConnectionLifecycle services and polls protected long Handshake PT
     const due = try lifecycle.serviceRecoveryTimerAndPollProtectedLongDatagram(
         41,
         &client,
-        deadline.timer.deadline_millis,
+        deadline.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
         &[_]u8{},
@@ -58329,8 +58332,8 @@ test "EndpointConnectionLifecycle services and polls installed-key protected Han
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 10, 100);
-    try client.receiveAckInSpace(.initial, 70, .{
+    _ = try client.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    try client.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -58349,7 +58352,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected Han
     const early = try lifecycle.serviceRecoveryTimerAndPollProtectedHandshakeDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis - 1,
+        deadline.timer.deadline_nanos - 1,
         &server_dcid,
         &client_dcid,
     );
@@ -58361,7 +58364,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected Han
     const due = try lifecycle.serviceRecoveryTimerAndPollProtectedHandshakeDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis,
+        deadline.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
     );
@@ -58453,7 +58456,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected zer
     const early = try lifecycle.serviceRecoveryTimerAndPollProtectedZeroRttDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis - 1,
+        deadline.timer.deadline_nanos - 1,
         &server_dcid,
         &client_dcid,
     );
@@ -58466,7 +58469,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected zer
     const due = try lifecycle.serviceRecoveryTimerAndPollProtectedZeroRttDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis,
+        deadline.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
     );
@@ -58522,11 +58525,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key ze
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58574,11 +58577,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key ze
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58613,7 +58616,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
     const first = (try lifecycle.pollProtectedZeroRttDatagram(
         41,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         &original_dcid,
         secrets.client,
@@ -58623,18 +58626,18 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
         lifecycle.processProtectedZeroRttDatagram(
             41,
             &client,
-            11,
+            11 * ms,
             secrets.server,
             &[_]u8{},
         ),
@@ -58662,7 +58665,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
     const first = (try lifecycle.pollProtectedZeroRttDatagram(
         41,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         &original_dcid,
         secrets.client,
@@ -58672,18 +58675,18 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed zer
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
         lifecycle.pollProtectedZeroRttDatagram(
             41,
             &client,
-            11,
+            11 * ms,
             &server_dcid,
             &original_dcid,
             secrets.client,
@@ -58722,11 +58725,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when explicit key pha
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58773,11 +58776,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-owned key
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58822,11 +58825,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when explicit key upd
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58877,11 +58880,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-owned key
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -58917,7 +58920,7 @@ test "EndpointConnectionLifecycle services and polls protected short PTO probe" 
     const first = (try lifecycle.pollProtectedShortDatagram(
         41,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -58933,7 +58936,7 @@ test "EndpointConnectionLifecycle services and polls protected short PTO probe" 
     const early = try lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         41,
         &client,
-        deadline.timer.deadline_millis - 1,
+        deadline.timer.deadline_nanos - 1,
         &server_dcid,
         secrets.client,
     );
@@ -58945,7 +58948,7 @@ test "EndpointConnectionLifecycle services and polls protected short PTO probe" 
     const due = try lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         41,
         &client,
-        deadline.timer.deadline_millis,
+        deadline.timer.deadline_nanos,
         &server_dcid,
         secrets.client,
     );
@@ -59000,7 +59003,7 @@ test "EndpointConnectionLifecycle services and polls protected short PTO probe" 
     try lifecycle.processProtectedShortDatagram(
         41,
         &client,
-        deadline.timer.deadline_millis + 1,
+        deadline.timer.deadline_nanos + 1,
         secrets.server,
         client_dcid.len,
         ack_packet,
@@ -59030,7 +59033,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
     const first = (try lifecycle.pollProtectedShortDatagram(
         41,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -59039,11 +59042,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -59078,7 +59081,7 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
     const first = (try lifecycle.pollProtectedShortDatagram(
         41,
         &client,
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -59087,18 +59090,18 @@ test "EndpointConnectionLifecycle refreshes recovery timer when caller-keyed sho
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
         lifecycle.pollProtectedShortDatagram(
             41,
             &client,
-            11,
+            11 * ms,
             &server_dcid,
             secrets.client,
         ),
@@ -59145,7 +59148,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected sho
     const early = try lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis - 1,
+        deadline.timer.deadline_nanos - 1,
         &server_dcid,
     );
     try std.testing.expectEqual(@as(?EndpointLossDetectionTimerDeadline, null), early.serviced);
@@ -59156,7 +59159,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected sho
     const due = try lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis,
+        deadline.timer.deadline_nanos,
         &server_dcid,
     );
     const serviced = due.serviced orelse return error.TestUnexpectedResult;
@@ -59210,7 +59213,7 @@ test "EndpointConnectionLifecycle services and polls installed-key protected sho
     try lifecycle.processProtectedShortDatagramWithInstalledKeys(
         41,
         &client,
-        deadline.timer.deadline_millis + 1,
+        deadline.timer.deadline_nanos + 1,
         client_dcid.len,
         ack_packet,
     );
@@ -59251,11 +59254,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key sh
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -59301,11 +59304,11 @@ test "EndpointConnectionLifecycle refreshes recovery timer when installed-key sh
 
     try client.closeConnection(0, @intFromEnum(frame.FrameType.crypto), "done");
     var close_buf: [64]u8 = undefined;
-    _ = (try client.pollTx(11, &close_buf)) orelse return error.TestUnexpectedResult;
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    _ = (try client.pollTx(11 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(ConnectionState.closed, client.connectionState());
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     try std.testing.expectError(
         error.ConnectionClosed,
@@ -59334,17 +59337,17 @@ test "protected short PTO probe bypasses congestion window once" {
     try client.sendPing();
     const first = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
-    const deadline = client.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const deadline = client.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     client.recovery_state.congestion_window = client.bytesInFlight(.application);
 
-    const serviced = (try client.serviceLossDetectionTimer(deadline.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceLossDetectionTimer(deadline.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, serviced.space);
     try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
     try std.testing.expectEqual(@as(usize, 1), client.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), client.pto_probe_count);
     try std.testing.expect(!client.recovery_state.canSend(first.len));
 
-    const probe = (try client.pollProtectedShortDatagram(deadline.deadline_millis + 1, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
+    const probe = (try client.pollProtectedShortDatagram(deadline.deadline_nanos + 1, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(probe);
     try std.testing.expectEqual(@as(usize, 2), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
@@ -59365,16 +59368,16 @@ test "EndpointLossDetectionTimers services protected short loss-time retransmiss
     defer client.deinit();
 
     try client.sendCrypto("endpoint timer protected crypto");
-    const first = (try client.pollProtectedShortDatagram(300, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
+    const first = (try client.pollProtectedShortDatagram(300 * ms, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
 
     try client.sendPing();
-    const second = (try client.pollProtectedShortDatagram(500, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
+    const second = (try client.pollProtectedShortDatagram(500 * ms, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second);
     try std.testing.expectEqual(@as(usize, 2), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
 
-    try client.receiveAckInSpace(.application, 600, .{
+    try client.receiveAckInSpace(.application, 600 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59385,9 +59388,9 @@ test "EndpointLossDetectionTimers services protected short loss-time retransmiss
     try std.testing.expectEqual(@as(u64, 42), deadline.connection_id);
     try std.testing.expectEqual(PacketNumberSpace.application, deadline.timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, deadline.timer.kind);
-    try std.testing.expectEqual(@as(i64, 675), deadline.timer.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 674 * ms + 625 * us), deadline.timer.deadline_nanos);
 
-    const serviced = (try timers.serviceConnection(42, &client, deadline.timer.deadline_millis)) orelse return error.TestUnexpectedResult;
+    const serviced = (try timers.serviceConnection(42, &client, deadline.timer.deadline_nanos)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 42), serviced.connection_id);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, serviced.timer.kind);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
@@ -59407,7 +59410,7 @@ test "loss detection timer expires protected short CRYPTO retransmission" {
 
     try client.sendCrypto("loss-timer protected crypto");
     const first = (try client.pollProtectedShortDatagram(
-        300,
+        300 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -59415,7 +59418,7 @@ test "loss detection timer expires protected short CRYPTO retransmission" {
 
     try client.sendPing();
     const second = (try client.pollProtectedShortDatagram(
-        500,
+        500 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -59423,32 +59426,32 @@ test "loss detection timer expires protected short CRYPTO retransmission" {
     try std.testing.expectEqual(@as(usize, 2), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
 
-    try client.receiveAckInSpace(.application, 600, .{
+    try client.receiveAckInSpace(.application, 600 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    const timer = client.lossDetectionTimerDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const timer = client.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(PacketNumberSpace.application, timer.space);
     try std.testing.expectEqual(LossDetectionTimerKind.loss_time, timer.kind);
-    try std.testing.expectEqual(@as(i64, 675), timer.deadline_millis);
+    try std.testing.expectEqual(@as(i64, 674 * ms + 625 * us), timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
 
-    try client.checkLossDetectionTimeouts(timer.deadline_millis - 1);
+    try client.checkLossDetectionTimeouts(timer.deadline_nanos - 1);
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
 
-    try client.checkLossDetectionTimeouts(timer.deadline_millis);
+    try client.checkLossDetectionTimeouts(timer.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 1), client.crypto_send_queue.items.len);
     try std.testing.expectEqual(@as(u64, 0), client.crypto_send_queue.items[0].offset);
     try std.testing.expectEqualStrings("loss-timer protected crypto", client.crypto_send_queue.items[0].data);
-    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadlineMillis());
+    try std.testing.expectEqual(@as(?LossDetectionTimerDeadline, null), client.lossDetectionTimerDeadline());
 
     const retransmit = (try client.pollProtectedShortDatagram(
-        timer.deadline_millis + 1,
+        timer.deadline_nanos + 1,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -59483,19 +59486,19 @@ test "ACK-driven losses establish persistent congestion after prior RTT sample" 
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 100, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 1300, .{
+    try conn.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 4,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59513,23 +59516,23 @@ test "ACK-driven non-contiguous losses do not establish persistent congestion" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 100, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1300, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1300 * ms, 100);
 
     const ack_ranges = [_]frame.AckRange{
         .{ .gap = 0, .ack_range = 0 },
     };
-    try conn.receiveAckInSpace(.application, 1400, .{
+    try conn.receiveAckInSpace(.application, 1400 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59549,8 +59552,8 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 100, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59558,13 +59561,13 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
     conn.recovery_state.onPtoExpired();
     conn.recovery_state.onPtoExpired();
     try std.testing.expectEqual(@as(u8, 2), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDurationNs());
+    try std.testing.expectEqual(@as(u64, 975_000_000), conn.recovery_state.persistentCongestionDuration());
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
-    try conn.receiveAckInSpace(.application, 1300, .{
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
+    try conn.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 4,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59583,8 +59586,8 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 50, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 50 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59593,12 +59596,12 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
     try std.testing.expectEqual(@as(?u64, 50_000_000), conn.initial_packet_space.recovery_state.min_rtt_ns);
     try std.testing.expectEqual(@as(?u64, 50_000_000), conn.handshake_packet_space.recovery_state.min_rtt_ns);
 
-    _ = try conn.recordPacketSentInSpace(.application, 100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 1700, .{
+    try conn.receiveAckInSpace(.application, 1700 * ms, .{
         .largest_acknowledged = 4,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59620,12 +59623,12 @@ test "ACK-driven losses do not establish persistent congestion before first RTT 
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
 
-    try conn.receiveAckInSpace(.application, 1300, .{
+    try conn.receiveAckInSpace(.application, 1300 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59649,7 +59652,7 @@ test "ACK losses respect NewReno congestion recovery period" {
         _ = try conn.recordPacketSentInSpace(.application, @as(i64, @intCast(packet_number + 1)) * 10, 100);
     }
 
-    try conn.receiveAckInSpace(.application, 100, .{
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59657,7 +59660,7 @@ test "ACK losses respect NewReno congestion recovery period" {
     const recovery_window = conn.congestionWindow(.application);
     try std.testing.expect(recovery_window < initial_window);
 
-    try conn.receiveAckInSpace(.application, 120, .{
+    try conn.receiveAckInSpace(.application, 120 * ms, .{
         .largest_acknowledged = 7,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59678,7 +59681,7 @@ test "ACK-driven NewReno loss keeps ssthresh below minimum cwnd clamp" {
         _ = try conn.recordPacketSentInSpace(.application, @as(i64, @intCast(packet_number + 1)) * 10, 100);
     }
 
-    try conn.receiveAckInSpace(.application, 100, .{
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59704,7 +59707,7 @@ test "ACK growth follows NewReno slow start then congestion avoidance" {
         _ = try conn.recordPacketSentInSpace(.application, @as(i64, @intCast(sent_packet)), 1200);
     }
     try std.testing.expectEqual(initial_window, conn.bytesInFlight(.application));
-    try conn.receiveAckInSpace(.application, 100, .{
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59716,10 +59719,10 @@ test "ACK growth follows NewReno slow start then congestion avoidance" {
 
     conn.recovery_state.ssthresh = slow_start_window;
     while (conn.bytesInFlight(.application) < conn.congestionWindow(.application)) {
-        _ = try conn.recordPacketSentInSpace(.application, 120, 1200);
+        _ = try conn.recordPacketSentInSpace(.application, 120 * ms, 1200);
     }
     const avoidance_before = conn.congestionWindow(.application);
-    try conn.receiveAckInSpace(.application, 220, .{
+    try conn.receiveAckInSpace(.application, 220 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59728,9 +59731,9 @@ test "ACK growth follows NewReno slow start then congestion avoidance" {
     try std.testing.expectEqual(@as(usize, 1200), conn.recovery_state.congestion_avoidance_bytes_acked);
     try std.testing.expectEqual(avoidance_before - 1200, conn.bytesInFlight(.application));
 
-    _ = try conn.recordPacketSentInSpace(.application, 230, 1200);
+    _ = try conn.recordPacketSentInSpace(.application, 230 * ms, 1200);
     try std.testing.expectEqual(avoidance_before, conn.bytesInFlight(.application));
-    try conn.receiveAckInSpace(.application, 240, .{
+    try conn.receiveAckInSpace(.application, 240 * ms, .{
         .largest_acknowledged = 11,
         .ack_delay = 0,
         .first_ack_range = 9,
@@ -59757,7 +59760,7 @@ test "batched ACK growth consumes multiple NewReno congestion avoidance credits"
 
     conn.recovery_state.congestion_window = 12_000;
     conn.recovery_state.ssthresh = 12_000;
-    try conn.receiveAckInSpace(.application, 100, .{
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 20,
         .ack_delay = 0,
         .first_ack_range = 20,
@@ -59777,8 +59780,8 @@ test "ACK growth is suppressed when congestion window was underutilized" {
 
     const initial_window = conn.congestionWindow(.application);
     conn.recovery_state.onPtoExpired();
-    _ = try conn.recordPacketSentInSpace(.application, 0, 1200);
-    try conn.receiveAckInSpace(.application, 100, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 1200);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -59786,7 +59789,7 @@ test "ACK growth is suppressed when congestion window was underutilized" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 100), conn.smoothedRtt(.application));
     try std.testing.expectEqual(initial_window, conn.congestionWindow(.application));
 }
 
@@ -59795,10 +59798,10 @@ test "processDatagram rolls back packet-threshold losses when later frame is inv
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 11, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 12, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 13, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 11 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 12 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 13 * ms, 100);
 
     var payload_buf: [32]u8 = undefined;
     var payload = buffer.fixedWriter(&payload_buf);
@@ -59809,11 +59812,11 @@ test "processDatagram rolls back packet-threshold losses when later frame is inv
     } });
     try payload.writer().writeByte(@intFromEnum(frame.FrameType.handshake_done));
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(70, payload.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(70 * ms, payload.getWritten()));
     try std.testing.expectEqual(@as(usize, 4), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 400), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadline(.application));
 }
 
 test "processDatagram rolls back time-threshold losses when later frame is invalid" {
@@ -59821,8 +59824,8 @@ test "processDatagram rolls back time-threshold losses when later frame is inval
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 500, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 500 * ms, 100);
 
     var payload_buf: [32]u8 = undefined;
     var payload = buffer.fixedWriter(&payload_buf);
@@ -59833,11 +59836,11 @@ test "processDatagram rolls back time-threshold losses when later frame is inval
     } });
     try payload.writer().writeByte(@intFromEnum(frame.FrameType.handshake_done));
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(900, payload.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(900 * ms, payload.getWritten()));
     try std.testing.expectEqual(@as(usize, 2), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadline(.application));
 }
 
 test "processDatagram rolls back persistent congestion when later frame is invalid" {
@@ -59848,17 +59851,17 @@ test "processDatagram rolls back persistent congestion when later frame is inval
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.application, 0, 100);
-    try conn.receiveAckInSpace(.application, 100, .{
+    _ = try conn.recordPacketSentInSpace(.application, 0 * ms, 100);
+    try conn.receiveAckInSpace(.application, 100 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1100, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 1200, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1000 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1100 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 1200 * ms, 100);
     const congestion_window_before = conn.congestionWindow(.application);
 
     var payload_buf: [32]u8 = undefined;
@@ -59870,7 +59873,7 @@ test "processDatagram rolls back persistent congestion when later frame is inval
     } });
     try payload.writer().writeByte(@intFromEnum(frame.FrameType.handshake_done));
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1300, payload.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1300 * ms, payload.getWritten()));
     try std.testing.expectEqual(@as(usize, 4), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 400), conn.bytesInFlight(.application));
     try std.testing.expectEqual(congestion_window_before, conn.congestionWindow(.application));
@@ -59883,19 +59886,19 @@ test "checkPtoTimeouts queues application PING and backs off PTO" {
     defer conn.deinit();
     try conn.confirmHandshake();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    try std.testing.expectEqual(@as(?i64, 335), conn.ptoDeadlineMillis(.application));
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
+    try std.testing.expectEqual(@as(?i64, 335 * ms), conn.ptoDeadline(.application));
 
-    try conn.checkPtoTimeouts(334);
+    try conn.checkPtoTimeouts(334 * ms);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
 
-    try conn.checkPtoTimeouts(335);
+    try conn.checkPtoTimeouts(335 * ms);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
 
     var out_buf: [32]u8 = undefined;
-    const payload = (try conn.pollTx(336, &out_buf)).?;
+    const payload = (try conn.pollTx(336 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -59903,15 +59906,15 @@ test "checkPtoTimeouts queues application PING and backs off PTO" {
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
-    try std.testing.expectEqual(@as(?i64, 986), conn.ptoDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, 986 * ms), conn.ptoDeadline(.application));
 
-    try conn.receiveAckInSpace(.application, 400, .{
+    try conn.receiveAckInSpace(.application, 400 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 1,
     });
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadline(.application));
 }
 
 test "checkPtoTimeouts uses queued STREAM data as application probe before PING" {
@@ -59925,11 +59928,11 @@ test "checkPtoTimeouts uses queued STREAM data as application probe before PING"
     try conn.sendOnStream(stream_id, "old", false);
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
 
     try conn.sendOnStream(stream_id, "new", false);
-    const deadline = conn.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const deadline = conn.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try conn.checkPtoTimeouts(deadline);
 
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
@@ -59961,11 +59964,11 @@ test "checkPtoTimeouts retransmits in-flight STREAM data before PING" {
     try conn.sendOnStream(stream_id, "old", false);
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 
-    const deadline = conn.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const deadline = conn.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try conn.checkPtoTimeouts(deadline);
 
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
@@ -60001,7 +60004,7 @@ test "checkPtoTimeouts retransmits protected Initial CRYPTO data before PING" {
 
     try client.sendCryptoInSpace(.initial, "pto protected initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60011,7 +60014,7 @@ test "checkPtoTimeouts retransmits protected Initial CRYPTO data before PING" {
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.initial));
     try std.testing.expectEqual(@as(usize, 0), client.initial_packet_space.crypto_send_queue.items.len);
 
-    const deadline = client.ptoDeadlineMillis(.initial) orelse return error.TestUnexpectedResult;
+    const deadline = client.ptoDeadline(.initial) orelse return error.TestUnexpectedResult;
     try client.checkPtoTimeouts(deadline);
     try std.testing.expectEqual(@as(usize, 0), client.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), client.initial_packet_space.recovery_state.pto_count);
@@ -60065,7 +60068,7 @@ test "checkPtoTimeouts retransmits protected short CRYPTO data before PING" {
 
     try client.sendCrypto("pto protected crypto");
     const protected = (try client.pollProtectedShortDatagram(
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -60073,7 +60076,7 @@ test "checkPtoTimeouts retransmits protected short CRYPTO data before PING" {
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
 
-    const deadline = client.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const deadline = client.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try client.checkPtoTimeouts(deadline);
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), client.recovery_state.pto_count);
@@ -60111,30 +60114,30 @@ test "checkPtoTimeouts backs off PTO across packet number spaces" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 100);
-    _ = try conn.recordPacketSentInSpace(.application, 30, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 30 * ms, 100);
 
-    try std.testing.expectEqual(@as(?i64, 310), conn.ptoDeadlineMillis(.initial));
-    try std.testing.expectEqual(@as(?i64, 320), conn.ptoDeadlineMillis(.handshake));
-    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadlineMillis(.application));
+    try std.testing.expectEqual(@as(?i64, 310 * ms), conn.ptoDeadline(.initial));
+    try std.testing.expectEqual(@as(?i64, 320 * ms), conn.ptoDeadline(.handshake));
+    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadline(.application));
 
-    try conn.checkPtoTimeouts(309);
+    try conn.checkPtoTimeouts(309 * ms);
     try std.testing.expectEqual(@as(usize, 0), conn.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 0), conn.handshake_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
 
-    try conn.checkPtoTimeouts(310);
+    try conn.checkPtoTimeouts(310 * ms);
     try std.testing.expectEqual(@as(usize, 1), conn.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), conn.handshake_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), conn.initial_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.handshake_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?i64, 610), conn.ptoDeadlineMillis(.initial));
-    try std.testing.expectEqual(@as(?i64, 620), conn.ptoDeadlineMillis(.handshake));
+    try std.testing.expectEqual(@as(?i64, 610 * ms), conn.ptoDeadline(.initial));
+    try std.testing.expectEqual(@as(?i64, 620 * ms), conn.ptoDeadline(.handshake));
 
-    try conn.checkPtoTimeouts(320);
+    try conn.checkPtoTimeouts(320 * ms);
     try std.testing.expectEqual(@as(usize, 1), conn.initial_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 1), conn.handshake_packet_space.pending_ping_count);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
@@ -60169,15 +60172,15 @@ test "ACK resets connection-level PTO backoff across packet number spaces" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 100);
 
-    try conn.checkPtoTimeouts(310);
+    try conn.checkPtoTimeouts(310 * ms);
     try std.testing.expectEqual(@as(u8, 1), conn.initial_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.handshake_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
 
-    try conn.receiveAckInSpace(.handshake, 70, .{
+    try conn.receiveAckInSpace(.handshake, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -60194,12 +60197,12 @@ test "client Initial ACK preserves connection-level PTO backoff" {
     });
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
     conn.initial_packet_space.recovery_state.pto_count = 2;
     conn.handshake_packet_space.recovery_state.pto_count = 2;
     conn.recovery_state.pto_count = 2;
 
-    try conn.receiveAckInSpace(.initial, 70, .{
+    try conn.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -60215,11 +60218,11 @@ test "client Initial ACK preserves connection-level PTO backoff" {
     });
     defer handshake_conn.deinit();
 
-    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 20, 100);
+    _ = try handshake_conn.recordPacketSentInSpace(.handshake, 20 * ms, 100);
     handshake_conn.handshake_packet_space.recovery_state.pto_count = 2;
     handshake_conn.recovery_state.pto_count = 2;
 
-    try handshake_conn.receiveAckInSpace(.handshake, 90, .{
+    try handshake_conn.receiveAckInSpace(.handshake, 90 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -60236,10 +60239,10 @@ test "invalid payload rolls back connection-level PTO backoff reset" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 10, 100);
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 10 * ms, 100);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 100);
 
-    try conn.checkPtoTimeouts(310);
+    try conn.checkPtoTimeouts(310 * ms);
     try std.testing.expectEqual(@as(u8, 1), conn.initial_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.handshake_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 1), conn.recovery_state.pto_count);
@@ -60264,7 +60267,7 @@ test "checkPtoTimeouts is no-op when no application packet is in flight" {
     var conn = try Connection.init(std.testing.allocator, .client, .{});
     defer conn.deinit();
 
-    try conn.checkPtoTimeouts(10_000);
+    try conn.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
 }
@@ -60273,8 +60276,8 @@ test "packet number spaces isolate ACK recovery state" {
     var conn = try Connection.init(std.testing.allocator, .client, .{});
     defer conn.deinit();
 
-    try std.testing.expectEqual(@as(u64, 0), try conn.recordPacketSentInSpace(.initial, 10, 100));
-    try std.testing.expectEqual(@as(u64, 0), try conn.recordPacketSentInSpace(.application, 20, 200));
+    try std.testing.expectEqual(@as(u64, 0), try conn.recordPacketSentInSpace(.initial, 10 * ms, 100));
+    try std.testing.expectEqual(@as(u64, 0), try conn.recordPacketSentInSpace(.application, 20 * ms, 200));
 
     try std.testing.expectEqual(@as(u64, 1), conn.nextPacketNumber(.initial));
     try std.testing.expectEqual(@as(u64, 0), conn.nextPacketNumber(.handshake));
@@ -60306,11 +60309,11 @@ test "discardPacketNumberSpace clears Initial recovery and prevents reuse" {
         .enable_rtt_update = false,});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 300, 100);
+    _ = try conn.recordPacketSentInSpace(.initial, 300 * ms, 100);
     _ = try conn.recordEcnPacketSentInSpace(.initial, 500, 100, .ect0);
-    _ = try conn.recordPacketSentInSpace(.application, 10, 200);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 200);
     try conn.sendCryptoInSpace(.initial, "queued crypto");
-    try conn.receiveAckEcnInSpace(.initial, 600, .{
+    try conn.receiveAckEcnInSpace(.initial, 600 * ms, .{
         .ack = .{
             .largest_acknowledged = 1,
             .ack_delay = 0,
@@ -60338,7 +60341,7 @@ test "discardPacketNumberSpace clears Initial recovery and prevents reuse" {
     try std.testing.expectEqual(@as(u64, 13), conn.initial_packet_space.crypto_send_offset);
     try std.testing.expectEqual(@as(usize, 1), conn.initial_packet_space.crypto_send_queue.items.len);
     try std.testing.expectEqual(@as(usize, 2), conn.initial_packet_space.crypto_recv_buffer.items.len);
-    try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.initial));
+    try std.testing.expect(conn.lossDetectionDeadline(.initial).? > 600 * ms);
     try std.testing.expectEqual(@as(?u64, 1), conn.pendingAckLargest(.initial));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.initial));
     try std.testing.expectEqual(EcnValidationState.capable, conn.ecnValidationState(.initial));
@@ -60348,8 +60351,8 @@ test "discardPacketNumberSpace clears Initial recovery and prevents reuse" {
     try std.testing.expect(conn.packetNumberSpaceDiscarded(.initial));
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.initial));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.initial));
-    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadlineMillis(.initial));
-    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadlineMillis(.initial));
+    try std.testing.expectEqual(@as(?i64, null), conn.lossDetectionDeadline(.initial));
+    try std.testing.expectEqual(@as(?i64, null), conn.ptoDeadline(.initial));
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.initial));
     try std.testing.expectEqual(@as(u8, 0), conn.initial_packet_space.recovery_state.pto_count);
     try std.testing.expectEqual(@as(u8, 0), conn.handshake_packet_space.recovery_state.pto_count);
@@ -60363,7 +60366,7 @@ test "discardPacketNumberSpace clears Initial recovery and prevents reuse" {
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
 
     try conn.discardPacketNumberSpace(.initial);
-    try std.testing.expectError(error.InvalidPacket, conn.recordPacketSentInSpace(.initial, 700, 100));
+    try std.testing.expectError(error.InvalidPacket, conn.recordPacketSentInSpace(.initial, 700 * ms, 100));
     try std.testing.expectError(error.InvalidPacket, conn.sendCryptoInSpace(.initial, "x"));
     try std.testing.expectError(error.InvalidPacket, conn.queueAckForReceivedPacketInSpace(.initial));
     const ping = [_]u8{@intFromEnum(frame.FrameType.ping)};
@@ -60375,7 +60378,7 @@ test "client Handshake send discards Initial space after successful packet commi
     var client = try Connection.init(std.testing.allocator, .client, .{});
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 100);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 100);
     try client.sendCryptoInSpace(.initial, "queued initial");
     try client.sendCryptoInSpace(.handshake, "client handshake");
 
@@ -60428,7 +60431,7 @@ test "protected Handshake packet commits discard Initial at the RFC 9001 boundar
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 100);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 100);
     try client.sendCryptoInSpace(.initial, "queued initial");
     try client.sendCryptoInSpace(.handshake, "client handshake");
     const protected = (try client.pollProtectedLongCryptoDatagramInSpace(
@@ -60478,11 +60481,11 @@ test "discardPacketNumberSpace clears installed Handshake protection keys" {
     try std.testing.expect(!conn.hasHandshakeProtectionKeys());
     try std.testing.expectError(
         error.InvalidPacket,
-        conn.pollProtectedHandshakeDatagramWithInstalledKeys(0, &dcid, &scid),
+        conn.pollProtectedHandshakeDatagramWithInstalledKeys(0 * ms, &dcid, &scid),
     );
     try std.testing.expectError(
         error.InvalidPacket,
-        conn.processProtectedHandshakeDatagramWithInstalledKeys(0, &[_]u8{}),
+        conn.processProtectedHandshakeDatagramWithInstalledKeys(0 * ms, &[_]u8{}),
     );
 }
 
@@ -60498,7 +60501,7 @@ test "processInitialProtectedDatagram opens Initial packet into Initial space" {
 
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60529,7 +60532,7 @@ test "processInitialProtectedDatagram rejects tampered packet without state chan
 
     try client.sendCryptoInSpace(.initial, "plaintext");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60560,7 +60563,7 @@ test "pollInitialProtectedDatagram emits protected Initial CRYPTO packet" {
 
     try client.sendCryptoInSpace(.initial, "client initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60598,7 +60601,7 @@ test "ACK-driven loss requeues protected Initial CRYPTO frame for retransmission
 
     try client.sendCryptoInSpace(.initial, "lost protected initial");
     const protected = (try client.pollInitialProtectedDatagram(
-        10,
+        10 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60609,10 +60612,10 @@ test "ACK-driven loss requeues protected Initial CRYPTO frame for retransmission
     try std.testing.expectEqual(@as(usize, 0), client.initial_packet_space.crypto_send_queue.items.len);
     try std.testing.expect(client.initial_packet_space.sent_packets.items[0].crypto_frame != null);
 
-    _ = try client.recordPacketSentInSpace(.initial, 20, 1);
-    _ = try client.recordPacketSentInSpace(.initial, 30, 1);
-    _ = try client.recordPacketSentInSpace(.initial, 40, 1);
-    try client.receiveAckInSpace(.initial, 70, .{
+    _ = try client.recordPacketSentInSpace(.initial, 20 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.initial, 30 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.initial, 40 * ms, 1);
+    try client.receiveAckInSpace(.initial, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -60624,7 +60627,7 @@ test "ACK-driven loss requeues protected Initial CRYPTO frame for retransmission
     try std.testing.expectEqualStrings("lost protected initial", client.initial_packet_space.crypto_send_queue.items[0].data);
 
     const retransmit = (try client.pollInitialProtectedDatagram(
-        80,
+        80 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -60684,7 +60687,7 @@ test "Initial datagram size follows RFC 9000 minimum rules" {
     defer client.deinit();
     try client.sendCryptoInSpace(.initial, "client initial");
     const padded_client_initial = (try client.pollInitialProtectedDatagram(
-        1,
+        1 * ms,
         &dcid,
         &client_scid,
         &[_]u8{},
@@ -60701,7 +60704,7 @@ test "Initial datagram size follows RFC 9000 minimum rules" {
 
     try server.sendCryptoInSpace(.initial, "server initial");
     const padded_server_initial = (try server.pollInitialProtectedDatagram(
-        3,
+        3 * ms,
         &client_scid,
         &server_scid,
         &[_]u8{},
@@ -60739,7 +60742,7 @@ test "configured QUIC v2 protected Initial uses v2 version and packet type bits"
     try client.sendCryptoInSpace(.initial, "v2 client initial");
 
     const datagram = (try client.pollInitialProtectedDatagram(
-        1,
+        1 * ms,
         &original_dcid,
         &client_scid,
         &[_]u8{},
@@ -60810,7 +60813,7 @@ test "configured QUIC v2 Retry datagram uses v2 integrity and client processing"
     const retry_secrets = try protection.deriveInitialSecrets(.v2, &retry_scid);
     try client.sendCryptoInSpace(.initial, "v2 client after retry");
     const protected = (try client.pollInitialProtectedDatagram(
-        12,
+        12 * ms,
         &retry_scid,
         &client_scid,
         &[_]u8{},
@@ -60840,7 +60843,7 @@ test "Initial packetization enforces client DCID length and server empty token" 
     try client.sendCryptoInSpace(.initial, "client initial");
     const short_secrets = try protection.deriveInitialSecrets(.v1, &short_dcid);
     try std.testing.expectError(error.InvalidPacket, client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &short_dcid,
         &client_scid,
         &[_]u8{},
@@ -60854,7 +60857,7 @@ test "Initial packetization enforces client DCID length and server empty token" 
     try server.sendCryptoInSpace(.initial, "server initial");
     const valid_secrets = try protection.deriveInitialSecrets(.v1, &valid_dcid);
     try std.testing.expectError(error.InvalidPacket, server.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &client_scid,
         &server_scid,
         "server-token-is-invalid",
@@ -60867,7 +60870,7 @@ test "Initial packetization enforces client DCID length and server empty token" 
     defer follow_client.deinit();
     try follow_client.sendCryptoInSpace(.initial, "client initial");
     const first_initial = (try follow_client.pollInitialProtectedDatagram(
-        1,
+        1 * ms,
         &valid_dcid,
         &client_scid,
         &[_]u8{},
@@ -60880,7 +60883,7 @@ test "Initial packetization enforces client DCID length and server empty token" 
     try follow_server.validatePeerAddress();
     try follow_server.sendCryptoInSpace(.initial, "server initial");
     const server_initial = (try follow_server.pollInitialProtectedDatagram(
-        2,
+        2 * ms,
         &client_scid,
         &server_scid,
         &[_]u8{},
@@ -60990,7 +60993,7 @@ test "processRetryDatagram stores token and Initial packetization reuses it" {
     const retry_secrets = try protection.deriveInitialSecrets(.v1, &retry_scid);
     try client.sendCryptoInSpace(.initial, "client after retry");
     const protected = (try client.pollInitialProtectedDatagram(
-        11,
+        11 * ms,
         &retry_scid,
         &client_scid,
         &[_]u8{},
@@ -61066,7 +61069,7 @@ test "processVersionNegotiationDatagram selects mutual version once" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     const selected = (try client.processVersionNegotiationDatagram(
         10,
         &original_dcid,
@@ -61143,7 +61146,7 @@ test "processVersionNegotiationDatagram ignores unsafe or mismatched packets" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try std.testing.expectEqual(@as(?packet.Version, null), try client.processVersionNegotiationDatagram(
         10,
         &original_dcid,
@@ -61197,7 +61200,7 @@ test "processVersionNegotiationDatagram ignores packets after Retry" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try client.processRetryDatagram(10, &original_dcid, retry_datagram);
     try std.testing.expectEqual(@as(?packet.Version, null), try client.processVersionNegotiationDatagram(
         11,
@@ -61247,7 +61250,7 @@ test "processVersionNegotiationDatagram ignores packets after peer Initial" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try client.processProtectedLongDatagramInSpace(.initial, 11, initial_secrets.server, server_initial);
     try std.testing.expectEqual(@as(u64, 1), client.nextPeerPacketNumber(.initial));
     try std.testing.expectEqual(@as(?packet.Version, null), try client.processVersionNegotiationDatagram(
@@ -61282,7 +61285,7 @@ test "processVersionNegotiationDatagram ignores packets after Initial discard" {
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try client.discardPacketNumberSpace(.initial);
     try std.testing.expect(client.packetNumberSpaceDiscarded(.initial));
     try std.testing.expectEqual(@as(?packet.Version, null), try client.processVersionNegotiationDatagram(
@@ -61349,7 +61352,7 @@ test "processVersionNegotiationDatagram ignores packets after non-Initial peer p
         });
         defer client.deinit();
 
-        _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+        _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
         try client.processDatagramInSpace(space, 10, &ping);
         try std.testing.expectEqual(@as(u64, 1), client.nextPeerPacketNumber(space));
         try std.testing.expectEqual(@as(?packet.Version, null), try client.processVersionNegotiationDatagram(
@@ -61384,7 +61387,7 @@ test "processVersionNegotiationDatagram rejects no mutual version without mutati
     });
     defer client.deinit();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 1200);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 1200);
     try std.testing.expectError(error.InvalidPacket, client.processVersionNegotiationDatagram(
         10,
         &original_dcid,
@@ -61412,7 +61415,7 @@ test "pollInitialProtectedDatagram leaves Initial space idle when no CRYPTO is q
     defer client.deinit();
 
     try std.testing.expectEqual(@as(?[]u8, null), try client.pollInitialProtectedDatagram(
-        0,
+        0 * ms,
         &dcid,
         &scid,
         &[_]u8{},
@@ -61731,7 +61734,7 @@ test "pollProtectedZeroRttDatagram emits protected STREAM in Application packet 
     const stream_id = try client.openStream();
     try client.sendOnStream(stream_id, "early data", true);
     const protected = (try client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61768,7 +61771,7 @@ test "ACK-driven loss requeues protected 0-RTT STREAM frame for retransmission" 
     const stream_id = try client.openStream();
     try client.sendOnStream(stream_id, "lost early", true);
     const protected = (try client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61779,10 +61782,10 @@ test "ACK-driven loss requeues protected 0-RTT STREAM frame for retransmission" 
     try std.testing.expectEqual(@as(usize, 0), client.send_queue.items.len);
     try std.testing.expect(client.sent_packets.items[0].stream_frame != null);
 
-    _ = try client.recordPacketSentInSpace(.application, 20, 1);
-    _ = try client.recordPacketSentInSpace(.application, 30, 1);
-    _ = try client.recordPacketSentInSpace(.application, 40, 1);
-    try client.receiveAckInSpace(.application, 70, .{
+    _ = try client.recordPacketSentInSpace(.application, 20 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 30 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 40 * ms, 1);
+    try client.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -61796,7 +61799,7 @@ test "ACK-driven loss requeues protected 0-RTT STREAM frame for retransmission" 
     try std.testing.expectEqualStrings("lost early", client.send_queue.items[0].data);
 
     const retransmit = (try client.pollProtectedZeroRttDatagram(
-        80,
+        80 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61844,7 +61847,7 @@ test "checkPtoTimeouts retransmits protected 0-RTT STREAM data before PING" {
     const stream_id = try client.openStream();
     try client.sendOnStream(stream_id, "pto early", true);
     const protected = (try client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61855,7 +61858,7 @@ test "checkPtoTimeouts retransmits protected 0-RTT STREAM data before PING" {
     try std.testing.expectEqual(@as(usize, 0), client.send_queue.items.len);
     try std.testing.expect(client.sent_packets.items[0].stream_frame != null);
 
-    const deadline = client.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const deadline = client.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try client.checkPtoTimeouts(deadline);
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), client.recovery_state.pto_count);
@@ -61918,7 +61921,7 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
     };
 
     const protected_reset = (try reset_client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61934,10 +61937,10 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
         .{ .reset_stream = reset_frame },
     ));
 
-    _ = try reset_client.recordPacketSentInSpace(.application, 20, 1);
-    _ = try reset_client.recordPacketSentInSpace(.application, 30, 1);
-    _ = try reset_client.recordPacketSentInSpace(.application, 40, 1);
-    try reset_client.receiveAckInSpace(.application, 70, .{
+    _ = try reset_client.recordPacketSentInSpace(.application, 20 * ms, 1);
+    _ = try reset_client.recordPacketSentInSpace(.application, 30 * ms, 1);
+    _ = try reset_client.recordPacketSentInSpace(.application, 40 * ms, 1);
+    try reset_client.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -61949,7 +61952,7 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
     try std.testing.expectEqual(reset_frame.final_size, reset_client.pending_reset_streams.items[0].final_size);
 
     const reset_retransmit = (try reset_client.pollProtectedZeroRttDatagram(
-        80,
+        80 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61973,7 +61976,7 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
     };
 
     const protected_stop = (try stop_client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -61989,10 +61992,10 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
         .{ .stop_sending = stop_frame },
     ));
 
-    _ = try stop_client.recordPacketSentInSpace(.application, 20, 1);
-    _ = try stop_client.recordPacketSentInSpace(.application, 30, 1);
-    _ = try stop_client.recordPacketSentInSpace(.application, 40, 1);
-    try stop_client.receiveAckInSpace(.application, 70, .{
+    _ = try stop_client.recordPacketSentInSpace(.application, 20 * ms, 1);
+    _ = try stop_client.recordPacketSentInSpace(.application, 30 * ms, 1);
+    _ = try stop_client.recordPacketSentInSpace(.application, 40 * ms, 1);
+    try stop_client.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -62003,7 +62006,7 @@ test "ACK-driven loss requeues protected 0-RTT control frames for retransmission
     try std.testing.expectEqual(stop_frame.application_error_code, stop_client.pending_stop_sending.items[0].application_error_code);
 
     const stop_retransmit = (try stop_client.pollProtectedZeroRttDatagram(
-        80,
+        80 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -62039,14 +62042,14 @@ test "checkPtoTimeouts retransmits protected 0-RTT control frames before PING" {
     };
 
     const protected_reset = (try reset_client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(protected_reset);
 
-    const reset_deadline = reset_client.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const reset_deadline = reset_client.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try reset_client.checkPtoTimeouts(reset_deadline);
     try std.testing.expectEqual(@as(usize, 0), reset_client.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), reset_client.recovery_state.pto_count);
@@ -62080,14 +62083,14 @@ test "checkPtoTimeouts retransmits protected 0-RTT control frames before PING" {
     };
 
     const protected_stop = (try stop_client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(protected_stop);
 
-    const stop_deadline = stop_client.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const stop_deadline = stop_client.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try stop_client.checkPtoTimeouts(stop_deadline);
     try std.testing.expectEqual(@as(usize, 0), stop_client.pending_ping_count);
     try std.testing.expectEqual(@as(u8, 1), stop_client.recovery_state.pto_count);
@@ -62125,7 +62128,7 @@ test "ACKed RESET_STREAM suppresses obsolete control retransmission" {
     try client.resetStream(stream_id, 19);
 
     const original = (try client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -62134,7 +62137,7 @@ test "ACKed RESET_STREAM suppresses obsolete control retransmission" {
     try std.testing.expectEqual(@as(usize, 0), client.pending_reset_streams.items.len);
     try std.testing.expect(client.sent_packets.items[0].reset_stream_frame != null);
 
-    const reset_deadline = client.ptoDeadlineMillis(.application) orelse return error.TestUnexpectedResult;
+    const reset_deadline = client.ptoDeadline(.application) orelse return error.TestUnexpectedResult;
     try client.checkPtoTimeouts(reset_deadline);
     try std.testing.expectEqual(@as(usize, 1), client.pending_reset_streams.items.len);
 
@@ -62148,7 +62151,7 @@ test "ACKed RESET_STREAM suppresses obsolete control retransmission" {
     try std.testing.expectEqual(@as(usize, 0), client.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(usize, 2), client.sent_packets.items.len);
 
-    try client.receiveAckInSpace(.application, reset_deadline + 10_000, .{
+    try client.receiveAckInSpace(.application, reset_deadline + 10_000 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -62157,7 +62160,7 @@ test "ACKed RESET_STREAM suppresses obsolete control retransmission" {
     try std.testing.expectEqual(@as(usize, 0), client.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(usize, 1), client.sent_packets.items.len);
 
-    try client.checkLossDetectionTimeouts(reset_deadline + 100_000);
+    try client.checkLossDetectionTimeouts(reset_deadline + 100_000 * ms);
     try std.testing.expectEqual(@as(usize, 0), client.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), client.sent_packets.items.len);
     try std.testing.expectEqual(StreamSendState.reset_acked, (try client.streamState(stream_id)).?.send);
@@ -62175,7 +62178,7 @@ test "invalid ACK payload rolls back protected 0-RTT control-frame requeue" {
     const stream_id = try client.openStream();
     try client.stopSending(stream_id, 15);
     const protected = (try client.pollProtectedZeroRttDatagram(
-        10,
+        10 * ms,
         &server_scid,
         &client_scid,
         secrets.client,
@@ -62183,9 +62186,9 @@ test "invalid ACK payload rolls back protected 0-RTT control-frame requeue" {
     defer std.testing.allocator.free(protected);
     try std.testing.expectEqual(@as(usize, 0), client.pending_stop_sending.items.len);
 
-    _ = try client.recordPacketSentInSpace(.application, 20, 1);
-    _ = try client.recordPacketSentInSpace(.application, 30, 1);
-    _ = try client.recordPacketSentInSpace(.application, 40, 1);
+    _ = try client.recordPacketSentInSpace(.application, 20 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 30 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 40 * ms, 1);
 
     var ack_buf: [32]u8 = undefined;
     var ack_out = buffer.fixedWriter(&ack_buf);
@@ -62266,7 +62269,7 @@ test "driveCryptoBackendInSpace installs zero RTT traffic secrets for long packe
 
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedZeroRttDatagramWithInstalledKeys(10, protected),
+        server.processProtectedZeroRttDatagramWithInstalledKeys(10 * ms, protected),
     );
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -62279,12 +62282,12 @@ test "driveCryptoBackendInSpace installs zero RTT traffic secrets for long packe
     tampered[tampered.len - 1] ^= 0x01;
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedZeroRttDatagramWithInstalledKeys(11, tampered),
+        server.processProtectedZeroRttDatagramWithInstalledKeys(11 * ms, tampered),
     );
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try server.processProtectedZeroRttDatagramWithInstalledKeys(12, protected);
+    try server.processProtectedZeroRttDatagramWithInstalledKeys(12 * ms, protected);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try server.recvOnStream(stream_id, &recv_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("installed early", recv_buf[0..recv_len]);
@@ -62318,11 +62321,11 @@ test "discardZeroRttProtectionKeys clears installed early-data keys" {
 
     try std.testing.expectError(
         error.InvalidPacket,
-        conn.pollProtectedZeroRttDatagramWithInstalledKeys(0, &dcid, &scid),
+        conn.pollProtectedZeroRttDatagramWithInstalledKeys(0 * ms, &dcid, &scid),
     );
     try std.testing.expectError(
         error.InvalidPacket,
-        conn.processProtectedZeroRttDatagramWithInstalledKeys(0, &[_]u8{}),
+        conn.processProtectedZeroRttDatagramWithInstalledKeys(0 * ms, &[_]u8{}),
     );
 }
 
@@ -62344,7 +62347,7 @@ test "installed zero RTT receive requires explicit accept or rejects and discard
     try std.testing.expectError(error.InvalidPacket, server.acceptZeroRtt());
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedZeroRttDatagramWithInstalledKeys(0, &[_]u8{}),
+        server.processProtectedZeroRttDatagramWithInstalledKeys(0 * ms, &[_]u8{}),
     );
 }
 
@@ -62372,7 +62375,7 @@ test "installOneRttTrafficSecrets discards client zero RTT keys" {
     try std.testing.expect(!client.hasPeerZeroRttProtectionKey());
     try std.testing.expectError(
         error.InvalidPacket,
-        client.pollProtectedZeroRttDatagramWithInstalledKeys(0, &dcid, &scid),
+        client.pollProtectedZeroRttDatagramWithInstalledKeys(0 * ms, &dcid, &scid),
     );
 
     var server = try Connection.init(std.testing.allocator, .server, .{});
@@ -62405,7 +62408,7 @@ test "server discards zero RTT keys after successful one RTT receive" {
 
     try client.sendPing();
     const protected = (try client.pollProtectedShortDatagram(
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -62416,13 +62419,13 @@ test "server discards zero RTT keys after successful one RTT receive" {
     tampered[tampered.len - 1] ^= 0x01;
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, tampered),
+        server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, tampered),
     );
     try std.testing.expect(server.hasPeerZeroRttProtectionKey());
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try server.processProtectedShortDatagramWithInstalledKeys(12, server_dcid.len, protected);
+    try server.processProtectedShortDatagramWithInstalledKeys(12 * ms, server_dcid.len, protected);
     try std.testing.expect(!server.hasLocalZeroRttProtectionKey());
     try std.testing.expect(!server.hasPeerZeroRttProtectionKey());
     try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
@@ -62562,7 +62565,7 @@ test "client rejects protected zero RTT receive before packet mutation" {
     try installed_client.acceptZeroRtt();
     try std.testing.expectError(
         error.InvalidPacket,
-        installed_client.processProtectedZeroRttDatagramWithInstalledKeys(10, protected),
+        installed_client.processProtectedZeroRttDatagramWithInstalledKeys(10 * ms, protected),
     );
     try std.testing.expectEqual(@as(u64, 0), installed_client.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), installed_client.pendingAckLargest(.application));
@@ -62658,7 +62661,7 @@ test "processProtectedShortDatagram routes protected 1-RTT payload" {
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
 
-    try server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, protected);
+    try server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, protected);
     try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 }
@@ -62687,7 +62690,7 @@ test "processProtectedShortDatagram rejects oversized UDP datagram before mutati
 
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, protected),
+        server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, protected),
     );
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -62715,14 +62718,14 @@ test "processProtectedShortDatagram discards packets while draining" {
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
 
-    try server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, close_packet);
+    try server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, close_packet);
     const next_peer_packet_number = server.nextPeerPacketNumber(.application);
     try std.testing.expect(server.closed);
     try std.testing.expectEqual(ConnectionState.draining, server.connectionState());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const invalid_protected = [_]u8{0xff};
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, &invalid_protected);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, &invalid_protected);
     try std.testing.expectEqual(ConnectionState.draining, server.connectionState());
     try std.testing.expectEqual(next_peer_packet_number, server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -62760,7 +62763,7 @@ test "protected long and zero RTT datagrams discard while closing or draining" {
 
     var draining = try Connection.init(std.testing.allocator, .server, .{});
     defer draining.deinit();
-    try draining.processDatagram(20, close_out.getWritten());
+    try draining.processDatagram(20 * ms, close_out.getWritten());
     try std.testing.expectEqual(ConnectionState.draining, draining.connectionState());
 
     try std.testing.expectEqual(@as(usize, 0), try draining.processProtectedLongDatagramOrClose(21, .{
@@ -62794,35 +62797,35 @@ test "protected short datagram spin bit follows enabled single-path policy" {
     try std.testing.expect(!client.nextOutgoingSpinBit());
     try client.sendPing();
     const first_client_packet = (try client.pollProtectedShortDatagram(
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first_client_packet);
     try std.testing.expect(!try protection.peekShortPacketSpinBit(first_client_packet));
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, first_client_packet);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, first_client_packet);
     try std.testing.expect(!server.nextOutgoingSpinBit());
     const server_ack = (try server.pollProtectedShortDatagram(
-        12,
+        12 * ms,
         &client_dcid,
         secrets.server,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ack);
     try std.testing.expect(!try protection.peekShortPacketSpinBit(server_ack));
 
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expect(client.nextOutgoingSpinBit());
     try client.sendPing();
     const second_client_packet = (try client.pollProtectedShortDatagram(
-        14,
+        14 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second_client_packet);
     try std.testing.expect(try protection.peekShortPacketSpinBit(second_client_packet));
 
-    try server.processProtectedShortDatagram(15, secrets.client, server_dcid.len, second_client_packet);
+    try server.processProtectedShortDatagram(15 * ms, secrets.client, server_dcid.len, second_client_packet);
     try std.testing.expect(server.nextOutgoingSpinBit());
     server.resetSpinBitForPath();
     try std.testing.expect(!server.nextOutgoingSpinBit());
@@ -62849,7 +62852,7 @@ test "spin bit disabled and invalid packets do not update modeled state" {
 
     var disabled_server = try Connection.init(std.testing.allocator, .server, .{});
     defer disabled_server.deinit();
-    try disabled_server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, protected);
+    try disabled_server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, protected);
     try std.testing.expect(!disabled_server.nextOutgoingSpinBit());
 
     var enabled_server = try Connection.init(std.testing.allocator, .server, .{ .enable_spin_bit = true });
@@ -62859,11 +62862,11 @@ test "spin bit disabled and invalid packets do not update modeled state" {
     tampered[tampered.len - 1] ^= 0x01;
     try std.testing.expectError(
         error.InvalidPacket,
-        enabled_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, tampered),
+        enabled_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, tampered),
     );
     try std.testing.expect(!enabled_server.nextOutgoingSpinBit());
 
-    try enabled_server.processProtectedShortDatagram(12, secrets.client, server_dcid.len, protected);
+    try enabled_server.processProtectedShortDatagram(12 * ms, secrets.client, server_dcid.len, protected);
     try std.testing.expect(enabled_server.nextOutgoingSpinBit());
 }
 
@@ -62890,7 +62893,7 @@ test "protected short datagram key update selects next key phase" {
     defer rejecting_server.deinit();
     try std.testing.expectError(
         error.InvalidPacket,
-        rejecting_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, protected),
+        rejecting_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, protected),
     );
     try std.testing.expectEqual(@as(u64, 0), rejecting_server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), rejecting_server.pendingAckLargest(.application));
@@ -63015,12 +63018,12 @@ test "driveCryptoBackendInSpace installs handshake traffic secrets for long pack
     tampered[tampered.len - 1] ^= 0x01;
     try std.testing.expectError(
         error.InvalidPacket,
-        client.processProtectedHandshakeDatagramWithInstalledKeys(11, tampered),
+        client.processProtectedHandshakeDatagramWithInstalledKeys(11 * ms, tampered),
     );
     try std.testing.expectEqual(@as(u64, 0), client.nextPeerPacketNumber(.handshake));
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.handshake));
 
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(12, protected);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(12 * ms, protected);
     var crypto_buf: [64]u8 = undefined;
     const recv_len = (try client.recvCryptoInSpace(.handshake, &crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("server handshake", crypto_buf[0..recv_len]);
@@ -63033,7 +63036,7 @@ test "driveCryptoBackendInSpace installs handshake traffic secrets for long pack
         &client_scid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(14, ack);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(14 * ms, ack);
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.handshake));
 }
 
@@ -63100,7 +63103,7 @@ test "driveCryptoBackendInSpace installs one RTT traffic secrets for short packe
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_ping);
-    try server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, client_ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, client_ping);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
     const server_ack = (try server.pollProtectedShortDatagramWithInstalledKeys(
@@ -63108,7 +63111,7 @@ test "driveCryptoBackendInSpace installs one RTT traffic secrets for short packe
         &client_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ack);
-    try client.processProtectedShortDatagramWithInstalledKeys(13, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagramWithInstalledKeys(13 * ms, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 }
 
@@ -63216,7 +63219,7 @@ test "EndpointConnectionLifecycle cross-space backend drive installs one RTT tra
         &client_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ping);
-    try client.processProtectedShortDatagramWithInstalledKeys(13, client_dcid.len, server_ping);
+    try client.processProtectedShortDatagramWithInstalledKeys(13 * ms, client_dcid.len, server_ping);
     try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.application));
 
     const client_ack = (try client_lifecycle.pollProtectedShortDatagramWithInstalledKeys(
@@ -63226,7 +63229,7 @@ test "EndpointConnectionLifecycle cross-space backend drive installs one RTT tra
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_ack);
-    try server.processProtectedShortDatagramWithInstalledKeys(15, server_dcid.len, client_ack);
+    try server.processProtectedShortDatagramWithInstalledKeys(15 * ms, server_dcid.len, client_ack);
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
 }
 
@@ -63410,13 +63413,13 @@ test "installed one RTT key phase state advances only after successful receive" 
 
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, tampered),
+        server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, tampered),
     );
     try std.testing.expectEqual(@as(?bool, false), server.peerOneRttKeyPhase());
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try server.processProtectedShortDatagramWithInstalledKeys(12, server_dcid.len, protected);
+    try server.processProtectedShortDatagramWithInstalledKeys(12 * ms, server_dcid.len, protected);
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttKeyPhase());
     try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
@@ -63468,7 +63471,7 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
-    try server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, ping);
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(1));
@@ -63478,7 +63481,7 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
         &client_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack);
-    try client.processProtectedShortDatagramWithInstalledKeys(13, client_dcid.len, ack);
+    try client.processProtectedShortDatagramWithInstalledKeys(13 * ms, client_dcid.len, ack);
     try std.testing.expectEqual(@as(?u64, null), client.pendingOneRttKeyUpdateAckThreshold());
 
     try client.initiateOneRttKeyUpdate();
@@ -63498,7 +63501,7 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second_ping);
-    try server.processProtectedShortDatagramWithInstalledKeys(15, server_dcid.len, second_ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(15 * ms, server_dcid.len, second_ping);
     try std.testing.expectEqual(@as(?bool, false), server.peerOneRttKeyPhase());
     try std.testing.expectEqual(@as(?u64, 2), server.peerOneRttKeyUpdateCount());
     // Second peer advance overwrites the retained previous: generation 1 is
@@ -63527,7 +63530,7 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
     defer std.testing.allocator.free(stale_generation_0_ping);
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagramWithInstalledKeys(16, server_dcid.len, stale_generation_0_ping),
+        server.processProtectedShortDatagramWithInstalledKeys(16 * ms, server_dcid.len, stale_generation_0_ping),
     );
     try std.testing.expectEqual(@as(u64, 2), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 1), server.pendingAckLargest(.application));
@@ -63537,7 +63540,7 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
         &client_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second_ack);
-    try client.processProtectedShortDatagramWithInstalledKeys(18, client_dcid.len, second_ack);
+    try client.processProtectedShortDatagramWithInstalledKeys(18 * ms, client_dcid.len, second_ack);
     try std.testing.expectEqual(@as(?u64, null), client.pendingOneRttKeyUpdateAckThreshold());
 }
 
@@ -63565,17 +63568,17 @@ test "EndpointConnectionLifecycle wakes to discard expired retained 1 RTT keys" 
 
     try client.initiateOneRttKeyUpdate();
     try client.sendPing();
-    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(update);
-    try server.processProtectedShortDatagramWithInstalledKeys(100, server_dcid.len, update);
+    try server.processProtectedShortDatagramWithInstalledKeys(100 * ms, server_dcid.len, update);
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
 
-    const discard_deadline = server.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = server.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     const next = lifecycle.nextDeadline(7, &server) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.key_discard, next.kind);
-    try std.testing.expectEqual(discard_deadline, next.deadline_millis);
+    try std.testing.expectEqual(discard_deadline, next.deadline_nanos);
 
     const due = (try lifecycle.processDueDeadlineAndPollDatagram(
         7,
@@ -63613,13 +63616,13 @@ test "EndpointConnectionLifecycle key discard due-deadline poll leaves output qu
 
     try client.initiateOneRttKeyUpdate();
     try client.sendPing();
-    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(update);
-    try server.processProtectedShortDatagramWithInstalledKeys(100, server_dcid.len, update);
+    try server.processProtectedShortDatagramWithInstalledKeys(100 * ms, server_dcid.len, update);
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
-    const discard_deadline = server.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = server.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     const due = (try lifecycle.processDueDeadlineAndPollDatagram(
@@ -63668,13 +63671,13 @@ test "EndpointConnectionLifecycle key discard due-deadline drain does not drain 
 
     try client.initiateOneRttKeyUpdate();
     try client.sendPing();
-    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(update);
-    try server.processProtectedShortDatagramWithInstalledKeys(100, server_dcid.len, update);
+    try server.processProtectedShortDatagramWithInstalledKeys(100 * ms, server_dcid.len, update);
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
-    const discard_deadline = server.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = server.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
     var out: [1]EndpointPolledDatagramResult = undefined;
@@ -63725,10 +63728,10 @@ test "EndpointConnectionLifecycle pending work counts retained one RTT key disca
 
     try client.initiateOneRttKeyUpdate();
     try client.sendPing();
-    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100, &server_dcid)) orelse return error.TestUnexpectedResult;
+    const update = (try client.pollProtectedShortDatagramWithInstalledKeys(100 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(update);
-    try server.processProtectedShortDatagramWithInstalledKeys(100, server_dcid.len, update);
-    const discard_deadline = server.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    try server.processProtectedShortDatagramWithInstalledKeys(100 * ms, server_dcid.len, update);
+    const discard_deadline = server.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
@@ -63769,11 +63772,11 @@ test "EndpointConnectionLifecycle single pending-work selects after key discard"
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
 
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     const before = try lifecycle.processPendingWorkAndSelectNextDeadline(
         77,
         &conn,
@@ -63786,7 +63789,7 @@ test "EndpointConnectionLifecycle single pending-work selects after key discard"
     const unchanged = before.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 77), unchanged.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.key_discard, unchanged.kind);
-    try std.testing.expectEqual(discard_deadline, unchanged.deadline_millis);
+    try std.testing.expectEqual(discard_deadline, unchanged.deadline_nanos);
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
 
     const serviced = try lifecycle.processPendingWorkAndSelectNextDeadline(
@@ -63815,7 +63818,7 @@ test "EndpointConnectionLifecycle single pending-work poll reports key discard w
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -63827,7 +63830,7 @@ test "EndpointConnectionLifecycle single pending-work poll reports key discard w
         .destination_connection_id = &server_dcid,
         .source_connection_id = &[_]u8{},
     };
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     const result = try lifecycle.processPendingWorkAndPollDatagram(
         78,
         &conn,
@@ -63860,7 +63863,7 @@ test "EndpointConnectionLifecycle single explicit pending-work poll reports key 
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -63872,7 +63875,7 @@ test "EndpointConnectionLifecycle single explicit pending-work poll reports key 
         .destination_connection_id = &server_dcid,
         .source_connection_id = &[_]u8{},
     };
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     const result = try lifecycle.processPendingWorkAndPollDatagramWithInstalledKeyOptions(
         84,
         &conn,
@@ -63905,7 +63908,7 @@ test "EndpointConnectionLifecycle single pending-work drain reports key discard 
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -63917,7 +63920,7 @@ test "EndpointConnectionLifecycle single pending-work drain reports key discard 
         .destination_connection_id = &server_dcid,
         .source_connection_id = &[_]u8{},
     };
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var out: [1]EndpointPolledDatagramResult = undefined;
     const result = try lifecycle.processPendingWorkAndDrainDatagrams(
         79,
@@ -63953,7 +63956,7 @@ test "EndpointConnectionLifecycle single explicit pending-work drain reports key
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -63965,7 +63968,7 @@ test "EndpointConnectionLifecycle single explicit pending-work drain reports key
         .destination_connection_id = &server_dcid,
         .source_connection_id = &[_]u8{},
     };
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var out: [1]EndpointPolledDatagramResult = undefined;
     const result = try lifecycle.processPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
         85,
@@ -64001,7 +64004,7 @@ test "EndpointConnectionLifecycle cross pending-work poll reports key discard wi
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -64017,7 +64020,7 @@ test "EndpointConnectionLifecycle cross pending-work poll reports key discard wi
         .connection = &conn,
         .destination_connection_id = &server_dcid,
     }};
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndPollDatagram(
         &pending_connections,
         discard_deadline,
@@ -64056,7 +64059,7 @@ test "EndpointConnectionLifecycle cross pending-work drain reports key discard w
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -64072,7 +64075,7 @@ test "EndpointConnectionLifecycle cross pending-work drain reports key discard w
         .connection = &conn,
         .destination_connection_id = &server_dcid,
     }};
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var out: [1]EndpointPolledDatagramResult = undefined;
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDrainDatagrams(
         &pending_connections,
@@ -64114,7 +64117,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work poll reports key d
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -64134,7 +64137,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work poll reports key d
             .source_connection_id = &[_]u8{},
         },
     }};
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
         &pending_connections,
         discard_deadline,
@@ -64171,7 +64174,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work drain reports key 
         .local = local_secret,
         .peer = peer_secret,
     });
-    conn.last_packet_activity_millis = 10;
+    conn.last_packet_activity_nanos = 10 * ms;
     try conn.initiateOneRttKeyUpdate();
     try conn.sendPing();
     try std.testing.expectEqual(@as(?bool, true), conn.localOneRttRetainsKeyGeneration(0));
@@ -64191,7 +64194,7 @@ test "EndpointConnectionLifecycle cross explicit pending-work drain reports key 
             .source_connection_id = &[_]u8{},
         },
     }};
-    const discard_deadline = conn.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const discard_deadline = conn.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     var out: [1]EndpointPolledDatagramResult = undefined;
     const result = try lifecycle.processPendingWorkAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(
         &pending_connections,
@@ -64238,8 +64241,8 @@ test "EndpointConnectionLifecycle cross due-deadline poll reports key discard wi
         .local = local_secret,
         .peer = peer_secret,
     });
-    fast.last_packet_activity_millis = 10;
-    slow.last_packet_activity_millis = 1000;
+    fast.last_packet_activity_nanos = 10 * ms;
+    slow.last_packet_activity_nanos = 1000 * ms;
     try fast.initiateOneRttKeyUpdate();
     try slow.initiateOneRttKeyUpdate();
     try fast.sendPing();
@@ -64261,8 +64264,8 @@ test "EndpointConnectionLifecycle cross due-deadline poll reports key discard wi
             .destination_connection_id = &slow_dcid,
         },
     };
-    const fast_deadline = fast.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
-    const slow_deadline = slow.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const fast_deadline = fast.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
+    const slow_deadline = slow.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(fast_deadline < slow_deadline);
 
     const before = try lifecycle.processDueDeadlineAcrossConnectionsAndPollDatagram(&connections, fast_deadline - 1);
@@ -64310,8 +64313,8 @@ test "EndpointConnectionLifecycle cross due-deadline drain reports key discard w
         .local = local_secret,
         .peer = peer_secret,
     });
-    fast.last_packet_activity_millis = 10;
-    slow.last_packet_activity_millis = 1000;
+    fast.last_packet_activity_nanos = 10 * ms;
+    slow.last_packet_activity_nanos = 1000 * ms;
     try fast.initiateOneRttKeyUpdate();
     try slow.initiateOneRttKeyUpdate();
     try fast.sendPing();
@@ -64333,8 +64336,8 @@ test "EndpointConnectionLifecycle cross due-deadline drain reports key discard w
             .destination_connection_id = &slow_dcid,
         },
     };
-    const fast_deadline = fast.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
-    const slow_deadline = slow.oneRttKeyDiscardDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const fast_deadline = fast.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
+    const slow_deadline = slow.oneRttKeyDiscardDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(fast_deadline < slow_deadline);
 
     var before_out: [1]EndpointPolledDatagramResult = undefined;
@@ -64382,7 +64385,7 @@ test "installed one RTT key update ACK confirmation rolls back with invalid payl
     });
     try client.confirmHandshake();
     try client.initiateOneRttKeyUpdate();
-    _ = try client.recordPacketSentInSpace(.application, 10, 100);
+    _ = try client.recordPacketSentInSpace(.application, 10 * ms, 100);
 
     var payload: [32]u8 = undefined;
     var out = buffer.fixedWriter(&payload);
@@ -64428,7 +64431,7 @@ test "processProtectedShortDatagram accepts forward gaps and rejects tampered pa
     }, try packet.encodePacketNumberForHeader(1, null), secrets.client, &plaintext);
     defer std.testing.allocator.free(wrong_packet_number);
 
-    try server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, wrong_packet_number);
+    try server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, wrong_packet_number);
     try std.testing.expectEqual(@as(u64, 2), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 1), server.pendingAckLargest(.application));
 
@@ -64443,7 +64446,7 @@ test "processProtectedShortDatagram accepts forward gaps and rejects tampered pa
 
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, tampered),
+        server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, tampered),
     );
     try std.testing.expectEqual(@as(u64, 2), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 1), server.pendingAckLargest(.application));
@@ -64487,8 +64490,8 @@ test "processProtectedShortDatagram acknowledges reordered packets with ACK rang
     }, try packet.encodePacketNumberForHeader(2, null), secrets.client, &plaintext);
     defer std.testing.allocator.free(packet_two);
 
-    try server.processProtectedShortDatagram(10, secrets.client, server_dcid.len, packet_zero);
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, packet_two);
+    try server.processProtectedShortDatagram(10 * ms, secrets.client, server_dcid.len, packet_zero);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, packet_two);
     try std.testing.expectEqual(@as(u64, 3), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 2), server.pendingAckLargest(.application));
 
@@ -64515,12 +64518,12 @@ test "processProtectedShortDatagram acknowledges reordered packets with ACK rang
         else => return error.TestUnexpectedResult,
     }
 
-    try server.processProtectedShortDatagram(13, secrets.client, server_dcid.len, packet_one);
+    try server.processProtectedShortDatagram(13 * ms, secrets.client, server_dcid.len, packet_one);
     try std.testing.expectEqual(@as(u64, 3), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 2), server.pendingAckLargest(.application));
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagram(14, secrets.client, server_dcid.len, packet_one),
+        server.processProtectedShortDatagram(14 * ms, secrets.client, server_dcid.len, packet_one),
     );
 }
 
@@ -64543,7 +64546,7 @@ test "pollProtectedShortDatagram emits protected PING and ACK-only response" {
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(client_ping.len, client.bytesInFlight(.application));
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, client_ping);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, client_ping);
     try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
@@ -64554,7 +64557,7 @@ test "pollProtectedShortDatagram emits protected PING and ACK-only response" {
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(u64, 1), client.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
@@ -64583,7 +64586,7 @@ test "pollProtectedShortDatagram emits protected STREAM and ACK response" {
     try std.testing.expectEqual(client_stream.len, client.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?[]u8, null), try client.pollProtectedShortDatagram(11, &server_dcid, secrets.client));
 
-    try server.processProtectedShortDatagram(12, secrets.client, server_dcid.len, client_stream);
+    try server.processProtectedShortDatagram(12 * ms, secrets.client, server_dcid.len, client_stream);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try server.recvOnStream(stream_id, &recv_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("hello protected", recv_buf[0..recv_len]);
@@ -64597,7 +64600,7 @@ test "pollProtectedShortDatagram emits protected STREAM and ACK response" {
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try client.processProtectedShortDatagram(14, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(14 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
@@ -64623,7 +64626,7 @@ test "pollProtectedShortDatagram emits protected CRYPTO and ACK response" {
     try std.testing.expectEqual(client_crypto.len, client.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?[]u8, null), try client.pollProtectedShortDatagram(11, &server_dcid, secrets.client));
 
-    try server.processProtectedShortDatagram(12, secrets.client, server_dcid.len, client_crypto);
+    try server.processProtectedShortDatagram(12 * ms, secrets.client, server_dcid.len, client_crypto);
     var crypto_buf: [32]u8 = undefined;
     const crypto_len = (try server.recvCrypto(&crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("application crypto", crypto_buf[0..crypto_len]);
@@ -64636,7 +64639,7 @@ test "pollProtectedShortDatagram emits protected CRYPTO and ACK response" {
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try client.processProtectedShortDatagram(14, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(14 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
@@ -64653,7 +64656,7 @@ test "ACK-driven loss requeues protected short CRYPTO frame for retransmission" 
 
     try client.sendCrypto("lost protected crypto");
     const protected = (try client.pollProtectedShortDatagram(
-        10,
+        10 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -64662,10 +64665,10 @@ test "ACK-driven loss requeues protected short CRYPTO frame for retransmission" 
     try std.testing.expectEqual(@as(usize, 0), client.crypto_send_queue.items.len);
     try std.testing.expect(client.sent_packets.items[0].crypto_frame != null);
 
-    _ = try client.recordPacketSentInSpace(.application, 20, 1);
-    _ = try client.recordPacketSentInSpace(.application, 30, 1);
-    _ = try client.recordPacketSentInSpace(.application, 40, 1);
-    try client.receiveAckInSpace(.application, 70, .{
+    _ = try client.recordPacketSentInSpace(.application, 20 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 30 * ms, 1);
+    _ = try client.recordPacketSentInSpace(.application, 40 * ms, 1);
+    try client.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -64677,7 +64680,7 @@ test "ACK-driven loss requeues protected short CRYPTO frame for retransmission" 
     try std.testing.expectEqualStrings("lost protected crypto", client.crypto_send_queue.items[0].data);
 
     const retransmit = (try client.pollProtectedShortDatagram(
-        80,
+        80 * ms,
         &server_dcid,
         secrets.client,
     )) orelse return error.TestUnexpectedResult;
@@ -64724,7 +64727,7 @@ test "pollProtectedShortDatagram preserves STREAM when anti-amplification blocks
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
     try std.testing.expectEqual(server_stream.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, server_stream);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, server_stream);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try client.recvOnStream(stream_id, &recv_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("blocked first", recv_buf[0..recv_len]);
@@ -64757,7 +64760,7 @@ test "pollProtectedShortDatagram preserves STREAM when congestion blocks" {
     defer std.testing.allocator.free(server_stream);
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
 
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, server_stream);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, server_stream);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try client.recvOnStream(stream_id, &recv_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("congestion blocked", recv_buf[0..recv_len]);
@@ -64788,7 +64791,7 @@ test "pollProtectedShortDatagram preserves CRYPTO when anti-amplification blocks
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
     try std.testing.expectEqual(server_crypto.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, server_crypto);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, server_crypto);
     var crypto_buf: [32]u8 = undefined;
     const crypto_len = (try client.recvCrypto(&crypto_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("blocked crypto", crypto_buf[0..crypto_len]);
@@ -64817,7 +64820,7 @@ test "pollProtectedShortDatagram emits protected PATH_CHALLENGE and PATH_RESPONS
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(challenge.len, client.bytesInFlight(.application));
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, challenge);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, challenge);
     try std.testing.expectEqual(@as(usize, 1), server.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
@@ -64829,7 +64832,7 @@ test "pollProtectedShortDatagram emits protected PATH_CHALLENGE and PATH_RESPONS
     try std.testing.expectEqual(@as(usize, 1), server.sentPacketCount(.application));
     try std.testing.expectEqual(response.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, response);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, response);
     try std.testing.expectEqual(@as(usize, 0), client.outstanding_path_challenges.items.len);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
@@ -64838,7 +64841,7 @@ test "pollProtectedShortDatagram emits protected PATH_CHALLENGE and PATH_RESPONS
     const ack = (try client.pollProtectedShortDatagram(14, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack);
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
-    try server.processProtectedShortDatagram(15, secrets.client, server_dcid.len, ack);
+    try server.processProtectedShortDatagram(15 * ms, secrets.client, server_dcid.len, ack);
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -64856,7 +64859,7 @@ test "pollProtectedShortDatagram does not expand PATH_RESPONSE past anti-amplifi
     var challenge_buf: [24]u8 = undefined;
     var challenge_out = buffer.fixedWriter(&challenge_buf);
     try frame.encodeFrame(challenge_out.writer(), .{ .path_challenge = .{ .data = challenge_data } });
-    try server.processDatagram(0, challenge_out.getWritten());
+    try server.processDatagram(0 * ms, challenge_out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), server.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 
@@ -64898,7 +64901,7 @@ test "endpoint route path update follows protected PATH_RESPONSE validation" {
     try server.sendPathChallenge(challenge_data);
     const challenge = (try server.pollProtectedShortDatagram(10, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, challenge);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, challenge);
 
     const response = (try client.pollProtectedShortDatagram(12, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(response);
@@ -64906,7 +64909,7 @@ test "endpoint route path update follows protected PATH_RESPONSE validation" {
     try std.testing.expectEqual(@as(u64, 19), migrated_route.connection_id);
     try std.testing.expect(migrated_route.path_changed);
 
-    try server.processProtectedShortDatagram(13, secrets.client, server_dcid.len, response);
+    try server.processProtectedShortDatagram(13 * ms, secrets.client, server_dcid.len, response);
     try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
 
     const updated = try router.updateRoutePath(&server_dcid, old_path, new_path);
@@ -64949,7 +64952,7 @@ test "pollProtectedShortDatagram preserves PATH_CHALLENGE when anti-amplificatio
     try std.testing.expectEqualSlices(u8, &challenge_data, &server.outstanding_path_challenges.items[0].data);
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
 
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, challenge);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, challenge);
     try std.testing.expectEqual(@as(usize, 1), client.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.application));
 }
@@ -64978,14 +64981,14 @@ test "pollProtectedShortDatagram emits protected NEW_CONNECTION_ID and RETIRE_CO
     try std.testing.expectEqual(@as(usize, 0), server.pendingNewConnectionIdCount());
     try std.testing.expectEqual(new0.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, new0);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, new0);
     try std.testing.expectEqual(@as(usize, 1), client.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 1), client.activeConnectionIdCount());
     try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.application));
 
     const ack0 = (try client.pollProtectedShortDatagram(12, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack0);
-    try server.processProtectedShortDatagram(13, secrets.client, server_dcid.len, ack0);
+    try server.processProtectedShortDatagram(13 * ms, secrets.client, server_dcid.len, ack0);
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
 
@@ -64993,7 +64996,7 @@ test "pollProtectedShortDatagram emits protected NEW_CONNECTION_ID and RETIRE_CO
     const new1 = (try server.pollProtectedShortDatagram(14, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(new1);
     try std.testing.expect(server.local_connection_ids.items[1].sent);
-    try client.processProtectedShortDatagram(15, secrets.server, client_dcid.len, new1);
+    try client.processProtectedShortDatagram(15 * ms, secrets.server, client_dcid.len, new1);
     try std.testing.expectEqual(@as(usize, 2), client.active_connection_ids.items.len);
     try std.testing.expect(client.active_connection_ids.items[0].retired);
     try std.testing.expect(!client.active_connection_ids.items[1].retired);
@@ -65005,7 +65008,7 @@ test "pollProtectedShortDatagram emits protected NEW_CONNECTION_ID and RETIRE_CO
     try std.testing.expectEqual(@as(usize, 0), client.pending_retire_connection_ids.items.len);
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
 
-    try server.processProtectedShortDatagram(17, secrets.client, server_dcid.len, retire);
+    try server.processProtectedShortDatagram(17 * ms, secrets.client, server_dcid.len, retire);
     try std.testing.expect(server.local_connection_ids.items[0].retired);
     try std.testing.expectEqual(@as(u64, 1), server.localConnectionIdCount());
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
@@ -65014,7 +65017,7 @@ test "pollProtectedShortDatagram emits protected NEW_CONNECTION_ID and RETIRE_CO
 
     const ack1 = (try server.pollProtectedShortDatagram(18, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack1);
-    try client.processProtectedShortDatagram(19, secrets.server, client_dcid.len, ack1);
+    try client.processProtectedShortDatagram(19 * ms, secrets.server, client_dcid.len, ack1);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 }
@@ -65048,7 +65051,7 @@ test "pollProtectedShortDatagram preserves NEW_CONNECTION_ID when anti-amplifica
     try std.testing.expect(server.local_connection_ids.items[0].sent);
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
 
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, new_id);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, new_id);
     try std.testing.expectEqual(@as(usize, 1), client.active_connection_ids.items.len);
     try std.testing.expectEqualSlices(u8, &cid, client.active_connection_ids.items[0].connection_id);
 }
@@ -65076,7 +65079,7 @@ test "pollProtectedShortDatagram emits protected MAX_DATA and MAX_STREAM_DATA" {
     const client_stream = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_stream);
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, client_stream);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, client_stream);
     var read_buf: [8]u8 = undefined;
     const read_len = (try server.recvOnStream(stream_id, &read_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("hello", read_buf[0..read_len]);
@@ -65085,13 +65088,13 @@ test "pollProtectedShortDatagram emits protected MAX_DATA and MAX_STREAM_DATA" {
     const max_data = (try server.pollProtectedShortDatagram(12, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(max_data);
     try std.testing.expectEqual(@as(usize, 1), server.pending_max_frames.items.len);
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, max_data);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, max_data);
     try std.testing.expectEqual(@as(u64, 10), client.peer_max_data);
 
     const max_stream_data = (try server.pollProtectedShortDatagram(14, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(max_stream_data);
     try std.testing.expectEqual(@as(usize, 0), server.pending_max_frames.items.len);
-    try client.processProtectedShortDatagram(15, secrets.server, client_dcid.len, max_stream_data);
+    try client.processProtectedShortDatagram(15 * ms, secrets.server, client_dcid.len, max_stream_data);
     try std.testing.expectEqual(@as(u64, 10), client.findSendStream(stream_id).?.max_data);
 
     try client.sendOnStream(stream_id, "!", true);
@@ -65116,7 +65119,7 @@ test "pollProtectedShortDatagram emits protected BLOCKED frames" {
     const data_blocked = (try data_client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(data_blocked);
     try std.testing.expectEqual(@as(usize, 0), data_client.pending_blocked_frames.items.len);
-    try data_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, data_blocked);
+    try data_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, data_blocked);
     try std.testing.expectEqual(@as(?u64, 5), data_server.peerDataBlockedLimit());
 
     var stream_client = try Connection.init(std.testing.allocator, .client, .{
@@ -65133,7 +65136,7 @@ test "pollProtectedShortDatagram emits protected BLOCKED frames" {
     const stream_blocked = (try stream_client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(stream_blocked);
     try std.testing.expectEqual(@as(usize, 0), stream_client.pending_blocked_frames.items.len);
-    try stream_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, stream_blocked);
+    try stream_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, stream_blocked);
     try std.testing.expectEqual(@as(?u64, 5), stream_server.peerStreamDataBlockedLimit(stream_id));
 
     var bidi_client = try Connection.init(std.testing.allocator, .client, .{ .initial_max_streams_bidi = 1 });
@@ -65146,7 +65149,7 @@ test "pollProtectedShortDatagram emits protected BLOCKED frames" {
     const bidi_blocked = (try bidi_client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(bidi_blocked);
     try std.testing.expectEqual(@as(usize, 0), bidi_client.pending_blocked_frames.items.len);
-    try bidi_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, bidi_blocked);
+    try bidi_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, bidi_blocked);
     try std.testing.expectEqual(@as(?u64, 1), bidi_server.peerStreamsBlockedBidiLimit());
 
     var uni_client = try Connection.init(std.testing.allocator, .client, .{ .initial_max_streams_uni = 1 });
@@ -65159,7 +65162,7 @@ test "pollProtectedShortDatagram emits protected BLOCKED frames" {
     const uni_blocked = (try uni_client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(uni_blocked);
     try std.testing.expectEqual(@as(usize, 0), uni_client.pending_blocked_frames.items.len);
-    try uni_server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, uni_blocked);
+    try uni_server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, uni_blocked);
     try std.testing.expectEqual(@as(?u64, 1), uni_server.peerStreamsBlockedUniLimit());
 }
 
@@ -65225,7 +65228,7 @@ test "pollProtectedShortDatagram emits protected RESET_STREAM and ACK response" 
     try std.testing.expectEqual(@as(usize, 1), client.sentPacketCount(.application));
     try std.testing.expectEqual(client_reset.len, client.bytesInFlight(.application));
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, client_reset);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, client_reset);
     var recv_buf: [16]u8 = undefined;
     try std.testing.expectError(error.StreamClosed, server.recvOnStream(stream_id, &recv_buf));
     try std.testing.expectEqual(@as(?u64, 5), try server.recvStreamFinalSize(stream_id));
@@ -65236,7 +65239,7 @@ test "pollProtectedShortDatagram emits protected RESET_STREAM and ACK response" 
 
     const server_ack = (try server.pollProtectedShortDatagram(13, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ack);
-    try client.processProtectedShortDatagram(14, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(14 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 }
@@ -65258,12 +65261,12 @@ test "pollProtectedShortDatagram emits protected STOP_SENDING and RESET_STREAM r
 
     const client_stream = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_stream);
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, client_stream);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, client_stream);
 
     try server.stopSending(stream_id, 23);
     const server_stop = (try server.pollProtectedShortDatagram(12, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_stop);
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, server_stop);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, server_stop);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 1), client.pending_reset_streams.items.len);
 
@@ -65272,7 +65275,7 @@ test "pollProtectedShortDatagram emits protected STOP_SENDING and RESET_STREAM r
     try std.testing.expectEqual(@as(usize, 0), client.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
 
-    try server.processProtectedShortDatagram(15, secrets.client, server_dcid.len, client_reset);
+    try server.processProtectedShortDatagram(15 * ms, secrets.client, server_dcid.len, client_reset);
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     var recv_buf: [16]u8 = undefined;
     try std.testing.expectError(error.StreamClosed, server.recvOnStream(stream_id, &recv_buf));
@@ -65281,7 +65284,7 @@ test "pollProtectedShortDatagram emits protected STOP_SENDING and RESET_STREAM r
 
     const server_ack = (try server.pollProtectedShortDatagram(16, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(server_ack);
-    try client.processProtectedShortDatagram(17, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(17 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 }
@@ -65302,7 +65305,7 @@ test "pollProtectedShortDatagram drops obsolete STOP_SENDING after RESET_STREAM"
     try client.sendOnStream(stream_id, "hello", false);
     const client_stream = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_stream);
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, client_stream);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, client_stream);
 
     try server.stopSending(stream_id, 23);
     try std.testing.expectEqual(@as(usize, 1), server.pending_stop_sending.items.len);
@@ -65310,7 +65313,7 @@ test "pollProtectedShortDatagram drops obsolete STOP_SENDING after RESET_STREAM"
 
     const client_reset = (try client.pollProtectedShortDatagram(12, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_reset);
-    try server.processProtectedShortDatagram(13, secrets.client, server_dcid.len, client_reset);
+    try server.processProtectedShortDatagram(13 * ms, secrets.client, server_dcid.len, client_reset);
     try std.testing.expectEqual(@as(usize, 1), server.pending_stop_sending.items.len);
 
     const server_ack = (try server.pollProtectedShortDatagram(14, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
@@ -65318,7 +65321,7 @@ test "pollProtectedShortDatagram drops obsolete STOP_SENDING after RESET_STREAM"
     try std.testing.expectEqual(@as(usize, 0), server.pending_stop_sending.items.len);
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
-    try client.processProtectedShortDatagram(15, secrets.server, client_dcid.len, server_ack);
+    try client.processProtectedShortDatagram(15 * ms, secrets.server, client_dcid.len, server_ack);
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 }
@@ -65386,7 +65389,7 @@ test "pollProtectedShortDatagram emits protected HANDSHAKE_DONE" {
     try std.testing.expectEqual(@as(usize, 1), server.sentPacketCount(.application));
     try std.testing.expectEqual(done_packet.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, done_packet);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, done_packet);
     try std.testing.expect(client.handshakeConfirmed());
     try std.testing.expect(client.packetNumberSpaceDiscarded(.handshake));
     try std.testing.expect(!client.hasHandshakeProtectionKeys());
@@ -65394,7 +65397,7 @@ test "pollProtectedShortDatagram emits protected HANDSHAKE_DONE" {
 
     const ack = (try client.pollProtectedShortDatagram(12, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack);
-    try server.processProtectedShortDatagram(13, secrets.client, server_dcid.len, ack);
+    try server.processProtectedShortDatagram(13 * ms, secrets.client, server_dcid.len, ack);
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.application));
 }
@@ -65417,7 +65420,7 @@ test "pollProtectedShortDatagram emits protected NEW_TOKEN" {
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
     try std.testing.expectEqual(token_packet.len, server.bytesInFlight(.application));
 
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, token_packet);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, token_packet);
     try std.testing.expectEqualStrings("future-protected", client.latestNewToken().?);
     try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.application));
 }
@@ -65449,13 +65452,13 @@ test "pollProtectedShortDatagram preserves HANDSHAKE_DONE and NEW_TOKEN when ant
     defer std.testing.allocator.free(done_packet);
     try std.testing.expect(!server.pending_handshake_done);
     try std.testing.expectEqual(@as(usize, 1), server.pending_new_tokens.items.len);
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, done_packet);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, done_packet);
     try std.testing.expect(client.handshakeConfirmed());
 
     const token_packet = (try server.pollProtectedShortDatagram(13, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(token_packet);
     try std.testing.expectEqual(@as(usize, 0), server.pending_new_tokens.items.len);
-    try client.processProtectedShortDatagram(13, secrets.server, client_dcid.len, token_packet);
+    try client.processProtectedShortDatagram(13 * ms, secrets.server, client_dcid.len, token_packet);
     try std.testing.expectEqualStrings("blocked-token", client.latestNewToken().?);
 }
 
@@ -65473,7 +65476,7 @@ test "pollProtectedShortDatagram emits protected CONNECTION_CLOSE and retransmit
     try client.closeConnection(0, @intFromEnum(frame.FrameType.stream), "done");
     try std.testing.expect(!client.closed);
     try std.testing.expectEqual(ConnectionState.closing, client.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), client.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), client.closeDeadline());
 
     const close_packet = (try client.pollProtectedShortDatagram(10, &server_dcid, secrets.client)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
@@ -65482,9 +65485,9 @@ test "pollProtectedShortDatagram emits protected CONNECTION_CLOSE and retransmit
     try std.testing.expectEqual(@as(u64, 1), client.nextPacketNumber(.application));
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
-    try std.testing.expect(client.closeDeadlineMillis().? > 10);
+    try std.testing.expect(client.closeDeadline().? > 10);
 
-    try server.processProtectedShortDatagram(11, secrets.client, server_dcid.len, close_packet);
+    try server.processProtectedShortDatagram(11 * ms, secrets.client, server_dcid.len, close_packet);
     try std.testing.expect(server.closed);
     try std.testing.expectEqual(ConnectionState.draining, server.connectionState());
     try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
@@ -65497,7 +65500,7 @@ test "pollProtectedShortDatagram emits protected CONNECTION_CLOSE and retransmit
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
 
-    const deadline = client.closeDeadlineMillis().?;
+    const deadline = client.closeDeadline().?;
     try std.testing.expectError(
         error.ConnectionClosed,
         client.pollProtectedShortDatagram(deadline, &server_dcid, secrets.client),
@@ -65526,7 +65529,7 @@ test "pollProtectedShortDatagram emits protected APPLICATION_CLOSE" {
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.application));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.application));
 
-    try client.processProtectedShortDatagram(11, secrets.server, client_dcid.len, close_packet);
+    try client.processProtectedShortDatagram(11 * ms, secrets.server, client_dcid.len, close_packet);
     try std.testing.expect(client.closed);
     try std.testing.expectEqual(ConnectionState.draining, client.connectionState());
     try std.testing.expectEqual(@as(u64, 1), client.nextPeerPacketNumber(.application));
@@ -65548,7 +65551,7 @@ test "pollProtectedShortDatagram preserves close frame when anti-amplification b
     );
     try std.testing.expect(!server.closed);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), server.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), server.closeDeadline());
     try std.testing.expectEqual(@as(u64, 0), server.nextPacketNumber(.application));
     try std.testing.expect(server.pending_close != null);
 }
@@ -65575,7 +65578,7 @@ test "pollProtectedLongDatagram emits protected Initial CONNECTION_CLOSE with ca
     try std.testing.expect(close_packet.len >= min_initial_udp_datagram_len);
     try std.testing.expect(client.closed);
     try std.testing.expectEqual(ConnectionState.closing, client.connectionState());
-    try std.testing.expect(client.closeDeadlineMillis().? > 10);
+    try std.testing.expect(client.closeDeadline().? > 10);
     try std.testing.expectEqual(@as(u64, 1), client.nextPacketNumber(.initial));
     try std.testing.expectEqual(@as(usize, 0), client.sentPacketCount(.initial));
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.initial));
@@ -65617,7 +65620,7 @@ test "pollProtectedLongDatagram emits protected Handshake CONNECTION_CLOSE with 
     defer std.testing.allocator.free(close_packet);
     try std.testing.expect(server.closed);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
-    try std.testing.expect(server.closeDeadlineMillis().? > 10);
+    try std.testing.expect(server.closeDeadline().? > 10);
     try std.testing.expectEqual(@as(u64, 1), server.nextPacketNumber(.handshake));
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.handshake));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.handshake));
@@ -65647,7 +65650,7 @@ test "pollProtectedLongDatagram emits protected Handshake CONNECTION_CLOSE with 
     try std.testing.expectEqual(@as(usize, 0), server.sentPacketCount(.handshake));
     try std.testing.expectEqual(@as(usize, 0), server.bytesInFlight(.handshake));
 
-    const deadline = server.closeDeadlineMillis().?;
+    const deadline = server.closeDeadline().?;
     try std.testing.expectError(
         error.ConnectionClosed,
         server.pollProtectedLongDatagram(deadline, &client_scid, &server_scid, &[_]u8{}, .{ .handshake = secrets.server }),
@@ -65745,7 +65748,7 @@ test "processProtectedShortDatagramOrClose queues protected frame encoding close
 
     const close_packet = (try server.pollProtectedShortDatagram(11, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_packet);
-    try client.processProtectedShortDatagram(12, secrets.server, client_dcid.len, close_packet);
+    try client.processProtectedShortDatagram(12 * ms, secrets.server, client_dcid.len, close_packet);
     switch (client.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
             try std.testing.expectEqual(transport_error.codeValue(.frame_encoding_error), close.error_code);
@@ -65768,7 +65771,7 @@ test "pollProtectedLongDatagram emits protected ACK-only without bytes in flight
     defer server.deinit();
     try server.validatePeerAddress();
 
-    _ = try client.recordPacketSentInSpace(.initial, 0, 100);
+    _ = try client.recordPacketSentInSpace(.initial, 0 * ms, 100);
     try server.queueAckForReceivedPacketInSpace(.initial);
 
     const ack_datagram = (try server.pollProtectedLongDatagram(
@@ -65804,7 +65807,7 @@ test "pollProtectedLongDatagram emits protected PING with ACK" {
     defer client.deinit();
     try server.validatePeerAddress();
 
-    _ = try client.recordPacketSentInSpace(.handshake, 0, 100);
+    _ = try client.recordPacketSentInSpace(.handshake, 0 * ms, 100);
     try server.queueAckForReceivedPacketInSpace(.handshake);
     try server.sendPingInSpace(.handshake);
 
@@ -66044,7 +66047,7 @@ test "processDatagramForPacketTypeOrClose queues protocol violation close" {
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const payload = (try server.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -66088,7 +66091,7 @@ test "processDatagramForPacketTypeOrClose queues protocol violation close for AC
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const payload = (try server.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -66118,7 +66121,7 @@ test "processDatagramForPacketTypeOrClose queues frame encoding close" {
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const payload = (try server.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -66147,7 +66150,7 @@ test "processDatagramForPacketTypeOrClose queues protocol violation close for em
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const payload = (try server.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -66171,7 +66174,7 @@ test "0-RTT rejects RETIRE_CONNECTION_ID before semantic retirement" {
     try std.testing.expectEqual(@as(u64, 0), try server.issueConnectionId(&cid, token, 0));
 
     var new_cid_buf: [64]u8 = undefined;
-    _ = (try server.pollTx(0, &new_cid_buf)) orelse return error.TestUnexpectedResult;
+    _ = (try server.pollTx(0 * ms, &new_cid_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(server.local_connection_ids.items[0].sent);
 
     var retire_buf: [16]u8 = undefined;
@@ -66240,7 +66243,7 @@ test "packet number spaces isolate receive-side ACK generation" {
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.handshake));
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
-    try conn.processDatagram(2, &ping);
+    try conn.processDatagram(2 * ms, &ping);
     try std.testing.expectEqual(@as(?u64, 0), conn.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 }
@@ -66253,7 +66256,7 @@ test "processDatagram ACK_ECN updates recovery without queuing ACK" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)).?;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)).?;
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
 
     var ack_buf: [32]u8 = undefined;
@@ -66271,7 +66274,7 @@ test "processDatagram ACK_ECN updates recovery without queuing ACK" {
         },
     } });
 
-    try conn.processDatagram(60, ack_out.getWritten());
+    try conn.processDatagram(60 * ms, ack_out.getWritten());
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
@@ -66287,7 +66290,7 @@ test "ACK_ECN validates ECT0 counters for modeled sent packets" {
     try std.testing.expectEqual(@as(u64, 0), try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
 
-    try conn.receiveAckEcnInSpace(.application, 60, .{
+    try conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66316,7 +66319,7 @@ test "ACK_ECN CE increase enters NewReno recovery" {
     const initial_window = conn.congestionWindow(.application);
     _ = try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
 
-    try conn.receiveAckEcnInSpace(.application, 60, .{
+    try conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66348,7 +66351,7 @@ test "ACK_ECN CE increase respects NewReno recovery period" {
     _ = try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
     _ = try conn.recordEcnPacketSentInSpace(.application, 20, 100, .ect0);
 
-    try conn.receiveAckEcnInSpace(.application, 60, .{
+    try conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66362,7 +66365,7 @@ test "ACK_ECN CE increase respects NewReno recovery period" {
     });
     const recovery_window = conn.congestionWindow(.application);
 
-    try conn.receiveAckEcnInSpace(.application, 70, .{
+    try conn.receiveAckEcnInSpace(.application, 70 * ms, .{
         .ack = .{
             .largest_acknowledged = 1,
             .ack_delay = 0,
@@ -66388,7 +66391,7 @@ test "regular ACK disables ECN validation for newly acknowledged ECT packet" {
 
     _ = try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
 
-    try conn.receiveAckInSpace(.application, 60, .{
+    try conn.receiveAckInSpace(.application, 60 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -66413,7 +66416,7 @@ test "ACK_ECN disables validation when counters do not cover newly acknowledged 
 
     _ = try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
 
-    try conn.receiveAckEcnInSpace(.application, 60, .{
+    try conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66435,9 +66438,9 @@ test "ACK_ECN disables validation when counters exceed sent ECT totals" {
     var conn = try Connection.init(std.testing.allocator, .client, .{});
     defer conn.deinit();
 
-    _ = try conn.recordPacketSentInSpace(.application, 10, 100);
+    _ = try conn.recordPacketSentInSpace(.application, 10 * ms, 100);
 
-    try conn.receiveAckEcnInSpace(.application, 60, .{
+    try conn.receiveAckEcnInSpace(.application, 60 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66460,7 +66463,7 @@ test "ACK_ECN reordered ACK does not fail validation when largest ack does not i
     _ = try conn.recordEcnPacketSentInSpace(.application, 10, 100, .ect0);
     _ = try conn.recordEcnPacketSentInSpace(.application, 20, 100, .ect0);
 
-    try conn.receiveAckEcnInSpace(.application, 70, .{
+    try conn.receiveAckEcnInSpace(.application, 70 * ms, .{
         .ack = .{
             .largest_acknowledged = 1,
             .ack_delay = 0,
@@ -66474,7 +66477,7 @@ test "ACK_ECN reordered ACK does not fail validation when largest ack does not i
     });
     try std.testing.expectEqual(EcnValidationState.capable, conn.ecnValidationState(.application));
 
-    try conn.receiveAckEcnInSpace(.application, 80, .{
+    try conn.receiveAckEcnInSpace(.application, 80 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -66517,7 +66520,7 @@ test "processDatagram rolls back ECN validation state when later frame is invali
     } });
     try payload.writer().writeByte(@intFromEnum(frame.FrameType.handshake_done));
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60, payload.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60 * ms, payload.getWritten()));
     try std.testing.expectEqual(EcnValidationState.unknown, conn.ecnValidationState(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.ecnCounts(.application).ect0_count);
     try std.testing.expectEqual(@as(u64, 0), conn.ecnCounts(.application).ecn_ce_count);
@@ -66525,7 +66528,7 @@ test "processDatagram rolls back ECN validation state when later frame is invali
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(congestion_window_before, conn.congestionWindow(.application));
     try std.testing.expectEqual(ssthresh_before, conn.recovery_state.ssthresh);
-    try std.testing.expectEqual(@as(?i64, null), conn.recovery_state.congestion_recovery_start_time_millis);
+    try std.testing.expectEqual(@as(?i64, null), conn.recovery_state.congestion_recovery_start_time_nanos);
 }
 
 test "processDatagram rejects ACK for packet number never sent" {
@@ -66536,7 +66539,7 @@ test "processDatagram rejects ACK for packet number never sent" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)).?;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(u64, 1), conn.next_packet_number);
 
     var ack_buf: [32]u8 = undefined;
@@ -66547,7 +66550,7 @@ test "processDatagram rejects ACK for packet number never sent" {
         .first_ack_range = 0,
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60, ack_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60 * ms, ack_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
@@ -66565,11 +66568,11 @@ test "processDatagram queues ACK for ack-eliciting payloads" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    const stream_payload = (try client.pollTx(10, &datagram)).?;
-    try server.processDatagram(20, stream_payload);
+    const stream_payload = (try client.pollTx(10 * ms, &datagram)).?;
+    try server.processDatagram(20 * ms, stream_payload);
 
     var ack_buf: [32]u8 = undefined;
-    const ack_payload = (try server.pollTx(30, &ack_buf)).?;
+    const ack_payload = (try server.pollTx(30 * ms, &ack_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), server.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), server.recovery_state.bytes_in_flight);
 
@@ -66583,11 +66586,11 @@ test "processDatagram queues ACK for ack-eliciting payloads" {
         else => return error.TestUnexpectedResult,
     }
 
-    try client.processDatagram(60, ack_payload);
+    try client.processDatagram(60 * ms, ack_payload);
     try std.testing.expectEqual(@as(usize, 0), client.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), client.recovery_state.bytes_in_flight);
     try std.testing.expectEqual(@as(?u64, 50_000_000), client.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(?[]u8, null), try client.pollTx(70, &datagram));
+    try std.testing.expectEqual(@as(?[]u8, null), try client.pollTx(70 * ms, &datagram));
 }
 
 test "PATH_CHALLENGE queues PATH_RESPONSE with pending ACK" {
@@ -66600,12 +66603,12 @@ test "PATH_CHALLENGE queues PATH_RESPONSE with pending ACK" {
     var challenge_out = buffer.fixedWriter(&challenge_buf);
     try frame.encodeFrame(challenge_out.writer(), .{ .path_challenge = .{ .data = challenge_data } });
 
-    try server.processDatagram(20, challenge_out.getWritten());
+    try server.processDatagram(20 * ms, challenge_out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), server.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, 0), server.pending_ack_largest);
 
     var out_buf: [64]u8 = undefined;
-    const response_payload = (try server.pollTx(30, &out_buf)).?;
+    const response_payload = (try server.pollTx(30 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 1), server.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), server.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, null), server.pending_ack_largest);
@@ -66638,7 +66641,7 @@ test "duplicate PATH_CHALLENGE data queues one pending PATH_RESPONSE" {
     try frame.encodeFrame(challenge_out.writer(), .{ .path_challenge = .{ .data = first_challenge } });
     try frame.encodeFrame(challenge_out.writer(), .{ .path_challenge = .{ .data = second_challenge } });
 
-    try server.processDatagram(20, challenge_out.getWritten());
+    try server.processDatagram(20 * ms, challenge_out.getWritten());
     try std.testing.expectEqual(@as(usize, 2), server.pending_path_responses.items.len);
     try std.testing.expectEqualSlices(u8, &first_challenge, &server.pending_path_responses.items[0]);
     try std.testing.expectEqualSlices(u8, &second_challenge, &server.pending_path_responses.items[1]);
@@ -66654,13 +66657,13 @@ test "processDatagram rolls back PATH_RESPONSE state when payload is invalid" {
     try frame.encodeFrame(out.writer(), .{ .path_challenge = .{ .data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7 } } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
 
     var out_buf: [64]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "processDatagram rejects PATH_RESPONSE without outstanding challenge" {
@@ -66672,7 +66675,7 @@ test "processDatagram rejects PATH_RESPONSE without outstanding challenge" {
     try frame.encodeFrame(out.writer(), .{ .path_challenge = .{ .data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7 } } });
     try frame.encodeFrame(out.writer(), .{ .path_response = .{ .data = [_]u8{ 7, 6, 5, 4, 3, 2, 1, 0 } } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_path_responses.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
@@ -66688,7 +66691,7 @@ test "sendPathChallenge emits challenge and accepts matching PATH_RESPONSE" {
     try std.testing.expectEqual(@as(usize, 0), conn.outstanding_path_challenges.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const challenge_payload = (try conn.pollTx(10, &out_buf)).?;
+    const challenge_payload = (try conn.pollTx(10 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pending_path_challenges.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
@@ -66705,11 +66708,11 @@ test "sendPathChallenge emits challenge and accepts matching PATH_RESPONSE" {
     var response_out = buffer.fixedWriter(&response_buf);
     try frame.encodeFrame(response_out.writer(), .{ .path_response = .{ .data = challenge_data } });
 
-    try conn.processDatagram(20, response_out.getWritten());
+    try conn.processDatagram(20 * ms, response_out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
 
-    const ack_payload = (try conn.pollTx(30, &out_buf)).?;
+    const ack_payload = (try conn.pollTx(30 * ms, &out_buf)).?;
     var ack = try frame.decodeFrameSlice(ack_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -66726,13 +66729,13 @@ test "processDatagram rejects duplicate or mismatched PATH_RESPONSE" {
     try conn.sendPathChallenge(challenge_data);
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &out_buf)).?;
+    _ = (try conn.pollTx(0 * ms, &out_buf)).?;
 
     var mismatch_buf: [16]u8 = undefined;
     var mismatch_out = buffer.fixedWriter(&mismatch_buf);
     try frame.encodeFrame(mismatch_out.writer(), .{ .path_response = .{ .data = [_]u8{ 15, 13, 11, 9, 7, 5, 3, 1 } } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10, mismatch_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10 * ms, mismatch_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -66742,12 +66745,12 @@ test "processDatagram rejects duplicate or mismatched PATH_RESPONSE" {
     var response_out = buffer.fixedWriter(&response_buf);
     try frame.encodeFrame(response_out.writer(), .{ .path_response = .{ .data = challenge_data } });
 
-    try conn.processDatagram(20, response_out.getWritten());
+    try conn.processDatagram(20 * ms, response_out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 1), conn.next_peer_packet_number);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(30, response_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(30 * ms, response_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 1), conn.next_peer_packet_number);
@@ -66761,9 +66764,9 @@ test "processDatagram rolls back matched PATH_RESPONSE when later frame is inval
     try conn.sendPathChallenge(challenge_data);
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &out_buf)).?;
+    _ = (try conn.pollTx(0 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 1), conn.outstanding_path_challenges.items.len);
-    try std.testing.expectEqual(@as(i64, 0), conn.outstanding_path_challenges.items[0].sent_time_millis);
+    try std.testing.expectEqual(@as(i64, 0 * ms), conn.outstanding_path_challenges.items[0].sent_time_nanos);
     try std.testing.expectEqual(@as(u8, 1), conn.outstanding_path_challenges.items[0].transmissions);
 
     var datagram: [32]u8 = undefined;
@@ -66771,10 +66774,10 @@ test "processDatagram rolls back matched PATH_RESPONSE when later frame is inval
     try frame.encodeFrame(out.writer(), .{ .path_response = .{ .data = challenge_data } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.outstanding_path_challenges.items.len);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
-    try std.testing.expectEqual(@as(i64, 0), conn.outstanding_path_challenges.items[0].sent_time_millis);
+    try std.testing.expectEqual(@as(i64, 0 * ms), conn.outstanding_path_challenges.items[0].sent_time_nanos);
     try std.testing.expectEqual(@as(u8, 1), conn.outstanding_path_challenges.items[0].transmissions);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
@@ -66790,34 +66793,34 @@ test "path challenge timeout retries then records validation failure" {
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &out_buf)).?;
+    _ = (try conn.pollTx(0 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(u8, 1), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000) - 1);
+    try conn.checkPathValidationTimeouts(saturatingAddNanos(0, conn.recovery_state.ptoNs()) - 1);
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000));
+    try conn.checkPathValidationTimeouts(saturatingAddNanos(0, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.failedPathValidationCount());
 
-    _ = (try conn.pollTx(1000, &out_buf)).?;
+    _ = (try conn.pollTx(1000 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(u8, 2), conn.outstanding_path_challenges.items[0].transmissions);
     try std.testing.expectEqualSlices(u8, &challenge_data, &conn.outstanding_path_challenges.items[0].data);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(1000, conn.recovery_state.ptoNs() / 1_000_000));
+    try conn.checkPathValidationTimeouts(saturatingAddNanos(1000 * ms, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 1), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
 
-    _ = (try conn.pollTx(2000, &out_buf)).?;
+    _ = (try conn.pollTx(2000 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(u8, 3), conn.outstanding_path_challenges.items[0].transmissions);
 
-    try conn.checkPathValidationTimeouts(saturatingAddMillis(2000, conn.recovery_state.ptoNs() / 1_000_000));
+    try conn.checkPathValidationTimeouts(saturatingAddNanos(2000 * ms, conn.recovery_state.ptoNs()));
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 0), conn.outstandingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), conn.failedPathValidationCount());
@@ -66831,8 +66834,8 @@ test "pollTx automatically retries timed-out path challenge" {
     try conn.sendPathChallenge(challenge_data);
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &out_buf)).?;
-    const retry_at = saturatingAddMillis(0, conn.recovery_state.ptoNs() / 1_000_000);
+    _ = (try conn.pollTx(0 * ms, &out_buf)).?;
+    const retry_at = saturatingAddNanos(0, conn.recovery_state.ptoNs());
     const retry_payload = (try conn.pollTx(retry_at, &out_buf)).?;
 
     try std.testing.expectEqual(@as(usize, 0), conn.pendingPathChallengeCount());
@@ -66859,7 +66862,7 @@ test "issueConnectionId emits NEW_CONNECTION_ID and accepts peer retirement" {
     try std.testing.expectEqual(@as(usize, 1), conn.pendingNewConnectionIdCount());
 
     var tx: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &tx)).?;
+    const payload = (try conn.pollTx(0 * ms, &tx)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pendingNewConnectionIdCount());
     try std.testing.expect(conn.local_connection_ids.items[0].sent);
 
@@ -66879,7 +66882,7 @@ test "issueConnectionId emits NEW_CONNECTION_ID and accepts peer retirement" {
     var retire_out = buffer.fixedWriter(&retire_buf);
     try frame.encodeFrame(retire_out.writer(), .{ .retire_connection_id = .{ .sequence_number = 0 } });
 
-    try conn.processDatagram(10, retire_out.getWritten());
+    try conn.processDatagram(10 * ms, retire_out.getWritten());
     try std.testing.expectEqual(@as(u64, 0), conn.localConnectionIdCount());
     try std.testing.expect(conn.local_connection_ids.items[0].retired);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
@@ -66936,8 +66939,8 @@ test "issueConnectionId allows replacement when retire_prior_to frees peer activ
     try std.testing.expectEqual(@as(u64, 2), conn.localConnectionIdCount());
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)) orelse return error.TestUnexpectedResult;
-    _ = (try conn.pollTx(1, &tx)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(0 * ms, &tx)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(1 * ms, &tx)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(conn.local_connection_ids.items[0].sent);
     try std.testing.expect(conn.local_connection_ids.items[1].sent);
 
@@ -66945,7 +66948,7 @@ test "issueConnectionId allows replacement when retire_prior_to frees peer activ
     try std.testing.expectEqual(@as(u64, 3), conn.localConnectionIdCount());
     try std.testing.expectEqual(@as(usize, 1), conn.pendingNewConnectionIdCount());
 
-    const replacement_payload = (try conn.pollTx(2, &tx)) orelse return error.TestUnexpectedResult;
+    const replacement_payload = (try conn.pollTx(2 * ms, &tx)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(replacement_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -66961,7 +66964,7 @@ test "issueConnectionId allows replacement when retire_prior_to frees peer activ
     var retire_buf: [16]u8 = undefined;
     var retire_out = buffer.fixedWriter(&retire_buf);
     try frame.encodeFrame(retire_out.writer(), .{ .retire_connection_id = .{ .sequence_number = 0 } });
-    try conn.processDatagram(10, retire_out.getWritten());
+    try conn.processDatagram(10 * ms, retire_out.getWritten());
     try std.testing.expectEqual(@as(u64, 2), conn.localConnectionIdCount());
     try std.testing.expect(conn.local_connection_ids.items[0].retired);
 }
@@ -66986,7 +66989,7 @@ test "zero-length local initial source CID rejects NEW and RETIRE connection-id 
     try std.testing.expectEqual(@as(u64, 0), try retire_conn.issueConnectionId(&retire_cid, retire_token, 0));
 
     var tx: [64]u8 = undefined;
-    _ = (try retire_conn.pollTx(0, &tx)) orelse return error.TestUnexpectedResult;
+    _ = (try retire_conn.pollTx(0 * ms, &tx)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(retire_conn.local_connection_ids.items[0].sent);
     try retire_conn.setLocalInitialSourceConnectionId(&.{});
 
@@ -67003,7 +67006,7 @@ test "zero-length local initial source CID rejects NEW and RETIRE connection-id 
     try std.testing.expectEqual(@as(u64, 0), retire_conn.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try retire_conn.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try retire_conn.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -67029,13 +67032,13 @@ test "RETIRE_CONNECTION_ID rejects unknown or unsent local ids" {
     var retire_out = buffer.fixedWriter(&retire_buf);
     try frame.encodeFrame(retire_out.writer(), .{ .retire_connection_id = .{ .sequence_number = 0 } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, retire_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, retire_out.getWritten()));
     try std.testing.expectEqual(@as(u64, 1), conn.localConnectionIdCount());
     try std.testing.expect(!conn.local_connection_ids.items[0].retired);
 
     retire_out = buffer.fixedWriter(&retire_buf);
     try frame.encodeFrame(retire_out.writer(), .{ .retire_connection_id = .{ .sequence_number = 9 } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, retire_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, retire_out.getWritten()));
 }
 
 test "RETIRE_CONNECTION_ID rolls back local retirement when payload is invalid" {
@@ -67048,7 +67051,7 @@ test "RETIRE_CONNECTION_ID rolls back local retirement when payload is invalid" 
     try std.testing.expectEqual(@as(u64, 0), try conn.issueConnectionId(&cid, token, 0));
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)).?;
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
     try std.testing.expect(conn.local_connection_ids.items[0].sent);
 
     var datagram: [24]u8 = undefined;
@@ -67056,7 +67059,7 @@ test "RETIRE_CONNECTION_ID rolls back local retirement when payload is invalid" 
     try frame.encodeFrame(out.writer(), .{ .retire_connection_id = .{ .sequence_number = 0 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(10 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 1), conn.localConnectionIdCount());
     try std.testing.expect(!conn.local_connection_ids.items[0].retired);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -67080,13 +67083,13 @@ test "NEW_CONNECTION_ID tracks active peer ids and queues RETIRE_CONNECTION_ID" 
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(10, out.getWritten());
+    try conn.processDatagram(10 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 1), conn.activeConnectionIdCount());
     try std.testing.expectEqual(@as(usize, 0), conn.pending_retire_connection_ids.items.len);
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(20, &tx)).?;
+    _ = (try conn.pollTx(20 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67095,7 +67098,7 @@ test "NEW_CONNECTION_ID tracks active peer ids and queues RETIRE_CONNECTION_ID" 
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(30, out.getWritten());
+    try conn.processDatagram(30 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 2), conn.active_connection_ids.items.len);
     try std.testing.expect(conn.active_connection_ids.items[0].retired);
     try std.testing.expect(!conn.active_connection_ids.items[1].retired);
@@ -67103,7 +67106,7 @@ test "NEW_CONNECTION_ID tracks active peer ids and queues RETIRE_CONNECTION_ID" 
     try std.testing.expectEqual(@as(usize, 1), conn.pending_retire_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.pending_retire_connection_ids.items[0]);
 
-    const retire_payload = (try conn.pollTx(40, &tx)).?;
+    const retire_payload = (try conn.pollTx(40 * ms, &tx)).?;
     var ack = try frame.decodeFrameSlice(retire_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -67141,8 +67144,8 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
-    _ = (try conn.pollTx(0, &tx)).?;
+    try conn.processDatagram(0 * ms, out.getWritten());
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67151,9 +67154,9 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
-    _ = (try conn.pollTx(1, &tx)).?;
+    _ = (try conn.pollTx(1 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67162,7 +67165,7 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid0_mismatch,
         .stateless_reset_token = token0,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
 
@@ -67173,7 +67176,7 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid1,
         .stateless_reset_token = token0,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(3, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(3 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
 
@@ -67184,8 +67187,8 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(4, out.getWritten());
-    _ = (try conn.pollTx(3, &tx)).?;
+    try conn.processDatagram(4 * ms, out.getWritten());
+    _ = (try conn.pollTx(3 * ms, &tx)).?;
     try std.testing.expectEqual(@as(u64, 2), conn.activeConnectionIdCount());
 
     out = buffer.fixedWriter(&datagram);
@@ -67195,7 +67198,7 @@ test "NEW_CONNECTION_ID enforces active id limit and duplicate consistency" {
         .connection_id = &cid2,
         .stateless_reset_token = token2,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(5, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(5 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 2), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 2), conn.activeConnectionIdCount());
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -67217,7 +67220,7 @@ test "NEW_CONNECTION_ID rejects reused peer CID value across sequence numbers" {
         .connection_id = &cid,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67226,7 +67229,7 @@ test "NEW_CONNECTION_ID rejects reused peer CID value across sequence numbers" {
         .connection_id = &cid,
         .stateless_reset_token = token1,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
 
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 1), conn.activeConnectionIdCount());
@@ -67262,7 +67265,7 @@ test "zero-length peer destination CID rejects NEW_CONNECTION_ID" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -67293,10 +67296,10 @@ test "NEW_CONNECTION_ID rejects retire_prior_to greater than sequence number bef
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)).?;
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try out.writer().writeByte(@intFromEnum(frame.FrameType.new_connection_id));
@@ -67306,7 +67309,7 @@ test "NEW_CONNECTION_ID rejects retire_prior_to greater than sequence number bef
     try out.writer().writeAll(&cid1);
     try out.writer().writeAll(&token1);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expectEqual(@as(u64, 1), conn.activeConnectionIdCount());
     try std.testing.expect(!conn.active_connection_ids.items[0].retired);
@@ -67334,10 +67337,10 @@ test "NEW_CONNECTION_ID retires newly received ids below largest retire_prior_to
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)).?;
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67346,7 +67349,7 @@ test "NEW_CONNECTION_ID retires newly received ids below largest retire_prior_to
         .connection_id = &cid3,
         .stateless_reset_token = token3,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 3), conn.largest_peer_retire_prior_to);
     try std.testing.expectEqual(@as(usize, 2), conn.active_connection_ids.items.len);
@@ -67362,7 +67365,7 @@ test "NEW_CONNECTION_ID retires newly received ids below largest retire_prior_to
         .connection_id = &cid2,
         .stateless_reset_token = token2,
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 3), conn.largest_peer_retire_prior_to);
     try std.testing.expectEqual(@as(usize, 2), conn.active_connection_ids.items.len);
@@ -67390,10 +67393,10 @@ test "NEW_CONNECTION_ID below largest retire_prior_to rolls back when payload is
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)).?;
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67402,7 +67405,7 @@ test "NEW_CONNECTION_ID below largest retire_prior_to rolls back when payload is
         .connection_id = &cid3,
         .stateless_reset_token = token3,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67413,7 +67416,7 @@ test "NEW_CONNECTION_ID below largest retire_prior_to rolls back when payload is
     } });
     try out.writer().writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 3), conn.largest_peer_retire_prior_to);
     try std.testing.expectEqual(@as(usize, 2), conn.active_connection_ids.items.len);
     try std.testing.expect(conn.active_connection_ids.items[0].retired);
@@ -67441,10 +67444,10 @@ test "NEW_CONNECTION_ID retire_prior_to rolls back when payload is invalid" {
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)).?;
+    _ = (try conn.pollTx(0 * ms, &tx)).?;
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -67455,7 +67458,7 @@ test "NEW_CONNECTION_ID retire_prior_to rolls back when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.active_connection_ids.items.len);
     try std.testing.expect(!conn.active_connection_ids.items[0].retired);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_retire_connection_ids.items.len);
@@ -67477,7 +67480,7 @@ test "detectStatelessReset matches active peer-issued reset token" {
         .connection_id = &cid,
         .stateless_reset_token = token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
     var reset_out = buffer.fixedWriter(&reset_buf);
@@ -67514,7 +67517,7 @@ test "detectStatelessReset ignores retired peer-issued reset tokens" {
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expect(conn.active_connection_ids.items[0].retired);
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
@@ -67541,7 +67544,7 @@ test "processStatelessResetDatagram enters draining on active reset token" {
         .connection_id = &cid,
         .stateless_reset_token = token,
     } });
-    try conn.processDatagram(0, frame_out.getWritten());
+    try conn.processDatagram(0 * ms, frame_out.getWritten());
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
     var reset_out = buffer.fixedWriter(&reset_buf);
@@ -67554,13 +67557,13 @@ test "processStatelessResetDatagram enters draining on active reset token" {
     try packet.encodeStatelessReset(reset_out.writer(), &[_]u8{ 0x40, 0xaa, 0xbb, 0xcc, 0xdd }, other);
     try std.testing.expectEqual(@as(?u64, null), conn.processStatelessResetDatagram(10, reset_out.getWritten()));
     try std.testing.expectEqual(ConnectionState.active, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis() == null);
+    try std.testing.expect(conn.closeDeadline() == null);
 
     reset_out = buffer.fixedWriter(&reset_buf);
     try packet.encodeStatelessReset(reset_out.writer(), &[_]u8{ 0x40, 0xaa, 0xbb, 0xcc, 0xdd }, token);
     try std.testing.expectEqual(@as(?u64, 0), conn.processStatelessResetDatagram(11, reset_out.getWritten()));
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis() != null);
+    try std.testing.expect(conn.closeDeadline() != null);
     try std.testing.expect(conn.peerClose() == null);
     try std.testing.expect(conn.pending_close == null);
 }
@@ -67587,7 +67590,7 @@ test "processStatelessResetDatagram ignores retired tokens and stops pending clo
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expect(conn.active_connection_ids.items[0].retired);
 
     var reset_buf: [packet.min_stateless_reset_datagram_len]u8 = undefined;
@@ -67605,7 +67608,7 @@ test "processStatelessResetDatagram ignores retired tokens and stops pending clo
     try std.testing.expectEqual(@as(?u64, 1), conn.processStatelessResetDatagram(11, reset_out.getWritten()));
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
     try std.testing.expect(conn.pending_close == null);
-    try std.testing.expect(conn.closeDeadlineMillis() != null);
+    try std.testing.expect(conn.closeDeadline() != null);
 }
 
 test "STOP_SENDING queues RESET_STREAM and drops unsent stream data" {
@@ -67621,14 +67624,14 @@ test "STOP_SENDING queues RESET_STREAM and drops unsent stream data" {
         .stream_id = stream_id,
         .application_error_code = 7,
     } });
-    try conn.processDatagram(10, stop_out.getWritten());
+    try conn.processDatagram(10 * ms, stop_out.getWritten());
 
     try std.testing.expect(conn.findSendStream(stream_id).?.reset_sent);
     try std.testing.expectError(error.StreamClosed, conn.sendOnStream(stream_id, "again", false));
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const reset_payload = (try conn.pollTx(20, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(20 * ms, &out_buf)).?;
 
     var ack = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
@@ -67649,7 +67652,7 @@ test "STOP_SENDING queues RESET_STREAM and drops unsent stream data" {
     }
 
     try std.testing.expectEqual(@as(usize, 1), conn.send_queue.items.len);
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(30, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(30 * ms, &out_buf));
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 }
 
@@ -67666,7 +67669,7 @@ test "resetStream queues RESET_STREAM and drops unsent stream data" {
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const reset_payload = (try conn.pollTx(20, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(20 * ms, &out_buf)).?;
 
     var reset = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&reset.frame, std.testing.allocator);
@@ -67680,7 +67683,7 @@ test "resetStream queues RESET_STREAM and drops unsent stream data" {
     }
 
     try std.testing.expectEqual(@as(usize, 1), conn.send_queue.items.len);
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(30, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(30 * ms, &out_buf));
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 }
 
@@ -67697,14 +67700,14 @@ test "resetStream can abort an observed peer bidirectional stream" {
         .data = "hello",
         .fin = false,
     } });
-    try conn.processDatagram(0, stream_out.getWritten());
+    try conn.processDatagram(0 * ms, stream_out.getWritten());
 
     try conn.resetStream(0, 9);
     try std.testing.expectError(error.StreamClosed, conn.sendOnStream(0, "reply", false));
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const reset_payload = (try conn.pollTx(10, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(10 * ms, &out_buf)).?;
 
     var ack = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
@@ -67777,7 +67780,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
     try std.testing.expectEqual(@as(?u64, null), client_state.receive_buffered);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     const server_received = (try server.streamState(stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamSendState.none, server_received.send);
@@ -67795,7 +67798,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
     try std.testing.expectEqual(StreamReceiveState.data_read, server_read.receive);
     try std.testing.expectEqual(@as(?u64, 5), server_read.receive_read_offset);
 
-    try client.receiveAckInSpace(.application, 2, .{
+    try client.receiveAckInSpace(.application, 2 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -67808,10 +67811,10 @@ test "streamState reports FIN send and receive final-size snapshots" {
     const split_stream_id = try split_client.openStream();
     try split_client.sendOnStream(split_stream_id, "a", false);
     try split_client.sendOnStream(split_stream_id, "b", true);
-    _ = (try split_client.pollTx(0, &datagram)).?;
-    _ = (try split_client.pollTx(1, &datagram)).?;
+    _ = (try split_client.pollTx(0 * ms, &datagram)).?;
+    _ = (try split_client.pollTx(1 * ms, &datagram)).?;
 
-    try split_client.receiveAckInSpace(.application, 2, .{
+    try split_client.receiveAckInSpace(.application, 2 * ms, .{
         .largest_acknowledged = 1,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -67819,7 +67822,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
     const split_fin_acked = (try split_client.streamState(split_stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamSendState.data_sent, split_fin_acked.send);
 
-    try split_client.receiveAckInSpace(.application, 3, .{
+    try split_client.receiveAckInSpace(.application, 3 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -67835,7 +67838,7 @@ test "streamState reports FIN send and receive final-size snapshots" {
 
     const zero_stream_id = try zero_client.openStream();
     try zero_client.sendOnStream(zero_stream_id, "", true);
-    try zero_server.processDatagram(1, (try zero_client.pollTx(1, &datagram)).?);
+    try zero_server.processDatagram(1 * ms, (try zero_client.pollTx(1 * ms, &datagram)).?);
 
     const zero_received = (try zero_server.streamState(zero_stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamReceiveState.data_received, zero_received.receive);
@@ -67866,7 +67869,7 @@ test "streamState reports reset send and receive snapshots" {
     try std.testing.expectEqual(@as(?u64, 5), client_state.send_offset);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     const server_state = (try server.streamState(stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamSendState.none, server_state.send);
@@ -67884,7 +67887,7 @@ test "streamState reports reset send and receive snapshots" {
     try std.testing.expectEqual(@as(?u64, 5), server_read.receive_final_size);
     try std.testing.expectEqual(@as(?u64, 7), server_read.receive_reset_error_code);
 
-    try client.receiveAckInSpace(.application, 2, .{
+    try client.receiveAckInSpace(.application, 2 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -67904,7 +67907,7 @@ test "streamState reports STOP_SENDING receive-side request" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try server.stopSending(stream_id, 11);
 
     const stopped_state = (try server.streamState(stream_id)) orelse return error.TestUnexpectedResult;
@@ -67915,8 +67918,8 @@ test "streamState reports STOP_SENDING receive-side request" {
     try std.testing.expectEqual(@as(?u64, 0), stopped_state.receive_read_offset);
     try std.testing.expectEqual(@as(?u64, null), stopped_state.receive_final_size);
 
-    try client.processDatagram(1, (try server.pollTx(1, &datagram)).?);
-    try server.processDatagram(2, (try client.pollTx(2, &datagram)).?);
+    try client.processDatagram(1 * ms, (try server.pollTx(1 * ms, &datagram)).?);
+    try server.processDatagram(2 * ms, (try client.pollTx(2 * ms, &datagram)).?);
 
     const reset_state = (try server.streamState(stream_id)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(StreamReceiveState.reset_received, reset_state.receive);
@@ -67936,11 +67939,11 @@ test "stopSending queues STOP_SENDING and peer responds with RESET_STREAM" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(10, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(10 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try server.stopSending(stream_id, 11);
     try std.testing.expectEqual(@as(usize, 1), server.pending_stop_sending.items.len);
 
-    const stop_payload = (try server.pollTx(20, &datagram)).?;
+    const stop_payload = (try server.pollTx(20 * ms, &datagram)).?;
     var ack = try frame.decodeFrameSlice(stop_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -67958,11 +67961,11 @@ test "stopSending queues STOP_SENDING and peer responds with RESET_STREAM" {
         else => return error.TestUnexpectedResult,
     }
 
-    try client.processDatagram(30, stop_payload);
+    try client.processDatagram(30 * ms, stop_payload);
     try std.testing.expect(client.findSendStream(stream_id).?.reset_sent);
     try std.testing.expectError(error.StreamClosed, client.sendOnStream(stream_id, "again", false));
 
-    const reset_payload = (try client.pollTx(40, &datagram)).?;
+    const reset_payload = (try client.pollTx(40 * ms, &datagram)).?;
     var reset_ack = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&reset_ack.frame, std.testing.allocator);
     switch (reset_ack.frame) {
@@ -67999,7 +68002,7 @@ test "stopSending validates receive-side direction and stream state" {
     try std.testing.expect(conn.findRecvStream(stream_id).?.stop_sending_sent);
 
     var out_buf: [32]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68034,7 +68037,7 @@ test "stopSending rejects receive stream after RESET_STREAM" {
         .application_error_code = 7,
         .final_size = 0,
     } });
-    try conn.processDatagram(0, reset_out.getWritten());
+    try conn.processDatagram(0 * ms, reset_out.getWritten());
 
     try std.testing.expectError(error.StreamClosed, conn.stopSending(0, 1));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_stop_sending.items.len);
@@ -68052,7 +68055,7 @@ test "stopSending rejects receive stream after final data is received" {
         .fin = true,
         .data = "done",
     } });
-    try conn.processDatagram(0, stream_out.getWritten());
+    try conn.processDatagram(0 * ms, stream_out.getWritten());
 
     try std.testing.expectError(error.StreamClosed, conn.stopSending(0, 1));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_stop_sending.items.len);
@@ -68070,7 +68073,7 @@ test "stopSending is still valid while final-size stream data has gaps" {
         .fin = true,
         .data = "!",
     } });
-    try conn.processDatagram(0, stream_out.getWritten());
+    try conn.processDatagram(0 * ms, stream_out.getWritten());
 
     try conn.stopSending(0, 1);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_stop_sending.items.len);
@@ -68091,10 +68094,10 @@ test "pending STOP_SENDING is dropped after matching RESET_STREAM arrives" {
         .application_error_code = 7,
         .final_size = 0,
     } });
-    try conn.processDatagram(0, reset_out.getWritten());
+    try conn.processDatagram(0 * ms, reset_out.getWritten());
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68121,10 +68124,10 @@ test "pending STOP_SENDING is dropped after final data arrives" {
         .fin = true,
         .data = "done",
     } });
-    try conn.processDatagram(0, stream_out.getWritten());
+    try conn.processDatagram(0 * ms, stream_out.getWritten());
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68151,7 +68154,7 @@ test "STOP_SENDING on peer bidirectional stream prevents later reply" {
         .stream_id = stream_id,
         .application_error_code = 9,
     } });
-    try conn.processDatagram(0, stop_out.getWritten());
+    try conn.processDatagram(0 * ms, stop_out.getWritten());
 
     try std.testing.expect(conn.findRecvStream(0) != null);
     try std.testing.expect(conn.findRecvStream(4) != null);
@@ -68159,7 +68162,7 @@ test "STOP_SENDING on peer bidirectional stream prevents later reply" {
     try std.testing.expectError(error.StreamClosed, conn.sendOnStream(stream_id, "reply", false));
 
     var out_buf: [64]u8 = undefined;
-    const reset_payload = (try conn.pollTx(0, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var ack = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -68186,7 +68189,7 @@ test "STOP_SENDING on peer bidirectional stream prevents later reply" {
         .fin = true,
         .data = "done",
     } });
-    try conn.processDatagram(1, stream_out.getWritten());
+    try conn.processDatagram(1 * ms, stream_out.getWritten());
 
     var read_buf: [8]u8 = undefined;
     try std.testing.expectEqual(@as(?usize, null), try conn.recvOnStream(0, &read_buf));
@@ -68208,7 +68211,7 @@ test "STOP_SENDING rolls back reset state when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expect(!conn.findSendStream(stream_id).?.reset_sent);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -68229,7 +68232,7 @@ test "STOP_SENDING rolls back peer bidirectional stream creation when payload is
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_reset_streams.items.len);
@@ -68251,7 +68254,7 @@ test "STOP_SENDING validates stream direction and count before queuing reset" {
         .application_error_code = 1,
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
 
@@ -68261,7 +68264,7 @@ test "STOP_SENDING validates stream direction and count before queuing reset" {
         .application_error_code = 1,
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_reset_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
 }
@@ -68278,8 +68281,8 @@ test "duplicate STOP_SENDING does not queue duplicate RESET_STREAM" {
         .application_error_code = 1,
     } });
 
-    try conn.processDatagram(0, stop_out.getWritten());
-    try conn.processDatagram(1, stop_out.getWritten());
+    try conn.processDatagram(0 * ms, stop_out.getWritten());
+    try conn.processDatagram(1 * ms, stop_out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 }
 
@@ -68294,10 +68297,10 @@ test "pollTx coalesces pending ACK with queued STREAM payload" {
     try client.sendOnStream(stream_id, "hello", true);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(20, (try client.pollTx(10, &datagram)).?);
+    try server.processDatagram(20 * ms, (try client.pollTx(10 * ms, &datagram)).?);
 
     try server.sendOnStream(stream_id, "echo", true);
-    const coalesced = (try server.pollTx(30, &datagram)).?;
+    const coalesced = (try server.pollTx(30 * ms, &datagram)).?;
     try std.testing.expectEqual(@as(usize, 1), server.sent_packets.items.len);
     try std.testing.expectEqual(coalesced.len, server.sent_packets.items[0].bytes);
 
@@ -68319,15 +68322,15 @@ test "pollTx coalesces pending ACK with queued STREAM payload" {
         else => return error.TestUnexpectedResult,
     }
 
-    try client.processDatagram(40, coalesced);
+    try client.processDatagram(40 * ms, coalesced);
     try std.testing.expectEqual(@as(usize, 0), client.sent_packets.items.len);
 
     var recv_buf: [16]u8 = undefined;
     const recv_len = (try client.recvOnStream(stream_id, &recv_buf)).?;
     try std.testing.expectEqualStrings("echo", recv_buf[0..recv_len]);
 
-    const ack_back = (try client.pollTx(50, &datagram)).?;
-    try server.processDatagram(60, ack_back);
+    const ack_back = (try client.pollTx(50 * ms, &datagram)).?;
+    try server.processDatagram(60 * ms, ack_back);
     try std.testing.expectEqual(@as(usize, 0), server.sent_packets.items.len);
 }
 
@@ -68342,16 +68345,16 @@ test "pollTx keeps queued STREAM when pending ACK cannot fit output buffer" {
     try client.sendOnStream(stream_id, "hello", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(20, (try client.pollTx(10, &datagram)).?);
+    try server.processDatagram(20 * ms, (try client.pollTx(10 * ms, &datagram)).?);
     try server.sendOnStream(stream_id, "echo", false);
 
     var tiny = [_]u8{0xaa};
-    try std.testing.expectError(error.BufferTooSmall, server.pollTx(30, &tiny));
+    try std.testing.expectError(error.BufferTooSmall, server.pollTx(30 * ms, &tiny));
     try std.testing.expectEqual(@as(u8, 0xaa), tiny[0]);
     try std.testing.expectEqual(@as(?u64, 0), server.pending_ack_largest);
     try std.testing.expectEqual(@as(usize, 1), server.send_queue.items.len);
 
-    const coalesced = (try server.pollTx(40, &datagram)).?;
+    const coalesced = (try server.pollTx(40 * ms, &datagram)).?;
     var decoded = try frame.decodeFrameSlice(coalesced, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68371,9 +68374,9 @@ test "ACK ranges keep unacknowledged sent packets in flight" {
     try conn.sendOnStream(stream_id, "c", false);
 
     var out_buf: [128]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)).?;
-    const unacked_payload = (try conn.pollTx(20, &out_buf)).?;
-    _ = (try conn.pollTx(30, &out_buf)).?;
+    _ = (try conn.pollTx(10 * ms, &out_buf)).?;
+    const unacked_payload = (try conn.pollTx(20 * ms, &out_buf)).?;
+    _ = (try conn.pollTx(30 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 3), conn.sent_packets.items.len);
 
     const ranges = [_]frame.AckRange{
@@ -68388,7 +68391,7 @@ test "ACK ranges keep unacknowledged sent packets in flight" {
         .ranges = &ranges,
     } });
 
-    try conn.processDatagram(60, ack_out.getWritten());
+    try conn.processDatagram(60 * ms, ack_out.getWritten());
 
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 1), conn.sent_packets.items[0].packet_number);
@@ -68404,17 +68407,17 @@ test "ACK-driven loss requeues STREAM frame for retransmission" {
     try conn.sendOnStream(stream_id, "lost", false);
 
     var out_buf: [128]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)).?;
+    _ = (try conn.pollTx(10 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(20, &out_buf)).?;
+    _ = (try conn.pollTx(20 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(30, &out_buf)).?;
+    _ = (try conn.pollTx(30 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(40, &out_buf)).?;
+    _ = (try conn.pollTx(40 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 4), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 
-    try conn.receiveAckInSpace(.application, 70, .{
+    try conn.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -68426,7 +68429,7 @@ test "ACK-driven loss requeues STREAM frame for retransmission" {
     try std.testing.expectEqual(@as(u64, 0), conn.send_queue.items[0].offset);
     try std.testing.expectEqualStrings("lost", conn.send_queue.items[0].data);
 
-    const retransmit_payload = (try conn.pollTx(80, &out_buf)).?;
+    const retransmit_payload = (try conn.pollTx(80 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(retransmit_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68448,13 +68451,13 @@ test "ACK-driven loss skips STREAM retransmission after RESET_STREAM" {
     try conn.sendOnStream(stream_id, "lost", false);
 
     var out_buf: [128]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)).?;
+    _ = (try conn.pollTx(10 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(20, &out_buf)).?;
+    _ = (try conn.pollTx(20 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(30, &out_buf)).?;
+    _ = (try conn.pollTx(30 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(40, &out_buf)).?;
+    _ = (try conn.pollTx(40 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 4), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 
@@ -68464,11 +68467,11 @@ test "ACK-driven loss skips STREAM retransmission after RESET_STREAM" {
         .stream_id = stream_id,
         .application_error_code = 7,
     } });
-    try conn.processDatagram(50, stop_out.getWritten());
+    try conn.processDatagram(50 * ms, stop_out.getWritten());
     try std.testing.expect(conn.findSendStream(stream_id).?.reset_sent);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 
-    try conn.receiveAckInSpace(.application, 70, .{
+    try conn.receiveAckInSpace(.application, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -68478,7 +68481,7 @@ test "ACK-driven loss skips STREAM retransmission after RESET_STREAM" {
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.pending_reset_streams.items.len);
 
-    const reset_payload = (try conn.pollTx(80, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(80 * ms, &out_buf)).?;
     var ack = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -68518,7 +68521,7 @@ test "new congestion event allows one STREAM retransmission probe despite full c
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 
     conn.recovery_state.congestion_window = recovery.minimumCongestionWindow(conn.recovery_state.max_datagram_size);
-    try conn.receiveAckInSpace(.application, 90, .{
+    try conn.receiveAckInSpace(.application, 90 * ms, .{
         .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -68529,7 +68532,7 @@ test "new congestion event allows one STREAM retransmission probe despite full c
     try std.testing.expectEqual(@as(usize, 1), conn.congestion_probe_count);
     try std.testing.expect(conn.send_queue.items.len >= 1);
 
-    const retransmit_payload = (try conn.pollTx(100, &out_buf)) orelse return error.TestUnexpectedResult;
+    const retransmit_payload = (try conn.pollTx(100 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(retransmit_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68567,9 +68570,9 @@ test "ACK_ECN CE congestion event allows one STREAM probe despite full cwnd" {
     }
 
     var out_buf: [1400]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]const u8, null), try conn.pollTx(350, &out_buf));
+    try std.testing.expectEqual(@as(?[]const u8, null), try conn.pollTx(350 * ms, &out_buf));
 
-    try conn.receiveAckEcnInSpace(.application, 360, .{
+    try conn.receiveAckEcnInSpace(.application, 360 * ms, .{
         .ack = .{
             .largest_acknowledged = 0,
             .ack_delay = 0,
@@ -68588,7 +68591,7 @@ test "ACK_ECN CE congestion event allows one STREAM probe despite full cwnd" {
     try std.testing.expect(!conn.recovery_state.canSend(1));
     try std.testing.expectEqual(@as(usize, 1), conn.congestion_probe_count);
 
-    const probe_payload = (try conn.pollTx(370, &out_buf)) orelse return error.TestUnexpectedResult;
+    const probe_payload = (try conn.pollTx(370 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(probe_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -68610,13 +68613,13 @@ test "processDatagram rolls back STREAM retransmission requeue when payload is i
     try conn.sendOnStream(stream_id, "lost", false);
 
     var out_buf: [128]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)).?;
+    _ = (try conn.pollTx(10 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(20, &out_buf)).?;
+    _ = (try conn.pollTx(20 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(30, &out_buf)).?;
+    _ = (try conn.pollTx(30 * ms, &out_buf)).?;
     try conn.sendPing();
-    _ = (try conn.pollTx(40, &out_buf)).?;
+    _ = (try conn.pollTx(40 * ms, &out_buf)).?;
     const bytes_in_flight = conn.recovery_state.bytes_in_flight;
 
     var datagram: [32]u8 = undefined;
@@ -68628,7 +68631,7 @@ test "processDatagram rolls back STREAM retransmission requeue when payload is i
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(70, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(70 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 4), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
     try std.testing.expectEqual(bytes_in_flight, conn.recovery_state.bytes_in_flight);
@@ -68645,13 +68648,13 @@ test "ACK-driven loss requeues CRYPTO frame for retransmission" {
 
     var out_buf: [128]u8 = undefined;
     _ = (try conn.pollTxInSpace(.handshake, 10, &out_buf)).?;
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 1);
-    _ = try conn.recordPacketSentInSpace(.handshake, 30, 1);
-    _ = try conn.recordPacketSentInSpace(.handshake, 40, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 30 * ms, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 40 * ms, 1);
     try std.testing.expectEqual(@as(usize, 4), conn.sentPacketCount(.handshake));
     try std.testing.expectEqual(@as(usize, 0), conn.handshake_packet_space.crypto_send_queue.items.len);
 
-    try conn.receiveAckInSpace(.handshake, 70, .{
+    try conn.receiveAckInSpace(.handshake, 70 * ms, .{
         .largest_acknowledged = 3,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -68682,9 +68685,9 @@ test "processDatagram rolls back CRYPTO retransmission requeue when payload is i
 
     var out_buf: [128]u8 = undefined;
     _ = (try conn.pollTxInSpace(.handshake, 10, &out_buf)).?;
-    _ = try conn.recordPacketSentInSpace(.handshake, 20, 1);
-    _ = try conn.recordPacketSentInSpace(.handshake, 30, 1);
-    _ = try conn.recordPacketSentInSpace(.handshake, 40, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 20 * ms, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 30 * ms, 1);
+    _ = try conn.recordPacketSentInSpace(.handshake, 40 * ms, 1);
     const bytes_in_flight = conn.bytesInFlight(.handshake);
 
     var datagram: [32]u8 = undefined;
@@ -68711,7 +68714,7 @@ test "processDatagram rolls back ACK recovery state when payload is invalid" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)).?;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)).?;
 
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
@@ -68722,7 +68725,7 @@ test "processDatagram rolls back ACK recovery state when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(60 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(payload.len, conn.recovery_state.bytes_in_flight);
@@ -68740,8 +68743,8 @@ test "processDatagram and recvOnStream move stream data" {
     try client.sendOnStream(stream_id, "world", true);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     var read_buf: [32]u8 = undefined;
     const n = (try server.recvOnStream(stream_id, &read_buf)).?;
@@ -68763,7 +68766,7 @@ test "RESET_STREAM closes receive stream and accounts final size once" {
         .application_error_code = 42,
         .final_size = 5,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 42), conn.recv_streams.items[0].reset_error_code);
     try std.testing.expectEqual(@as(?u64, 5), try conn.recvStreamFinalSize(0));
@@ -68778,7 +68781,7 @@ test "RESET_STREAM closes receive stream and accounts final size once" {
         .application_error_code = 99,
         .final_size = 5,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 42), conn.recv_streams.items[0].reset_error_code);
 
@@ -68789,7 +68792,7 @@ test "RESET_STREAM closes receive stream and accounts final size once" {
         .fin = false,
         .data = "x",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
 }
 
 test "RESET_STREAM rejects inconsistent final size and rolls back state" {
@@ -68804,7 +68807,7 @@ test "RESET_STREAM rejects inconsistent final size and rolls back state" {
         .fin = false,
         .data = "abc",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
@@ -68812,7 +68815,7 @@ test "RESET_STREAM rejects inconsistent final size and rolls back state" {
         .application_error_code = 1,
         .final_size = 2,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 3), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, null), conn.recv_streams.items[0].reset_error_code);
 
@@ -68833,7 +68836,7 @@ test "RESET_STREAM after FIN with same final size keeps received data readable" 
         .fin = true,
         .data = "abc",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
@@ -68841,7 +68844,7 @@ test "RESET_STREAM after FIN with same final size keeps received data readable" 
         .application_error_code = 1,
         .final_size = 3,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, null), conn.recv_streams.items[0].reset_error_code);
 
     var read_buf: [8]u8 = undefined;
@@ -68865,7 +68868,7 @@ test "RESET_STREAM after FIN with gaps aborts receive side and accounts final si
         .fin = true,
         .data = "!",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, 6), conn.recv_streams.items[0].final_size);
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 1), conn.recv_data_bytes);
@@ -68876,7 +68879,7 @@ test "RESET_STREAM after FIN with gaps aborts receive side and accounts final si
         .application_error_code = 7,
         .final_size = 6,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 6), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
 
@@ -68887,7 +68890,7 @@ test "RESET_STREAM after FIN with gaps aborts receive side and accounts final si
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 6), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].data.items.len);
 
@@ -68910,7 +68913,7 @@ test "RESET_STREAM flow-control violation does not create receive state" {
         .final_size = 3,
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 }
@@ -68928,7 +68931,7 @@ test "processDatagram enforces inbound bidirectional stream count for STREAM" {
         .data = "x",
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
 
@@ -68939,7 +68942,7 @@ test "processDatagram enforces inbound bidirectional stream count for STREAM" {
         .fin = false,
         .data = "ok",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
 }
 
@@ -68955,7 +68958,7 @@ test "processDatagram enforces inbound bidirectional stream count for RESET_STRE
         .final_size = 0,
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
 }
@@ -68973,7 +68976,7 @@ test "processDatagram enforces inbound unidirectional stream count" {
         .data = "x",
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
 
@@ -68984,7 +68987,7 @@ test "processDatagram enforces inbound unidirectional stream count" {
         .fin = false,
         .data = "ok",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
 }
 
@@ -69000,7 +69003,7 @@ test "processDatagram rejects local bidirectional streams that were not opened" 
         .fin = false,
         .data = "x",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 
     out = buffer.fixedWriter(&datagram);
@@ -69009,7 +69012,7 @@ test "processDatagram rejects local bidirectional streams that were not opened" 
         .application_error_code = 1,
         .final_size = 0,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 
     _ = try conn.openStream();
@@ -69020,7 +69023,7 @@ test "processDatagram rejects local bidirectional streams that were not opened" 
         .fin = false,
         .data = "ok",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
 }
 
@@ -69036,7 +69039,7 @@ test "processDatagram accepts peer unidirectional stream receive state" {
         .fin = false,
         .data = "x",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
 
     var read_buf: [8]u8 = undefined;
@@ -69049,7 +69052,7 @@ test "processDatagram accepts peer unidirectional stream receive state" {
         .application_error_code = 1,
         .final_size = 1,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 2), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(?u64, 1), conn.findRecvStream(6).?.reset_error_code);
 }
@@ -69068,7 +69071,7 @@ test "processDatagram rejects local unidirectional stream receive state" {
         .fin = false,
         .data = "x",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 
     out = buffer.fixedWriter(&datagram);
@@ -69077,7 +69080,7 @@ test "processDatagram rejects local unidirectional stream receive state" {
         .application_error_code = 1,
         .final_size = 0,
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 }
 
@@ -69109,7 +69112,7 @@ test "client accepts HANDSHAKE_DONE and queues ACK" {
     try std.testing.expect(conn.hasHandshakeProtectionKeys());
 
     const payload = [_]u8{@intFromEnum(frame.FrameType.handshake_done)};
-    try conn.processDatagram(0, &payload);
+    try conn.processDatagram(0 * ms, &payload);
 
     try std.testing.expect(conn.handshakeConfirmed());
     try std.testing.expectEqual(HandshakeState.confirmed, conn.handshakeState());
@@ -69118,11 +69121,11 @@ test "client accepts HANDSHAKE_DONE and queues ACK" {
     try std.testing.expect(!conn.hasHandshakeProtectionKeys());
     try std.testing.expectError(
         error.InvalidPacket,
-        conn.pollProtectedHandshakeDatagramWithInstalledKeys(0, &dcid, &scid),
+        conn.pollProtectedHandshakeDatagramWithInstalledKeys(0 * ms, &dcid, &scid),
     );
 
     var out_buf: [16]u8 = undefined;
-    const ack_payload = (try conn.pollTx(0, &out_buf)).?;
+    const ack_payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(ack_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69147,7 +69150,7 @@ test "HANDSHAKE_DONE state rolls back when payload is invalid" {
         @intFromEnum(frame.FrameType.handshake_done),
         0xff,
     };
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &payload));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &payload));
     try std.testing.expect(!conn.handshakeConfirmed());
     try std.testing.expectEqual(HandshakeState.initial, conn.handshakeState());
     try std.testing.expect(!conn.packetNumberSpaceDiscarded(.handshake));
@@ -69161,12 +69164,12 @@ test "server rejects HANDSHAKE_DONE from peer" {
     defer conn.deinit();
 
     const payload = [_]u8{@intFromEnum(frame.FrameType.handshake_done)};
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &payload));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &payload));
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
 
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "client stores NEW_TOKEN and queues ACK" {
@@ -69177,13 +69180,13 @@ test "client stores NEW_TOKEN and queues ACK" {
     var token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "future" } });
 
-    try conn.processDatagram(0, token_out.getWritten());
+    try conn.processDatagram(0 * ms, token_out.getWritten());
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(usize, 1), conn.stored_new_tokens.items.len);
     try std.testing.expectEqualStrings("future", conn.latestNewToken().?);
 
     var out_buf: [16]u8 = undefined;
-    const ack_payload = (try conn.pollTx(0, &out_buf)).?;
+    const ack_payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(ack_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69200,15 +69203,15 @@ test "client stores NEW_TOKEN values up to configured limit" {
     var token_buf: [64]u8 = undefined;
     var token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "one" } });
-    try conn.processDatagram(0, token_out.getWritten());
+    try conn.processDatagram(0 * ms, token_out.getWritten());
 
     token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "two" } });
-    try conn.processDatagram(1, token_out.getWritten());
+    try conn.processDatagram(1 * ms, token_out.getWritten());
 
     token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "three" } });
-    try conn.processDatagram(2, token_out.getWritten());
+    try conn.processDatagram(2 * ms, token_out.getWritten());
 
     try std.testing.expectEqual(@as(usize, 2), conn.stored_new_tokens.items.len);
     try std.testing.expectEqualStrings("one", conn.stored_new_tokens.items[0]);
@@ -69224,13 +69227,13 @@ test "client rejects empty NEW_TOKEN without storing token" {
         0x00, // empty token length
     };
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &empty_new_token));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &empty_new_token));
     try std.testing.expectEqual(@as(usize, 0), conn.stored_new_tokens.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
 
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "server rejects NEW_TOKEN from peer" {
@@ -69241,13 +69244,13 @@ test "server rejects NEW_TOKEN from peer" {
     var token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "future" } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, token_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, token_out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), conn.next_peer_packet_number);
     try std.testing.expectEqual(@as(usize, 0), conn.stored_new_tokens.items.len);
 
     var out_buf: [16]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 }
 
 test "NEW_TOKEN storage rolls back when payload is invalid" {
@@ -69257,14 +69260,14 @@ test "NEW_TOKEN storage rolls back when payload is invalid" {
     var token_buf: [64]u8 = undefined;
     var token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "stable" } });
-    try conn.processDatagram(0, token_out.getWritten());
+    try conn.processDatagram(0 * ms, token_out.getWritten());
     try std.testing.expectEqualStrings("stable", conn.latestNewToken().?);
 
     token_out = buffer.fixedWriter(&token_buf);
     try frame.encodeFrame(token_out.writer(), .{ .new_token = .{ .token = "rollback" } });
     try token_out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, token_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, token_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.stored_new_tokens.items.len);
     try std.testing.expectEqualStrings("stable", conn.latestNewToken().?);
     try std.testing.expectEqual(@as(?u64, 0), conn.pending_ack_largest);
@@ -69283,13 +69286,13 @@ test "connection close frame closes public connection API" {
         .reason_phrase = "done",
     } });
 
-    try conn.processDatagram(0, close_out.getWritten());
+    try conn.processDatagram(0 * ms, close_out.getWritten());
     try std.testing.expect(conn.closed);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis().? > 0);
+    try std.testing.expect(conn.closeDeadline().? > 0);
 
     var out_buf: [32]u8 = undefined;
-    try std.testing.expectError(error.ConnectionClosed, conn.pollTx(0, &out_buf));
+    try std.testing.expectError(error.ConnectionClosed, conn.pollTx(0 * ms, &out_buf));
     try std.testing.expectError(error.ConnectionClosed, conn.openStream());
     try std.testing.expectError(error.ConnectionClosed, conn.openUniStream());
     try std.testing.expectError(error.ConnectionClosed, conn.closeConnection(0, 0, ""));
@@ -69302,7 +69305,7 @@ test "connection close frame closes public connection API" {
 
     const ping = [_]u8{@intFromEnum(frame.FrameType.ping)};
     const next_peer_packet_number = conn.nextPeerPacketNumber(.application);
-    try conn.processDatagram(0, &ping);
+    try conn.processDatagram(0 * ms, &ping);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
     try std.testing.expectEqual(next_peer_packet_number, conn.nextPeerPacketNumber(.application));
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
@@ -69320,11 +69323,11 @@ test "invalid payload rolls back connection close state" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expect(!conn.closed);
     try std.testing.expect(conn.peerClose() == null);
     try std.testing.expectEqual(ConnectionState.active, conn.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
     try std.testing.expectEqual(@as(u64, 1), try conn.openStream());
 }
 
@@ -69341,7 +69344,7 @@ test "processDatagramOrClose queues frame encoding close" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69376,7 +69379,7 @@ test "processDatagramOrClose queues frame encoding close for invalid ACK range" 
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69411,7 +69414,7 @@ test "processDatagramOrClose queues frame encoding close for invalid ACK_ECN ran
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69443,7 +69446,7 @@ test "processDatagramOrClose queues frame encoding close for MAX_STREAMS overflo
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69477,7 +69480,7 @@ test "processDatagramOrClose queues frame encoding close for STREAMS_BLOCKED ove
         try std.testing.expectEqual(@as(?u64, null), conn.peerStreamsBlockedBidiLimit());
 
         var out_buf: [64]u8 = undefined;
-        const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+        const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
         var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
         defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69510,7 +69513,7 @@ test "processDatagramOrClose queues frame encoding close for STREAMS_BLOCKED ove
         try std.testing.expectEqual(@as(?u64, null), conn.peerStreamsBlockedUniLimit());
 
         var out_buf: [64]u8 = undefined;
-        const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+        const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
         var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
         defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69541,7 +69544,7 @@ test "processDatagramInSpaceOrClose queues protocol violation close" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.initial));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69580,7 +69583,7 @@ test "processDatagramOrClose queues flow-control close for STREAM receive limit"
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69618,7 +69621,7 @@ test "processDatagramOrClose queues stream-limit close for peer stream count" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69655,7 +69658,7 @@ test "processDatagramOrClose queues stream-state close for STOP_SENDING receive-
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69691,7 +69694,7 @@ test "processDatagramOrClose queues stream-state close for MAX_STREAM_DATA recei
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69729,7 +69732,7 @@ test "processDatagramOrClose queues stream-limit close for STREAM_DATA_BLOCKED s
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69756,7 +69759,7 @@ test "processDatagramOrClose queues final-size close for RESET_STREAM inconsiste
         .fin = false,
         .data = "abc",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
@@ -69773,7 +69776,7 @@ test "processDatagramOrClose queues final-size close for RESET_STREAM inconsiste
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69804,7 +69807,7 @@ test "processDatagramOrClose queues protocol violation close for unmatched PATH_
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69826,7 +69829,7 @@ test "processDatagramOrClose accepts matching PATH_RESPONSE without close" {
     const challenge_data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7 };
     try conn.sendPathChallenge(challenge_data);
     var challenge_out: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &challenge_out)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(0 * ms, &challenge_out)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), conn.outstanding_path_challenges.items.len);
 
     var datagram: [16]u8 = undefined;
@@ -69858,7 +69861,7 @@ test "processDatagramOrClose queues protocol violation close for server NEW_TOKE
     try std.testing.expectEqual(@as(usize, 0), conn.stored_new_tokens.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69891,7 +69894,7 @@ test "processDatagramOrClose queues frame encoding close for empty NEW_TOKEN" {
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69918,7 +69921,7 @@ test "processDatagramOrClose queues protocol violation close for server HANDSHAK
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69950,7 +69953,7 @@ test "processDatagramOrClose queues protocol violation close for unknown RETIRE_
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -69988,7 +69991,7 @@ test "processDatagramOrClose queues protocol violation close for unsent RETIRE_C
     try std.testing.expectEqual(@as(u64, 0), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70012,7 +70015,7 @@ test "processDatagramOrClose accepts sent RETIRE_CONNECTION_ID without close" {
     try std.testing.expectEqual(@as(u64, 0), try conn.issueConnectionId(&cid, token, 0));
 
     var tx: [64]u8 = undefined;
-    _ = (try conn.pollTx(0, &tx)) orelse return error.TestUnexpectedResult;
+    _ = (try conn.pollTx(0 * ms, &tx)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(conn.local_connection_ids.items[0].sent);
 
     var retire_buf: [16]u8 = undefined;
@@ -70048,7 +70051,7 @@ test "processDatagramOrClose queues connection-id-limit close for NEW_CONNECTION
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -70057,7 +70060,7 @@ test "processDatagramOrClose queues connection-id-limit close for NEW_CONNECTION
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 2), conn.activeConnectionIdCount());
 
     out = buffer.fixedWriter(&datagram);
@@ -70077,7 +70080,7 @@ test "processDatagramOrClose queues connection-id-limit close for NEW_CONNECTION
     try std.testing.expectEqual(@as(u64, 2), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(2, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(2 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70111,7 +70114,7 @@ test "processDatagramOrClose accepts NEW_CONNECTION_ID replacement under active 
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -70120,7 +70123,7 @@ test "processDatagramOrClose accepts NEW_CONNECTION_ID replacement under active 
         .connection_id = &cid1,
         .stateless_reset_token = token1,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 2), conn.activeConnectionIdCount());
 
     out = buffer.fixedWriter(&datagram);
@@ -70158,7 +70161,7 @@ test "processDatagramOrClose accepts duplicate NEW_CONNECTION_ID without close" 
         .connection_id = &cid,
         .stateless_reset_token = token,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -70194,7 +70197,7 @@ test "processDatagramOrClose queues protocol violation close for NEW_CONNECTION_
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -70213,7 +70216,7 @@ test "processDatagramOrClose queues protocol violation close for NEW_CONNECTION_
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70244,7 +70247,7 @@ test "processDatagramOrClose queues protocol violation close for NEW_CONNECTION_
         .connection_id = &cid0,
         .stateless_reset_token = token,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .new_connection_id = .{
@@ -70263,7 +70266,7 @@ test "processDatagramOrClose queues protocol violation close for NEW_CONNECTION_
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70295,7 +70298,7 @@ test "processDatagramOrClose queues frame-encoding close for NEW_CONNECTION_ID r
         .connection_id = &cid0,
         .stateless_reset_token = token0,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try out.writer().writeByte(@intFromEnum(frame.FrameType.new_connection_id));
@@ -70316,7 +70319,7 @@ test "processDatagramOrClose queues frame-encoding close for NEW_CONNECTION_ID r
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 
     var out_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70338,11 +70341,11 @@ test "closeConnection queues CONNECTION_CLOSE and closes after pollTx" {
     try std.testing.expect(conn.peerClose() == null);
     try std.testing.expect(!conn.closed);
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
     try std.testing.expectError(error.ConnectionClosed, conn.sendPing());
 
     const ping = [_]u8{@intFromEnum(frame.FrameType.ping)};
-    try conn.processDatagram(0, &ping);
+    try conn.processDatagram(0 * ms, &ping);
     try std.testing.expect(!conn.closed);
     try std.testing.expect(conn.pending_close != null);
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
@@ -70350,7 +70353,7 @@ test "closeConnection queues CONNECTION_CLOSE and closes after pollTx" {
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70365,9 +70368,9 @@ test "closeConnection queues CONNECTION_CLOSE and closes after pollTx" {
 
     try std.testing.expect(conn.closed);
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
-    try std.testing.expect(conn.closeDeadlineMillis().? > 0);
+    try std.testing.expect(conn.closeDeadline().? > 0);
 
-    const retransmit = (try conn.pollTx(1, &out_buf)).?;
+    const retransmit = (try conn.pollTx(1 * ms, &out_buf)).?;
     var retransmitted = try frame.decodeFrameSlice(retransmit, std.testing.allocator);
     defer frame.deinitFrame(&retransmitted.frame, std.testing.allocator);
     switch (retransmitted.frame) {
@@ -70388,7 +70391,7 @@ test "closeApplication queues APPLICATION_CLOSE and closes after pollTx" {
     try conn.closeApplication(42, "app done");
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70404,7 +70407,7 @@ test "closeApplication queues APPLICATION_CLOSE and closes after pollTx" {
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
     try std.testing.expectError(error.ConnectionClosed, conn.openStream());
 
-    const retransmit = (try conn.pollTx(1, &out_buf)).?;
+    const retransmit = (try conn.pollTx(1 * ms, &out_buf)).?;
     var retransmitted = try frame.decodeFrameSlice(retransmit, std.testing.allocator);
     defer frame.deinitFrame(&retransmitted.frame, std.testing.allocator);
     switch (retransmitted.frame) {
@@ -70423,8 +70426,8 @@ test "local closing state expires after close timeout" {
     try conn.closeConnection(0, @intFromEnum(frame.FrameType.ping), "bye");
 
     var out_buf: [64]u8 = undefined;
-    _ = (try conn.pollTx(10, &out_buf)).?;
-    const deadline = conn.closeDeadlineMillis().?;
+    _ = (try conn.pollTx(10 * ms, &out_buf)).?;
+    const deadline = conn.closeDeadline().?;
     try std.testing.expectEqual(ConnectionState.closing, conn.connectionState());
     try std.testing.expect(deadline > 10);
 
@@ -70439,7 +70442,7 @@ test "local closing state expires after close timeout" {
 
     try std.testing.expectError(error.ConnectionClosed, conn.pollTx(deadline, &out_buf));
     try std.testing.expectEqual(ConnectionState.closed, conn.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
     try std.testing.expect(conn.pending_close == null);
 }
 
@@ -70454,8 +70457,8 @@ test "remote close enters draining state until close timeout expires" {
         .reason_phrase = "remote",
     } });
 
-    try conn.processDatagram(20, close_out.getWritten());
-    const deadline = conn.closeDeadlineMillis().?;
+    try conn.processDatagram(20 * ms, close_out.getWritten());
+    const deadline = conn.closeDeadline().?;
     try std.testing.expect(conn.closed);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
     try std.testing.expect(deadline > 20);
@@ -70469,7 +70472,7 @@ test "remote close enters draining state until close timeout expires" {
 
     try std.testing.expectError(error.ConnectionClosed, conn.processDatagram(deadline, &invalid_payload));
     try std.testing.expectEqual(ConnectionState.closed, conn.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), conn.closeDeadline());
 }
 
 test "remote close exposes peer close diagnostics" {
@@ -70484,7 +70487,7 @@ test "remote close exposes peer close diagnostics" {
         .reason_phrase = "flow error",
     } });
 
-    try transport.processDatagram(20, close_out.getWritten());
+    try transport.processDatagram(20 * ms, close_out.getWritten());
     switch (transport.peerClose() orelse return error.TestUnexpectedResult) {
         .connection => |close| {
             try std.testing.expectEqual(@as(u64, 0x10c), close.error_code);
@@ -70494,7 +70497,7 @@ test "remote close exposes peer close diagnostics" {
         else => return error.TestUnexpectedResult,
     }
 
-    const deadline = transport.closeDeadlineMillis().?;
+    const deadline = transport.closeDeadline().?;
     const ping = [_]u8{@intFromEnum(frame.FrameType.ping)};
     try std.testing.expectError(error.ConnectionClosed, transport.processDatagram(deadline, &ping));
     try std.testing.expectEqual(ConnectionState.closed, transport.connectionState());
@@ -70512,7 +70515,7 @@ test "remote close exposes peer close diagnostics" {
         .reason_phrase = "app stop",
     } });
 
-    try application.processDatagram(30, close_out.getWritten());
+    try application.processDatagram(30 * ms, close_out.getWritten());
     switch (application.peerClose() orelse return error.TestUnexpectedResult) {
         .application => |close| {
             try std.testing.expectEqual(@as(u64, 42), close.error_code);
@@ -70536,7 +70539,7 @@ test "local close validates size before mutating connection state" {
 
     try conn.sendPing();
     var out_buf: [8]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70568,10 +70571,10 @@ test "pollTx returns null when congestion window is full" {
     conn.recovery_state.congestion_window = 0;
 
     var out_buf: [128]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 
     conn.recovery_state.congestion_window = 128;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     try std.testing.expect(payload.len > 0);
 }
 
@@ -70584,24 +70587,24 @@ test "congestion admission accounts bytes in flight across packet spaces" {
     defer conn.deinit();
     try conn.validatePeerAddress();
 
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 6000);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1, 6000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 6000);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1 * ms, 6000);
     try std.testing.expectEqual(@as(usize, 12_000), conn.totalBytesInFlight());
 
     const stream_id = try conn.openStream();
     try conn.sendOnStream(stream_id, "blocked", false);
     var out_buf: [128]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(10, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(10 * ms, &out_buf));
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
 
-    try conn.receiveAckInSpace(.initial, 20, .{
+    try conn.receiveAckInSpace(.initial, 20 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
     });
     try std.testing.expectEqual(@as(usize, 6000), conn.totalBytesInFlight());
 
-    const payload = (try conn.pollTx(30, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(30 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
     switch (decoded.frame) {
@@ -70620,8 +70623,8 @@ test "available congestion window uses aggregate bytes in flight" {
     try conn.validatePeerAddress();
 
     conn.recovery_state.congestion_window = 12_000;
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 4000);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1, 3000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 4000);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1 * ms, 3000);
 
     try std.testing.expectEqual(@as(usize, 7000), conn.totalBytesInFlight());
     try std.testing.expectEqual(@as(usize, 5000), conn.availableCongestionWindow(.application));
@@ -70640,12 +70643,12 @@ test "congestion window full query follows aggregate bytes in flight" {
     try conn.validatePeerAddress();
 
     conn.recovery_state.congestion_window = 12_000;
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 7000);
-    _ = try conn.recordPacketSentInSpace(.handshake, 1, 5000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 7000);
+    _ = try conn.recordPacketSentInSpace(.handshake, 1 * ms, 5000);
 
     try std.testing.expect(conn.congestionWindowFull(.application));
 
-    try conn.receiveAckInSpace(.initial, 20, .{
+    try conn.receiveAckInSpace(.initial, 20 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -70670,7 +70673,7 @@ test "ack-eliciting send query combines congestion and anti-amplification limits
     try std.testing.expect(conn.canSendAckEliciting(.application, 5000));
     try std.testing.expect(!conn.canSendAckEliciting(.application, 5001));
 
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 4000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 4000);
     try std.testing.expect(conn.canSendAckEliciting(.application, 1000));
     try std.testing.expect(!conn.canSendAckEliciting(.application, 1001));
 }
@@ -70690,10 +70693,10 @@ test "ack-eliciting send budget reports effective send admission limit" {
     try conn.validatePeerAddress();
     try std.testing.expectEqual(@as(?usize, 5000), conn.availableAckElicitingSendBudget(.application));
 
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 4000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 4000);
     try std.testing.expectEqual(@as(?usize, 1000), conn.availableAckElicitingSendBudget(.application));
 
-    _ = try conn.recordPacketSentInSpace(.application, 1, 1000);
+    _ = try conn.recordPacketSentInSpace(.application, 1 * ms, 1000);
     try std.testing.expectEqual(@as(?usize, 0), conn.availableAckElicitingSendBudget(.application));
 
     conn.pto_probe_count = 1;
@@ -70709,14 +70712,14 @@ test "ack-eliciting send admission reports first blocking reason" {
 
     conn.recovery_state.congestion_window = 2000;
     try conn.recordPeerAddressBytesReceived(1000);
-    _ = try conn.recordPacketSentInSpace(.initial, 0, 2000);
+    _ = try conn.recordPacketSentInSpace(.initial, 0 * ms, 2000);
 
     try std.testing.expectEqual(
         AckElicitingSendAdmission.congestion_limited,
         conn.ackElicitingSendAdmission(.application, 1501),
     );
 
-    try conn.receiveAckInSpace(.initial, 20, .{
+    try conn.receiveAckInSpace(.initial, 20 * ms, .{
         .largest_acknowledged = 0,
         .ack_delay = 0,
         .first_ack_range = 0,
@@ -70743,7 +70746,7 @@ test "pollTx checks congestion before writing output buffer" {
     conn.recovery_state.congestion_window = 0;
 
     var tiny = [_]u8{0xaa};
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &tiny));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &tiny));
     try std.testing.expectEqual(@as(u8, 0xaa), tiny[0]);
 }
 
@@ -70755,10 +70758,10 @@ test "pollTx keeps queued frame when output buffer is too small" {
     try conn.sendOnStream(stream_id, "hello", false);
 
     var tiny: [2]u8 = undefined;
-    try std.testing.expectError(error.BufferTooSmall, conn.pollTx(0, &tiny));
+    try std.testing.expectError(error.BufferTooSmall, conn.pollTx(0 * ms, &tiny));
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70776,10 +70779,10 @@ test "sendOnStream rejects unsendable stream frames before mutating state" {
     try std.testing.expectError(error.BufferTooSmall, conn.sendOnStream(stream_id, "too large", false));
 
     var out_buf: [32]u8 = undefined;
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(0 * ms, &out_buf));
 
     try conn.sendOnStream(stream_id, "", true);
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70805,7 +70808,7 @@ test "sendOnStream does not create state for oversized new streams" {
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectError(error.BufferTooSmall, conn.sendOnStream(1, "too large", false));
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
@@ -70823,7 +70826,7 @@ test "sendOnStream rolls back partial fragmentation when later offsets cannot fi
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectError(error.BufferTooSmall, conn.sendOnStream(1, "ab", false));
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
@@ -70847,7 +70850,7 @@ test "sendOnStream enforces connection flow control until MAX_DATA" {
     var update_buf: [16]u8 = undefined;
     var update_out = buffer.fixedWriter(&update_buf);
     try frame.encodeFrame(update_out.writer(), .{ .max_data = .{ .maximum_data = 6 } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try conn.sendOnStream(stream_id, "x", false);
     try std.testing.expectEqual(@as(u64, 6), conn.sent_stream_data_bytes);
@@ -70867,7 +70870,7 @@ test "sendOnStream queues DATA_BLOCKED when connection flow control blocks" {
     try std.testing.expectEqual(@as(usize, 1), conn.pending_blocked_frames.items.len);
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70893,12 +70896,12 @@ test "obsolete DATA_BLOCKED is dropped after MAX_DATA update" {
     var update_buf: [16]u8 = undefined;
     var update_out = buffer.fixedWriter(&update_buf);
     try frame.encodeFrame(update_out.writer(), .{ .max_data = .{ .maximum_data = 6 } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try conn.sendOnStream(stream_id, "x", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var first = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&first.frame, std.testing.allocator);
 
@@ -70937,13 +70940,13 @@ test "sendOnStream enforces stream flow control until MAX_STREAM_DATA" {
         .stream_id = stream_id,
         .maximum_stream_data = 6,
     } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try conn.sendOnStream(stream_id, "x", false);
 
     var out_buf: [128]u8 = undefined;
-    _ = (try conn.pollTx(0, &out_buf)).?;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    _ = (try conn.pollTx(0 * ms, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70968,7 +70971,7 @@ test "sendOnStream queues STREAM_DATA_BLOCKED when stream flow control blocks" {
     try std.testing.expectError(error.FlowControlBlocked, conn.sendOnStream(stream_id, "x", false));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -70996,7 +70999,7 @@ test "pending STREAM_DATA_BLOCKED is dropped when FIN closes send side before tr
     try conn.sendOnStream(stream_id, "", true);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)).?;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     try std.testing.expectEqual(@as(usize, 0), conn.pending_blocked_frames.items.len);
 
     var decoded = try frame.decodeFrameSlice(payload, std.testing.allocator);
@@ -71026,7 +71029,7 @@ test "pending STREAM_DATA_BLOCKED is dropped when reset closes send side before 
     try conn.resetStream(stream_id, 7);
 
     var out_buf: [128]u8 = undefined;
-    const reset_payload = (try conn.pollTx(0, &out_buf)).?;
+    const reset_payload = (try conn.pollTx(0 * ms, &out_buf)).?;
     var reset = try frame.decodeFrameSlice(reset_payload, std.testing.allocator);
     defer frame.deinitFrame(&reset.frame, std.testing.allocator);
     switch (reset.frame) {
@@ -71038,7 +71041,7 @@ test "pending STREAM_DATA_BLOCKED is dropped when reset closes send side before 
         else => return error.TestUnexpectedResult,
     }
 
-    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(1, &out_buf));
+    try std.testing.expectEqual(@as(?[]u8, null), try conn.pollTx(1 * ms, &out_buf));
     try std.testing.expectEqual(@as(usize, 0), conn.pending_blocked_frames.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_queue.items.len);
 }
@@ -71060,7 +71063,7 @@ test "recvOnStream queues MAX_DATA and MAX_STREAM_DATA after consuming bytes" {
     try client.sendOnStream(stream_id, "12345", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try std.testing.expectError(error.FlowControlBlocked, client.sendOnStream(stream_id, "!", false));
 
     var read_buf: [3]u8 = undefined;
@@ -71071,7 +71074,7 @@ test "recvOnStream queues MAX_DATA and MAX_STREAM_DATA after consuming bytes" {
     try std.testing.expectEqual(@as(u64, 10), server.recv_max_data);
     try std.testing.expectEqual(@as(u64, 10), server.findRecvStream(stream_id).?.max_data);
 
-    const max_data_payload = (try server.pollTx(10, &datagram)).?;
+    const max_data_payload = (try server.pollTx(10 * ms, &datagram)).?;
     var ack = try frame.decodeFrameSlice(max_data_payload, std.testing.allocator);
     defer frame.deinitFrame(&ack.frame, std.testing.allocator);
     switch (ack.frame) {
@@ -71085,9 +71088,9 @@ test "recvOnStream queues MAX_DATA and MAX_STREAM_DATA after consuming bytes" {
         .max_data => |max_frame| try std.testing.expectEqual(@as(u64, 10), max_frame.maximum_data),
         else => return error.TestUnexpectedResult,
     }
-    try client.processDatagram(20, max_data_payload);
+    try client.processDatagram(20 * ms, max_data_payload);
 
-    const max_stream_payload = (try server.pollTx(30, &datagram)).?;
+    const max_stream_payload = (try server.pollTx(30 * ms, &datagram)).?;
     var max_stream = try frame.decodeFrameSlice(max_stream_payload, std.testing.allocator);
     defer frame.deinitFrame(&max_stream.frame, std.testing.allocator);
     switch (max_stream.frame) {
@@ -71097,7 +71100,7 @@ test "recvOnStream queues MAX_DATA and MAX_STREAM_DATA after consuming bytes" {
         },
         else => return error.TestUnexpectedResult,
     }
-    try client.processDatagram(40, max_stream_payload);
+    try client.processDatagram(40 * ms, max_stream_payload);
 
     try client.sendOnStream(stream_id, "!", true);
 }
@@ -71119,7 +71122,7 @@ test "pending MAX_STREAM_DATA is dropped when final size becomes known before tr
     try client.sendOnStream(stream_id, "12345", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     var read_buf: [8]u8 = undefined;
     const n = (try server.recvOnStream(stream_id, &read_buf)).?;
@@ -71127,9 +71130,9 @@ test "pending MAX_STREAM_DATA is dropped when final size becomes known before tr
     try std.testing.expectEqual(@as(u64, 10), server.findRecvStream(stream_id).?.max_data);
 
     try client.sendOnStream(stream_id, "", true);
-    try server.processDatagram(1, (try client.pollTx(1, &datagram)).?);
+    try server.processDatagram(1 * ms, (try client.pollTx(1 * ms, &datagram)).?);
 
-    const payload = (try server.pollTx(2, &datagram)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(2 * ms, &datagram)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{ .data = 10 }));
     try std.testing.expect(!try payloadContainsExpectedMaxFrame(payload, .{
         .stream_data = .{ .stream_id = stream_id, .maximum_stream_data = 10 },
@@ -71154,7 +71157,7 @@ test "pending MAX_STREAM_DATA is dropped when RESET_STREAM arrives before transm
     try client.sendOnStream(stream_id, "12345", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     var read_buf: [8]u8 = undefined;
     const n = (try server.recvOnStream(stream_id, &read_buf)).?;
@@ -71162,9 +71165,9 @@ test "pending MAX_STREAM_DATA is dropped when RESET_STREAM arrives before transm
     try std.testing.expectEqual(@as(u64, 10), server.findRecvStream(stream_id).?.max_data);
 
     try client.resetStream(stream_id, 7);
-    try server.processDatagram(1, (try client.pollTx(1, &datagram)).?);
+    try server.processDatagram(1 * ms, (try client.pollTx(1 * ms, &datagram)).?);
 
-    const payload = (try server.pollTx(2, &datagram)) orelse return error.TestUnexpectedResult;
+    const payload = (try server.pollTx(2 * ms, &datagram)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{ .data = 10 }));
     try std.testing.expect(!try payloadContainsExpectedMaxFrame(payload, .{
         .stream_data = .{ .stream_id = stream_id, .maximum_stream_data = 10 },
@@ -71191,7 +71194,7 @@ test "recvOnStream uses configured target receive windows" {
     try client.sendOnStream(stream_id, "12345", false);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
 
     var read_buf: [8]u8 = undefined;
     const read_len = (try server.recvOnStream(stream_id, &read_buf)) orelse return error.TestUnexpectedResult;
@@ -71233,7 +71236,7 @@ test "recvOnStream queues MAX_STREAMS_BIDI when peer bidirectional stream finish
     try client.sendOnStream(stream_id, "done", true);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try std.testing.expectError(error.FlowControlBlocked, client.openStream());
 
     var read_buf: [4]u8 = undefined;
@@ -71264,7 +71267,7 @@ test "recvOnStream queues MAX_STREAMS_UNI when zero-length peer unidirectional s
     try client.sendOnStream(stream_id, "", true);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try std.testing.expectError(error.FlowControlBlocked, client.openUniStream());
 
     var read_buf: [1]u8 = undefined;
@@ -71294,7 +71297,7 @@ test "recvOnStream queues MAX_STREAMS_BIDI after peer bidirectional RESET_STREAM
     try client.resetStream(stream_id, 7);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try std.testing.expectError(error.FlowControlBlocked, client.openStream());
 
     var read_buf: [1]u8 = undefined;
@@ -71323,7 +71326,7 @@ test "recvOnStream queues MAX_STREAMS_UNI after peer unidirectional RESET_STREAM
     try client.resetStream(stream_id, 7);
 
     var datagram: [128]u8 = undefined;
-    try server.processDatagram(0, (try client.pollTx(0, &datagram)).?);
+    try server.processDatagram(0 * ms, (try client.pollTx(0 * ms, &datagram)).?);
     try std.testing.expectError(error.FlowControlBlocked, client.openUniStream());
 
     var read_buf: [1]u8 = undefined;
@@ -71345,7 +71348,7 @@ test "openStream queues STREAMS_BLOCKED frames when stream count blocks" {
     try std.testing.expectError(error.FlowControlBlocked, bidi.openStream());
 
     var out_buf: [64]u8 = undefined;
-    const bidi_payload = (try bidi.pollTx(0, &out_buf)).?;
+    const bidi_payload = (try bidi.pollTx(0 * ms, &out_buf)).?;
     var bidi_decoded = try frame.decodeFrameSlice(bidi_payload, std.testing.allocator);
     defer frame.deinitFrame(&bidi_decoded.frame, std.testing.allocator);
     switch (bidi_decoded.frame) {
@@ -71359,7 +71362,7 @@ test "openStream queues STREAMS_BLOCKED frames when stream count blocks" {
     _ = try uni.openUniStream();
     try std.testing.expectError(error.FlowControlBlocked, uni.openUniStream());
 
-    const uni_payload = (try uni.pollTx(0, &out_buf)).?;
+    const uni_payload = (try uni.pollTx(0 * ms, &out_buf)).?;
     var uni_decoded = try frame.decodeFrameSlice(uni_payload, std.testing.allocator);
     defer frame.deinitFrame(&uni_decoded.frame, std.testing.allocator);
     switch (uni_decoded.frame) {
@@ -71382,7 +71385,7 @@ test "processDatagram records peer BLOCKED frame limits" {
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 3 } });
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_uni = .{ .maximum_streams = 5 } });
 
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 4096), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(?u64, 1024), conn.peerStreamDataBlockedLimit(0));
@@ -71403,14 +71406,14 @@ test "STREAM_DATA_BLOCKED creates receive stream state before STREAM data" {
         .stream_id = 1,
         .maximum_stream_data = 5,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     const stream_state = conn.findRecvStream(1) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 10), stream_state.max_data);
     try std.testing.expectEqual(@as(?u64, 5), conn.peerStreamDataBlockedLimit(1));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{
         .stream_data = .{ .stream_id = 1, .maximum_stream_data = 10 },
     }));
@@ -71427,7 +71430,7 @@ test "STREAM_DATA_BLOCKED validates receive-side stream direction and count" {
         .stream_id = local_uni,
         .maximum_stream_data = 0,
     } });
-    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), server.peerStreamDataBlockedLimit(local_uni));
     try std.testing.expectEqual(@as(?u64, null), server.pending_ack_largest);
 
@@ -71436,7 +71439,7 @@ test "STREAM_DATA_BLOCKED validates receive-side stream direction and count" {
         .stream_id = 6,
         .maximum_stream_data = 0,
     } });
-    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), server.peerStreamDataBlockedLimit(6));
     try std.testing.expectEqual(@as(usize, 0), server.recv_streams.items.len);
 
@@ -71448,7 +71451,7 @@ test "STREAM_DATA_BLOCKED validates receive-side stream direction and count" {
         .stream_id = 0,
         .maximum_stream_data = 0,
     } });
-    try std.testing.expectError(error.InvalidPacket, client.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, client.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), client.peerStreamDataBlockedLimit(0));
 
     const local_bidi = try client.openStream();
@@ -71457,7 +71460,7 @@ test "STREAM_DATA_BLOCKED validates receive-side stream direction and count" {
         .stream_id = local_bidi,
         .maximum_stream_data = 0,
     } });
-    try client.processDatagram(0, out.getWritten());
+    try client.processDatagram(0 * ms, out.getWritten());
     try std.testing.expect(client.findRecvStream(local_bidi) != null);
     try std.testing.expectEqual(@as(?u64, 0), client.peerStreamDataBlockedLimit(local_bidi));
 }
@@ -71485,7 +71488,7 @@ test "peer BLOCKED frame limits keep highest reported value" {
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 1 } });
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 2 } });
 
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 4096), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(?u64, 9), conn.peerStreamDataBlockedLimit(0));
@@ -71506,7 +71509,7 @@ test "peer BLOCKED frame state rolls back when payload is invalid" {
         .maximum_stream_data = 7,
     } });
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 1 } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
 
     out = buffer.fixedWriter(&datagram);
@@ -71518,7 +71521,7 @@ test "peer BLOCKED frame state rolls back when payload is invalid" {
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_uni = .{ .maximum_streams = 3 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, 5), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(?u64, 7), conn.peerStreamDataBlockedLimit(0));
     try std.testing.expectEqual(@as(?u64, null), conn.peerStreamDataBlockedLimit(4));
@@ -71539,12 +71542,12 @@ test "peer DATA_BLOCKED below current receive limit retransmits MAX_DATA" {
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 5), conn.peerDataBlockedLimit());
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{ .data = 10 }));
 }
 
@@ -71562,19 +71565,19 @@ test "peer STREAM_DATA_BLOCKED below current receive stream limit retransmits MA
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream_data_blocked = .{
         .stream_id = 1,
         .maximum_stream_data = 5,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 5), conn.peerStreamDataBlockedLimit(1));
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(2, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(2 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{
         .stream_data = .{ .stream_id = 1, .maximum_stream_data = 10 },
     }));
@@ -71589,7 +71592,7 @@ test "peer DATA_BLOCKED at current receive limit waits without configured window
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 5), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_max_data);
@@ -71607,21 +71610,21 @@ test "peer DATA_BLOCKED at receive limit grows configured receive window" {
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 5), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(u64, 15), conn.recv_max_data);
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{ .data = 15 }));
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 15), conn.recv_max_data);
 
-    const stale_payload = (try conn.pollTx(3, &out_buf)) orelse return error.TestUnexpectedResult;
+    const stale_payload = (try conn.pollTx(3 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(stale_payload, .{ .data = 15 }));
 }
 
@@ -71640,21 +71643,21 @@ test "peer STREAM_DATA_BLOCKED at receive limit grows configured receive window"
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream_data_blocked = .{
         .stream_id = 1,
         .maximum_stream_data = 5,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 5), conn.peerStreamDataBlockedLimit(1));
     const stream_state = conn.findRecvStream(1) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 17), stream_state.max_data);
 
     var out_buf: [64]u8 = undefined;
-    const payload = (try conn.pollTx(2, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(2 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(payload, .{
         .stream_data = .{ .stream_id = 1, .maximum_stream_data = 17 },
     }));
@@ -71675,7 +71678,7 @@ test "peer STREAM_DATA_BLOCKED is discarded after stream final size is known" {
         .fin = true,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
 
     out = buffer.fixedWriter(&datagram);
@@ -71683,7 +71686,7 @@ test "peer STREAM_DATA_BLOCKED is discarded after stream final size is known" {
         .stream_id = 0,
         .maximum_stream_data = 5,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, null), conn.peerStreamDataBlockedLimit(0));
     try std.testing.expectEqual(@as(u64, 5), conn.recv_streams.items[0].max_data);
@@ -71699,12 +71702,12 @@ test "peer STREAMS_BLOCKED below current receive limits retransmits MAX_STREAMS"
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 1 } });
-    try bidi.processDatagram(0, out.getWritten());
+    try bidi.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 1), bidi.peerStreamsBlockedBidiLimit());
 
     var out_buf: [64]u8 = undefined;
-    const bidi_payload = (try bidi.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const bidi_payload = (try bidi.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(bidi_payload, .{ .streams_bidi = 4 }));
 
     var uni = try Connection.init(std.testing.allocator, .client, .{
@@ -71714,11 +71717,11 @@ test "peer STREAMS_BLOCKED below current receive limits retransmits MAX_STREAMS"
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_uni = .{ .maximum_streams = 1 } });
-    try uni.processDatagram(0, out.getWritten());
+    try uni.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 1), uni.peerStreamsBlockedUniLimit());
 
-    const uni_payload = (try uni.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const uni_payload = (try uni.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(uni_payload, .{ .streams_uni = 3 }));
 }
 
@@ -71731,7 +71734,7 @@ test "peer STREAMS_BLOCKED at receive limit waits without configured window" {
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 2 } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 2), conn.peerStreamsBlockedBidiLimit());
     try std.testing.expectEqual(@as(u64, 2), conn.recv_max_streams_bidi);
@@ -71749,21 +71752,21 @@ test "peer STREAMS_BLOCKED at receive limit grows configured stream-count window
     var datagram: [32]u8 = undefined;
     var out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 2 } });
-    try bidi.processDatagram(0, out.getWritten());
+    try bidi.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 2), bidi.peerStreamsBlockedBidiLimit());
     try std.testing.expectEqual(@as(u64, 5), bidi.recv_max_streams_bidi);
 
     var out_buf: [64]u8 = undefined;
-    const bidi_payload = (try bidi.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const bidi_payload = (try bidi.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(bidi_payload, .{ .streams_bidi = 5 }));
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 2 } });
-    try bidi.processDatagram(2, out.getWritten());
+    try bidi.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), bidi.recv_max_streams_bidi);
 
-    const stale_payload = (try bidi.pollTx(3, &out_buf)) orelse return error.TestUnexpectedResult;
+    const stale_payload = (try bidi.pollTx(3 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(stale_payload, .{ .streams_bidi = 5 }));
 
     var uni = try Connection.init(std.testing.allocator, .client, .{
@@ -71774,12 +71777,12 @@ test "peer STREAMS_BLOCKED at receive limit grows configured stream-count window
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_uni = .{ .maximum_streams = 1 } });
-    try uni.processDatagram(0, out.getWritten());
+    try uni.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(?u64, 1), uni.peerStreamsBlockedUniLimit());
     try std.testing.expectEqual(@as(u64, 3), uni.recv_max_streams_uni);
 
-    const uni_payload = (try uni.pollTx(1, &out_buf)) orelse return error.TestUnexpectedResult;
+    const uni_payload = (try uni.pollTx(1 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(try payloadContainsExpectedMaxFrame(uni_payload, .{ .streams_uni = 3 }));
 }
 
@@ -71794,7 +71797,7 @@ test "peer BLOCKED triggered MAX retransmission rolls back when payload is inval
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(usize, 0), conn.pending_max_frames.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -71813,7 +71816,7 @@ test "peer STREAMS_BLOCKED stream-count growth rolls back when payload is invali
     try frame.encodeFrame(out.writer(), .{ .streams_blocked_bidi = .{ .maximum_streams = 2 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), conn.peerStreamsBlockedBidiLimit());
     try std.testing.expectEqual(@as(u64, 2), conn.recv_max_streams_bidi);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_max_frames.items.len);
@@ -71833,7 +71836,7 @@ test "peer BLOCKED receive-window growth rolls back when payload is invalid" {
     try frame.encodeFrame(out.writer(), .{ .data_blocked = .{ .maximum_data = 5 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), conn.peerDataBlockedLimit());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_max_data);
     try std.testing.expectEqual(@as(usize, 0), conn.pending_max_frames.items.len);
@@ -71852,7 +71855,7 @@ test "MAX_STREAMS and STREAMS_BLOCKED reject values above stream count limit" {
     try out.writer().writeByte(@intFromEnum(frame.FrameType.max_streams_bidi));
     try packet.encodeVarInt(out.writer(), max_stream_count + 1);
 
-    try std.testing.expectError(error.InvalidPacket, bidi.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, bidi.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 2), bidi.peer_max_streams_bidi);
     try std.testing.expectEqual(@as(?u64, null), bidi.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), bidi.next_peer_packet_number);
@@ -71866,7 +71869,7 @@ test "MAX_STREAMS and STREAMS_BLOCKED reject values above stream count limit" {
     try out.writer().writeByte(@intFromEnum(frame.FrameType.max_streams_uni));
     try packet.encodeVarInt(out.writer(), max_stream_count + 1);
 
-    try std.testing.expectError(error.InvalidPacket, uni.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, uni.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 1), uni.peer_max_streams_uni);
     try std.testing.expectEqual(@as(?u64, null), uni.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), uni.next_peer_packet_number);
@@ -71878,7 +71881,7 @@ test "MAX_STREAMS and STREAMS_BLOCKED reject values above stream count limit" {
     try out.writer().writeByte(@intFromEnum(frame.FrameType.streams_blocked_bidi));
     try packet.encodeVarInt(out.writer(), max_stream_count + 1);
 
-    try std.testing.expectError(error.InvalidPacket, blocked_bidi.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, blocked_bidi.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), blocked_bidi.peerStreamsBlockedBidiLimit());
     try std.testing.expectEqual(@as(?u64, null), blocked_bidi.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), blocked_bidi.next_peer_packet_number);
@@ -71890,7 +71893,7 @@ test "MAX_STREAMS and STREAMS_BLOCKED reject values above stream count limit" {
     try out.writer().writeByte(@intFromEnum(frame.FrameType.streams_blocked_uni));
     try packet.encodeVarInt(out.writer(), max_stream_count + 1);
 
-    try std.testing.expectError(error.InvalidPacket, blocked_uni.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, blocked_uni.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(?u64, null), blocked_uni.peerStreamsBlockedUniLimit());
     try std.testing.expectEqual(@as(?u64, null), blocked_uni.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), blocked_uni.next_peer_packet_number);
@@ -71906,7 +71909,7 @@ test "MAX_STREAM_DATA rejects unopened local and receive-only streams" {
         .stream_id = 0,
         .maximum_stream_data = 10,
     } });
-    try std.testing.expectError(error.InvalidPacket, client.processDatagram(0, update_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, client.processDatagram(0 * ms, update_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), client.send_streams.items.len);
     try std.testing.expectEqual(@as(?u64, null), client.pending_ack_largest);
     try std.testing.expectEqual(@as(u64, 0), client.next_peer_packet_number);
@@ -71919,7 +71922,7 @@ test "MAX_STREAM_DATA rejects unopened local and receive-only streams" {
         .stream_id = 2,
         .maximum_stream_data = 10,
     } });
-    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0, update_out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, server.processDatagram(0 * ms, update_out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), server.send_streams.items.len);
 }
 
@@ -71938,7 +71941,7 @@ test "MAX_STREAM_DATA opens peer bidirectional stream before STREAM data" {
         .stream_id = stream_id,
         .maximum_stream_data = 2,
     } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try std.testing.expect(conn.findRecvStream(1) != null);
     try std.testing.expect(conn.findRecvStream(5) != null);
@@ -71965,7 +71968,7 @@ test "MAX_STREAM_DATA updates observed peer bidirectional reply credit" {
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, peer_stream_out.getWritten());
+    try conn.processDatagram(0 * ms, peer_stream_out.getWritten());
 
     try std.testing.expectError(error.FlowControlBlocked, conn.sendOnStream(1, "xx", false));
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
@@ -71976,7 +71979,7 @@ test "MAX_STREAM_DATA updates observed peer bidirectional reply credit" {
         .stream_id = 1,
         .maximum_stream_data = 2,
     } });
-    try conn.processDatagram(1, update_out.getWritten());
+    try conn.processDatagram(1 * ms, update_out.getWritten());
 
     try std.testing.expectEqual(@as(usize, 1), conn.send_streams.items.len);
     try std.testing.expectEqual(@as(u64, 2), conn.findSendStream(1).?.max_data);
@@ -72001,7 +72004,7 @@ test "MAX_STREAM_DATA is ignored after send side sends FIN" {
         .stream_id = stream_id,
         .maximum_stream_data = 10,
     } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 5), conn.findSendStream(stream_id).?.max_data);
     try std.testing.expectError(error.StreamClosed, conn.sendOnStream(stream_id, "!", false));
@@ -72025,7 +72028,7 @@ test "MAX_STREAM_DATA is ignored after send side resets" {
         .stream_id = stream_id,
         .maximum_stream_data = 10,
     } });
-    try conn.processDatagram(0, update_out.getWritten());
+    try conn.processDatagram(0 * ms, update_out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 5), conn.findSendStream(stream_id).?.max_data);
     try std.testing.expectError(error.StreamClosed, conn.sendOnStream(stream_id, "!", false));
@@ -72043,7 +72046,7 @@ test "MAX_STREAM_DATA send-state creation rolls back when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
@@ -72065,7 +72068,7 @@ test "sendOnStream does not create state for flow-control blocked new streams" {
         .fin = false,
         .data = "",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expectError(error.FlowControlBlocked, conn.sendOnStream(1, "xx", false));
     try std.testing.expectEqual(@as(usize, 0), conn.send_streams.items.len);
@@ -72084,7 +72087,7 @@ test "processDatagram preserves out of memory from frame decoding" {
         'x',
     };
 
-    try std.testing.expectError(error.OutOfMemory, conn.processDatagram(0, &wire));
+    try std.testing.expectError(error.OutOfMemory, conn.processDatagram(0 * ms, &wire));
 }
 
 test "processDatagram rejects truncated ACK ranges before allocation" {
@@ -72100,7 +72103,7 @@ test "processDatagram rejects truncated ACK ranges before allocation" {
         0x00, // first ACK range
     };
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &wire));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &wire));
 }
 
 test "processDatagram rejects payloads larger than configured datagram size" {
@@ -72114,14 +72117,14 @@ test "processDatagram rejects payloads larger than configured datagram size" {
         'x',
     };
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &wire));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &wire));
 }
 
 test "processDatagram rejects empty payloads" {
     var conn = try Connection.init(std.testing.allocator, .server, .{});
     defer conn.deinit();
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, &[_]u8{}));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, &[_]u8{}));
 }
 
 test "processDatagram accepts stream frame without length field" {
@@ -72135,7 +72138,7 @@ test "processDatagram accepts stream frame without length field" {
         'k',
     };
 
-    try conn.processDatagram(0, &wire);
+    try conn.processDatagram(0 * ms, &wire);
 
     var read_buf: [8]u8 = undefined;
     const n = (try conn.recvOnStream(0, &read_buf)).?;
@@ -72157,7 +72160,7 @@ test "STREAM opens lower-numbered peer streams of the same type" {
         .fin = false,
         .data = "bidi",
     } });
-    try server.processDatagram(0, out.getWritten());
+    try server.processDatagram(0 * ms, out.getWritten());
 
     try std.testing.expect(server.findRecvStream(0) != null);
     try std.testing.expect(server.findRecvStream(4) != null);
@@ -72176,7 +72179,7 @@ test "STREAM opens lower-numbered peer streams of the same type" {
         .fin = true,
         .data = "uni",
     } });
-    try server.processDatagram(1, out.getWritten());
+    try server.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expect(server.findRecvStream(2) != null);
     try std.testing.expect(server.findRecvStream(6) != null);
@@ -72201,10 +72204,10 @@ test "processDatagram discards duplicate STREAM data without growing flow contro
     } });
     const original = try std.testing.allocator.dupe(u8, out.getWritten());
     defer std.testing.allocator.free(original);
-    try conn.processDatagram(0, original);
+    try conn.processDatagram(0 * ms, original);
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
-    try conn.processDatagram(1, original);
+    try conn.processDatagram(1 * ms, original);
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqualStrings("hello", conn.recv_streams.items[0].data.items);
 
@@ -72215,7 +72218,7 @@ test "processDatagram discards duplicate STREAM data without growing flow contro
         .fin = false,
         .data = "lo!",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 6), conn.recv_data_bytes);
 
     var read_buf: [8]u8 = undefined;
@@ -72237,11 +72240,11 @@ test "processDatagram accepts duplicate pending STREAM frame and rejects conflic
     } });
     const pending = try std.testing.allocator.dupe(u8, out.getWritten());
     defer std.testing.allocator.free(pending);
-    try conn.processDatagram(0, pending);
+    try conn.processDatagram(0 * ms, pending);
     try std.testing.expectEqual(@as(u64, 4), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
 
-    try conn.processDatagram(1, pending);
+    try conn.processDatagram(1 * ms, pending);
     try std.testing.expectEqual(@as(u64, 4), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
 
@@ -72252,7 +72255,7 @@ test "processDatagram accepts duplicate pending STREAM frame and rejects conflic
         .fin = false,
         .data = "xx",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 4), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -72262,7 +72265,7 @@ test "processDatagram accepts duplicate pending STREAM frame and rejects conflic
         .fin = false,
         .data = "head-",
     } });
-    try conn.processDatagram(3, out.getWritten());
+    try conn.processDatagram(3 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 9), conn.recv_data_bytes);
 
     var read_buf: [16]u8 = undefined;
@@ -72282,7 +72285,7 @@ test "processDatagram rejects conflicting duplicate STREAM bytes" {
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream = .{
@@ -72291,7 +72294,7 @@ test "processDatagram rejects conflicting duplicate STREAM bytes" {
         .fin = false,
         .data = "xx",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqualStrings("hello", conn.recv_streams.items[0].data.items);
 }
@@ -72309,7 +72312,7 @@ test "processDatagramOrClose queues protocol violation close for conflicting STR
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream = .{
@@ -72329,7 +72332,7 @@ test "processDatagramOrClose queues protocol violation close for conflicting STR
     try std.testing.expectEqual(@as(u64, 1), conn.nextPeerPacketNumber(.application));
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -72356,7 +72359,7 @@ test "processDatagramOrClose queues protocol violation close for conflicting lat
         .fin = true,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
 
     out = buffer.fixedWriter(&datagram);
@@ -72374,7 +72377,7 @@ test "processDatagramOrClose queues protocol violation close for conflicting lat
     try std.testing.expectEqualStrings("hello", conn.recv_streams.items[0].data.items);
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(1, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(1 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -72396,7 +72399,7 @@ test "processDatagramOrClose queues protocol violation close for ACK of unsent p
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 1), conn.next_packet_number);
 
     var ack_buf: [32]u8 = undefined;
@@ -72418,7 +72421,7 @@ test "processDatagramOrClose queues protocol violation close for ACK of unsent p
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(61, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(61 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -72440,7 +72443,7 @@ test "processDatagramOrClose queues protocol violation close for ACK_ECN of unse
     try conn.sendOnStream(stream_id, "hello", false);
 
     var out_buf: [128]u8 = undefined;
-    const payload = (try conn.pollTx(10, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try conn.pollTx(10 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 1), conn.next_packet_number);
 
     var ack_buf: [32]u8 = undefined;
@@ -72469,7 +72472,7 @@ test "processDatagramOrClose queues protocol violation close for ACK_ECN of unse
     try std.testing.expectEqual(@as(?u64, null), conn.pendingAckLargest(.application));
 
     var close_buf: [64]u8 = undefined;
-    const close_payload = (try conn.pollTx(61, &close_buf)) orelse return error.TestUnexpectedResult;
+    const close_payload = (try conn.pollTx(61 * ms, &close_buf)) orelse return error.TestUnexpectedResult;
     var decoded = try frame.decodeFrameSlice(close_payload, std.testing.allocator);
     defer frame.deinitFrame(&decoded.frame, std.testing.allocator);
 
@@ -72499,7 +72502,7 @@ test "processDatagram enforces receive stream flow control" {
         .data = "123456",
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
 }
@@ -72519,7 +72522,7 @@ test "processDatagram enforces receive connection flow control" {
         .fin = false,
         .data = "12345",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -72530,7 +72533,7 @@ test "processDatagram enforces receive connection flow control" {
         .data = "x",
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 }
@@ -72551,7 +72554,7 @@ test "processDatagram rolls back flow-control updates when payload is invalid" {
     try frame.encodeFrame(out.writer(), .{ .max_data = .{ .maximum_data = 6 } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 5), conn.peer_max_data);
     try std.testing.expectError(error.FlowControlBlocked, conn.sendOnStream(stream_id, "x", false));
 }
@@ -72570,7 +72573,7 @@ test "processDatagram rolls back stream state when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
 
     out = buffer.fixedWriter(&datagram);
@@ -72580,7 +72583,7 @@ test "processDatagram rolls back stream state when payload is invalid" {
         .fin = false,
         .data = "a",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream = .{
@@ -72591,7 +72594,7 @@ test "processDatagram rolls back stream state when payload is invalid" {
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
     try std.testing.expectEqualStrings("a", conn.recv_streams.items[0].data.items);
     try std.testing.expectEqual(@as(?u64, null), conn.recv_streams.items[0].final_size);
@@ -72610,7 +72613,7 @@ test "processDatagram buffers and reassembles out-of-order new stream data" {
         .data = "!",
     } });
 
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].data.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
@@ -72630,7 +72633,7 @@ test "processDatagram buffers and reassembles out-of-order new stream data" {
         .data = "hello",
     } });
 
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 6), conn.recv_data_bytes);
     try std.testing.expect(!try conn.recvStreamFinished(0));
@@ -72653,7 +72656,7 @@ test "processDatagram rejects overlapping out-of-order stream data" {
         .fin = false,
         .data = "cd",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 2), conn.recv_data_bytes);
 
@@ -72665,7 +72668,7 @@ test "processDatagram rejects overlapping out-of-order stream data" {
         .data = "xe",
     } });
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].data.items.len);
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
@@ -72684,7 +72687,7 @@ test "processDatagram trims duplicate suffix overlap with pending stream data" {
         .fin = false,
         .data = "cd",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 2), conn.recv_data_bytes);
 
@@ -72695,7 +72698,7 @@ test "processDatagram trims duplicate suffix overlap with pending stream data" {
         .fin = true,
         .data = "de",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 2), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 3), conn.recv_data_bytes);
 
@@ -72706,7 +72709,7 @@ test "processDatagram trims duplicate suffix overlap with pending stream data" {
         .fin = false,
         .data = "ab",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
@@ -72728,7 +72731,7 @@ test "processDatagram ignores duplicate subrange inside pending stream data" {
         .fin = false,
         .data = "cde",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 3), conn.recv_data_bytes);
 
@@ -72739,7 +72742,7 @@ test "processDatagram ignores duplicate subrange inside pending stream data" {
         .fin = false,
         .data = "d",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 3), conn.recv_data_bytes);
 }
@@ -72759,7 +72762,7 @@ test "processDatagram splits duplicate middle overlap with pending stream data" 
         .fin = false,
         .data = "cd",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 1), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 2), conn.recv_data_bytes);
 
@@ -72770,7 +72773,7 @@ test "processDatagram splits duplicate middle overlap with pending stream data" 
         .fin = true,
         .data = "bcde",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 3), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 4), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
@@ -72782,7 +72785,7 @@ test "processDatagram splits duplicate middle overlap with pending stream data" 
         .fin = false,
         .data = "a",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(2 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 3), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 4), conn.recv_data_bytes);
 
@@ -72794,7 +72797,7 @@ test "processDatagram splits duplicate middle overlap with pending stream data" 
         .fin = false,
         .data = "a",
     } });
-    try conn.processDatagram(3, out.getWritten());
+    try conn.processDatagram(3 * ms, out.getWritten());
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].pending.items.len);
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
@@ -72818,7 +72821,7 @@ test "processDatagram rolls back out-of-order pending stream data when payload i
     } });
     try out.writeByte(0xff);
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items.len);
     try std.testing.expectEqual(@as(u64, 0), conn.recv_data_bytes);
 }
@@ -72838,7 +72841,7 @@ test "RESET_STREAM accounts final size after out-of-order stream data" {
         .fin = false,
         .data = "!",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 1), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -72847,7 +72850,7 @@ test "RESET_STREAM accounts final size after out-of-order stream data" {
         .application_error_code = 7,
         .final_size = 6,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     try std.testing.expectEqual(@as(u64, 6), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
@@ -72870,7 +72873,7 @@ test "receive stream ignores data after RESET_STREAM within final size" {
         .application_error_code = 7,
         .final_size = 5,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -72880,7 +72883,7 @@ test "receive stream ignores data after RESET_STREAM within final size" {
         .fin = false,
         .data = "abc",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(usize, 0), conn.recv_streams.items[0].data.items.len);
 
@@ -72891,7 +72894,7 @@ test "receive stream ignores data after RESET_STREAM within final size" {
         .fin = true,
         .data = "",
     } });
-    try conn.processDatagram(2, out.getWritten());
+    try conn.processDatagram(2 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
 
@@ -72916,7 +72919,7 @@ test "partial delivery: buffered data delivered before StreamClosed when enabled
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     // Now receive RESET_STREAM
     out = buffer.fixedWriter(&datagram);
@@ -72925,7 +72928,7 @@ test "partial delivery: buffered data delivered before StreamClosed when enabled
         .application_error_code = 42,
         .final_size = 10,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(?u64, 42), conn.recv_streams.items[0].reset_error_code);
 
     // Partial delivery: buffered "hello" should be readable
@@ -72954,7 +72957,7 @@ test "partial delivery disabled: immediate StreamClosed (default)" {
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .reset_stream = .{
@@ -72962,7 +72965,7 @@ test "partial delivery disabled: immediate StreamClosed (default)" {
         .application_error_code = 42,
         .final_size = 10,
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
 
     // Default: immediate StreamClosed, buffered data discarded
     var read_buf: [16]u8 = undefined;
@@ -72983,7 +72986,7 @@ test "receive stream rejects data after RESET_STREAM that changes final size" {
         .application_error_code = 7,
         .final_size = 5,
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream = .{
@@ -72992,7 +72995,7 @@ test "receive stream rejects data after RESET_STREAM that changes final size" {
         .fin = false,
         .data = "!",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
@@ -73004,7 +73007,7 @@ test "receive stream rejects data after RESET_STREAM that changes final size" {
         .fin = true,
         .data = "",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqual(@as(?u64, 5), conn.recv_streams.items[0].final_size);
     try std.testing.expectEqual(@as(?u64, 7), conn.recv_streams.items[0].reset_error_code);
@@ -73022,7 +73025,7 @@ test "receive stream rejects data after final size" {
         .fin = true,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
 
     out = buffer.fixedWriter(&datagram);
     try frame.encodeFrame(out.writer(), .{ .stream = .{
@@ -73031,7 +73034,7 @@ test "receive stream rejects data after final size" {
         .fin = false,
         .data = "!",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
 }
 
 test "receive stream discards duplicate late STREAM after all data is received" {
@@ -73046,7 +73049,7 @@ test "receive stream discards duplicate late STREAM after all data is received" 
         .fin = true,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -73056,7 +73059,7 @@ test "receive stream discards duplicate late STREAM after all data is received" 
         .fin = false,
         .data = "hello",
     } });
-    try conn.processDatagram(1, out.getWritten());
+    try conn.processDatagram(1 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqualStrings("hello", conn.recv_streams.items[0].data.items);
 
@@ -73078,7 +73081,7 @@ test "receive stream rejects conflicting late STREAM after all data is received"
         .fin = true,
         .data = "hello",
     } });
-    try conn.processDatagram(0, out.getWritten());
+    try conn.processDatagram(0 * ms, out.getWritten());
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
 
     out = buffer.fixedWriter(&datagram);
@@ -73088,7 +73091,7 @@ test "receive stream rejects conflicting late STREAM after all data is received"
         .fin = false,
         .data = "HELLO",
     } });
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(1 * ms, out.getWritten()));
     try std.testing.expectEqual(@as(u64, 5), conn.recv_data_bytes);
     try std.testing.expectEqualStrings("hello", conn.recv_streams.items[0].data.items);
 }
@@ -73105,7 +73108,7 @@ test "receive stream rejects end offset beyond QUIC varint range" {
     try packet.encodeVarInt(out.writer(), 1);
     try out.writeByte('x');
 
-    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0, out.getWritten()));
+    try std.testing.expectError(error.InvalidPacket, conn.processDatagram(0 * ms, out.getWritten()));
 }
 
 test "stream ids must fit QUIC varint range" {
@@ -73402,7 +73405,7 @@ test "Tls13Backend + Connection: PTO probe fires after ACK loss on TLS-owned pat
 
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh_dgram);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs_dgram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs_dgram);
     const client_hs = try client.driveCryptoBackendInSpace(
         .handshake,
         client_backend.cryptoBackend(),
@@ -73417,7 +73420,7 @@ test "Tls13Backend + Connection: PTO probe fires after ACK loss on TLS-owned pat
     )) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf_dgram);
 
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf_dgram);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf_dgram);
     const server_final = try server.driveCryptoBackendInSpace(
         .handshake,
         server_backend.cryptoBackend(),
@@ -73435,7 +73438,7 @@ test "Tls13Backend + Connection: PTO probe fires after ACK loss on TLS-owned pat
     try std.testing.expect(client.bytesInFlight(.application) > 0);
 
     // Advance time well past PTO deadline and service loss detection.
-    _ = try client.serviceLossDetectionTimer(1000000);
+    _ = try client.serviceLossDetectionTimer(1000000 * ms);
 
     // The client must still have bytes in flight (no ACK received).
     try std.testing.expect(client.bytesInFlight(.application) > 0);
@@ -73525,7 +73528,7 @@ test "Tls13Backend + Connection: PTO probe fires and backoffs on TLS-owned path 
 
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh_dgram);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs_dgram);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs_dgram);
     const client_hs = try client.driveCryptoBackendInSpace(
         .handshake,
         client_backend.cryptoBackend(),
@@ -73540,7 +73543,7 @@ test "Tls13Backend + Connection: PTO probe fires and backoffs on TLS-owned path 
     )) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf_dgram);
 
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf_dgram);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf_dgram);
     _ = try server.driveCryptoBackendInSpace(
         .handshake,
         server_backend.cryptoBackend(),
@@ -73550,9 +73553,9 @@ test "Tls13Backend + Connection: PTO probe fires and backoffs on TLS-owned path 
     // Server emits HANDSHAKE_DONE over 1-RTT; client receives it -> handshake_confirmed.
     // 只有 handshake_confirmed 后 application PTO 才被 allowed（RFC 9002 §6.2.2）。
     try server.sendHandshakeDone();
-    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8, &client_scid)) orelse return error.UnexpectedState;
+    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(hd_dgram);
-    try client.processProtectedShortDatagramWithInstalledKeys(9, client_scid.len, hd_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(9 * ms, client_scid.len, hd_dgram);
     try std.testing.expect(client.handshake_confirmed);
 
     // Client sends PING over 1-RTT (in-flight, ack-eliciting)，server 不 ACK（模拟丢失）。
@@ -73566,7 +73569,7 @@ test "Tls13Backend + Connection: PTO probe fires and backoffs on TLS-owned path 
     try std.testing.expectEqual(@as(u8, 0), client.recovery_state.pto_count);
 
     // 推进时钟远超 PTO deadline -> PTO 触发：pto_count 0->1，probe 排队。
-    _ = try client.serviceLossDetectionTimer(1_000_000);
+    _ = try client.serviceLossDetectionTimer(1_000_000 * ms);
     try std.testing.expectEqual(@as(u8, 1), client.recovery_state.pto_count);
     try std.testing.expectEqual(@as(usize, 1), client.pending_ping_count);
 
@@ -73580,7 +73583,7 @@ test "Tls13Backend + Connection: PTO probe fires and backoffs on TLS-owned path 
     try std.testing.expectEqual(@as(usize, 0), client.pending_ping_count);
 
     // 推进时钟远超 backoff deadline（基于 probe sent_time + 2*basePto）-> pto_count 1->2。
-    _ = try client.serviceLossDetectionTimer(10_000_000);
+    _ = try client.serviceLossDetectionTimer(10_000_000 * ms);
     try std.testing.expectEqual(@as(u8, 2), client.recovery_state.pto_count);
     try std.testing.expectEqual(@as(usize, 1), client.pending_ping_count);
 }
@@ -73662,7 +73665,7 @@ test "Tls13Backend + Connection: RESET_STREAM closes send side on TLS-owned path
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
     const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(
         6,
@@ -73670,7 +73673,7 @@ test "Tls13Backend + Connection: RESET_STREAM closes send side on TLS-owned path
         &client_scid,
     )) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     const sf = try server.driveCryptoBackendInSpace(
         .handshake,
         server_backend.cryptoBackend(),
@@ -73692,7 +73695,7 @@ test "Tls13Backend + Connection: RESET_STREAM closes send side on TLS-owned path
     try std.testing.expect(reset_dgram.len > 0);
 
     // Server receives and processes the RESET_STREAM.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, reset_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, reset_dgram);
 
     // After reset, the stream's send side is closed on the client.
     // Attempting to send more data on a reset stream should fail.
@@ -73752,15 +73755,15 @@ test "Tls13Backend + Connection: STOP_SENDING signals peer to stop on TLS-owned 
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client opens a stream, then sends STOP_SENDING (telling server to stop).
@@ -73768,12 +73771,12 @@ test "Tls13Backend + Connection: STOP_SENDING signals peer to stop on TLS-owned 
     try client.stopSending(stream_id, 7);
 
     // STOP_SENDING must produce a 1-RTT datagram.
-    const ss_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const ss_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ss_dgram);
     try std.testing.expect(ss_dgram.len > 0);
 
     // Server receives and processes STOP_SENDING.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, ss_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, ss_dgram);
     // The server's receive side for this stream is now closed (STOP_SENDING received).
     // recvOnStream should reflect the stop (null or final-size known).
     _ = server.recvOnStream(stream_id, &scratch) catch null;
@@ -73834,15 +73837,15 @@ test "Tls13Backend + Connection: NEW_CONNECTION_ID over 1-RTT on TLS-owned path"
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Server issues a new connection ID.
@@ -73852,12 +73855,12 @@ test "Tls13Backend + Connection: NEW_CONNECTION_ID over 1-RTT on TLS-owned path"
     try std.testing.expect(server.pendingNewConnectionIdCount() > 0);
 
     // The NEW_CONNECTION_ID must produce a 1-RTT datagram.
-    const cid_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8, &client_scid)) orelse return error.UnexpectedState;
+    const cid_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cid_dgram);
     try std.testing.expect(cid_dgram.len > 0);
 
     // Client receives and processes NEW_CONNECTION_ID.
-    try client.processProtectedShortDatagramWithInstalledKeys(9, client_scid.len, cid_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(9 * ms, client_scid.len, cid_dgram);
     // After processing, the client knows the server's new CID.
     try std.testing.expect(server.pendingNewConnectionIdCount() == 0);
     try std.testing.expectEqualSlices(u8, &new_cid, client.peerDestinationConnectionId().?);
@@ -73916,25 +73919,25 @@ test "Tls13Backend + Connection: protected close on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client initiates protected close.
     try client.closeConnection(0, 0, "done");
-    const close_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const close_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(close_dgram);
     try std.testing.expect(close_dgram.len > 0);
 
     // Server receives the close — further operations should reflect closing state.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, close_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, close_dgram);
     // After receiving close, sending on a stream should fail (connection closing).
     try std.testing.expectError(error.ConnectionClosed, server.sendOnStream(0, "x", false));
 }
@@ -73992,33 +73995,33 @@ test "Tls13Backend + Connection: path validation on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client initiates path validation by queueing a PATH_CHALLENGE over 1-RTT.
     const challenge_data = [_]u8{ 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80 };
     try client.sendPathChallenge(challenge_data);
     try std.testing.expectEqual(@as(usize, 1), client.pendingPathChallengeCount());
-    const challenge_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const challenge_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(challenge_dgram);
     try std.testing.expectEqual(@as(usize, 0), client.pendingPathChallengeCount());
     try std.testing.expectEqual(@as(usize, 1), client.outstandingPathChallengeCount());
 
     // Server receives PATH_CHALLENGE and auto-queues a matching PATH_RESPONSE.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, challenge_dgram);
-    const response_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10, &client_scid)) orelse return error.UnexpectedState;
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, challenge_dgram);
+    const response_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(response_dgram);
 
     // Client receives PATH_RESPONSE, completing path validation.
-    try client.processProtectedShortDatagramWithInstalledKeys(11, client_scid.len, response_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(11 * ms, client_scid.len, response_dgram);
     try std.testing.expectEqual(@as(usize, 0), client.outstandingPathChallengeCount());
 }
 
@@ -74077,24 +74080,24 @@ test "Tls13Backend + Connection: stateless reset on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Server issues a new connection ID carrying a stateless reset token.
     const new_cid = [_]u8{ 0x41, 0x42, 0x43, 0x44 };
     const srt = [_]u8{0xEE} ** 16;
     _ = try server.issueConnectionId(&new_cid, srt, 0);
-    const cid_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8, &client_scid)) orelse return error.UnexpectedState;
+    const cid_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cid_dgram);
-    try client.processProtectedShortDatagramWithInstalledKeys(9, client_scid.len, cid_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(9 * ms, client_scid.len, cid_dgram);
 
     // A peer that lost state (or an attacker) sends a stateless reset
     // datagram whose trailing 16 bytes match the server's reset token.
@@ -74163,26 +74166,26 @@ test "Tls13Backend + Connection: flow-control window update on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client opens a stream and sends data up to the server's flow-control limit.
     const stream_id = try client.openStream();
     try client.sendOnStream(stream_id, "12345", false);
-    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(stream_dgram);
 
     // Server receives the STREAM and consumes the bytes, auto-queueing
     // MAX_DATA + MAX_STREAM_DATA window updates.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, stream_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, stream_dgram);
     var read_buf: [8]u8 = undefined;
     const n = (try server.recvOnStream(stream_id, &read_buf)).?;
     try std.testing.expectEqual(@as(usize, 5), n);
@@ -74190,12 +74193,12 @@ test "Tls13Backend + Connection: flow-control window update on TLS-owned path" {
     try std.testing.expectEqual(@as(u64, 10), server.findRecvStream(stream_id).?.max_data);
 
     // Server emits the window updates over 1-RTT (one or two datagrams).
-    const max_dgram1 = (try server.pollProtectedShortDatagramWithInstalledKeys(10, &client_scid)) orelse return error.UnexpectedState;
+    const max_dgram1 = (try server.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(max_dgram1);
-    try client.processProtectedShortDatagramWithInstalledKeys(11, client_scid.len, max_dgram1);
-    if (try server.pollProtectedShortDatagramWithInstalledKeys(12, &client_scid)) |max_dgram2| {
+    try client.processProtectedShortDatagramWithInstalledKeys(11 * ms, client_scid.len, max_dgram1);
+    if (try server.pollProtectedShortDatagramWithInstalledKeys(12 * ms, &client_scid)) |max_dgram2| {
         defer std.testing.allocator.free(max_dgram2);
-        try client.processProtectedShortDatagramWithInstalledKeys(13, client_scid.len, max_dgram2);
+        try client.processProtectedShortDatagramWithInstalledKeys(13 * ms, client_scid.len, max_dgram2);
     }
 
     // Client applies the window update and can send more on the stream.
@@ -74234,9 +74237,9 @@ test "protected short stream packets fragment queued writes against the exact pa
 
     // Queue an ACK before the STREAM so the first packet has both frames.
     try server.sendPing();
-    const ping = (try server.pollProtectedShortDatagramWithInstalledKeys(1, &client_scid)) orelse return error.TestUnexpectedResult;
+    const ping = (try server.pollProtectedShortDatagramWithInstalledKeys(1 * ms, &client_scid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
-    try client.processProtectedShortDatagramWithInstalledKeys(2, client_scid.len, ping);
+    try client.processProtectedShortDatagramWithInstalledKeys(2 * ms, client_scid.len, ping);
     try std.testing.expect(client.pendingAckLargest(.application) != null);
 
     const payload = [_]u8{'x'} ** 4096;
@@ -74248,8 +74251,8 @@ test "protected short stream packets fragment queued writes against the exact pa
     // an application write was queued at the local configured maximum.
     client.peer_max_udp_payload_size = 1200;
 
-    var now_millis: i64 = 3;
-    const first = (try client.pollProtectedShortDatagramWithInstalledKeys(now_millis, &server_scid)) orelse return error.TestUnexpectedResult;
+    var now_nanos: i64 = 3;
+    const first = (try client.pollProtectedShortDatagramWithInstalledKeys(now_nanos, &server_scid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     try std.testing.expect(first.len <= 1200);
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.application));
@@ -74259,16 +74262,16 @@ test "protected short stream packets fragment queued writes against the exact pa
     try std.testing.expect(!first_sent.fin);
     try std.testing.expectEqual(first_sent.offset + first_sent.data.len, client.send_queue.items[0].offset);
     try std.testing.expect(client.send_queue.items[0].fin);
-    try server.processProtectedShortDatagramWithInstalledKeys(now_millis + 1, server_scid.len, first);
-    now_millis += 2;
+    try server.processProtectedShortDatagramWithInstalledKeys(now_nanos + 1, server_scid.len, first);
+    now_nanos += 2;
 
     var packets_sent: usize = 1;
     while (client.send_queue.items.len != 0) {
-        const datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(now_millis, &server_scid)) orelse return error.TestUnexpectedResult;
+        const datagram = (try client.pollProtectedShortDatagramWithInstalledKeys(now_nanos, &server_scid)) orelse return error.TestUnexpectedResult;
         defer std.testing.allocator.free(datagram);
         try std.testing.expect(datagram.len <= 1200);
-        try server.processProtectedShortDatagramWithInstalledKeys(now_millis + 1, server_scid.len, datagram);
-        now_millis += 2;
+        try server.processProtectedShortDatagramWithInstalledKeys(now_nanos + 1, server_scid.len, datagram);
+        now_nanos += 2;
         packets_sent += 1;
     }
     try std.testing.expect(packets_sent > 1);
@@ -74314,8 +74317,8 @@ test "protected zero-rtt stream packets fragment queued writes against the exact
     // write limit used when the application queued the early-data STREAM.
     client.peer_max_udp_payload_size = 1200;
 
-    var now_millis: i64 = 1;
-    const first = (try client.pollProtectedZeroRttDatagramWithInstalledKeys(now_millis, &server_scid, &client_scid)) orelse return error.TestUnexpectedResult;
+    var now_nanos: i64 = 1;
+    const first = (try client.pollProtectedZeroRttDatagramWithInstalledKeys(now_nanos, &server_scid, &client_scid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(first);
     try std.testing.expect(first.len <= 1200);
     try std.testing.expectEqual(@as(usize, 1), client.send_queue.items.len);
@@ -74324,16 +74327,16 @@ test "protected zero-rtt stream packets fragment queued writes against the exact
     try std.testing.expect(!first_sent.fin);
     try std.testing.expectEqual(first_sent.offset + first_sent.data.len, client.send_queue.items[0].offset);
     try std.testing.expect(client.send_queue.items[0].fin);
-    try server.processProtectedZeroRttDatagramWithInstalledKeys(now_millis + 1, first);
-    now_millis += 2;
+    try server.processProtectedZeroRttDatagramWithInstalledKeys(now_nanos + 1, first);
+    now_nanos += 2;
 
     var packets_sent: usize = 1;
     while (client.send_queue.items.len != 0) {
-        const datagram = (try client.pollProtectedZeroRttDatagramWithInstalledKeys(now_millis, &server_scid, &client_scid)) orelse return error.TestUnexpectedResult;
+        const datagram = (try client.pollProtectedZeroRttDatagramWithInstalledKeys(now_nanos, &server_scid, &client_scid)) orelse return error.TestUnexpectedResult;
         defer std.testing.allocator.free(datagram);
         try std.testing.expect(datagram.len <= 1200);
-        try server.processProtectedZeroRttDatagramWithInstalledKeys(now_millis + 1, datagram);
-        now_millis += 2;
+        try server.processProtectedZeroRttDatagramWithInstalledKeys(now_nanos + 1, datagram);
+        now_nanos += 2;
         packets_sent += 1;
     }
     try std.testing.expect(packets_sent > 1);
@@ -74400,34 +74403,34 @@ test "Tls13Backend + Connection: ACK clears in-flight and samples RTT on TLS-own
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client sends a PING over 1-RTT; it is now in flight.
     const cwnd0 = client.congestionWindow(.application);
     try client.sendPing();
-    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ping_dgram);
     try std.testing.expect(client.bytesInFlight(.application) > 0);
 
     // Server receives the PING and ACKs it over 1-RTT.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, ping_dgram);
-    const ack_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10, &client_scid)) orelse return error.UnexpectedState;
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, ping_dgram);
+    const ack_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ack_dgram);
 
     // Client processes the ACK: in-flight cleared, RTT sampled, cwnd not reduced.
-    try client.processProtectedShortDatagramWithInstalledKeys(11, client_scid.len, ack_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(11 * ms, client_scid.len, ack_dgram);
     try std.testing.expectEqual(@as(usize, 0), client.bytesInFlight(.application));
     try std.testing.expect(client.congestionWindow(.application) >= cwnd0);
-    try std.testing.expect(client.smoothedRttMillis(.application) > 0);
+    try std.testing.expect(client.smoothedRtt(.application) > 0);
 }
 
 test "Tls13Backend + Connection: stream close releases MAX_STREAMS credit on TLS-owned path" {
@@ -74483,26 +74486,26 @@ test "Tls13Backend + Connection: stream close releases MAX_STREAMS credit on TLS
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client opens a stream and sends data with fin.
     const stream_id = try client.openStream();
     try client.sendOnStream(stream_id, "data", true);
-    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(stream_dgram);
 
     // Server receives and reads the stream to completion, auto-queueing
     // a MAX_STREAMS credit release (recv_max_streams_bidi 2 -> 3).
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, stream_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, stream_dgram);
     var read_buf: [8]u8 = undefined;
     const n = (try server.recvOnStream(stream_id, &read_buf)).?;
     try std.testing.expectEqual(@as(usize, 4), n);
@@ -74510,11 +74513,11 @@ test "Tls13Backend + Connection: stream close releases MAX_STREAMS credit on TLS
     try std.testing.expectEqual(@as(u64, 3), server.recv_max_streams_bidi);
 
     // Server emits the MAX_STREAMS update over 1-RTT.
-    const max_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10, &client_scid)) orelse return error.UnexpectedState;
+    const max_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(max_dgram);
 
     // Client applies the update and can open more streams.
-    try client.processProtectedShortDatagramWithInstalledKeys(11, client_scid.len, max_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(11 * ms, client_scid.len, max_dgram);
     _ = try client.openStream();
 }
 
@@ -74571,15 +74574,15 @@ test "Tls13Backend + Connection: 1-RTT key update on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client initiates a 1-RTT key update: advance its local key phase so
@@ -74650,25 +74653,25 @@ test "Tls13Backend + Connection: NEW_TOKEN over 1-RTT on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Server issues a NEW_TOKEN for the client's future address validation.
     const token: []const u8 = "address-validation-token";
     try server.issueNewToken(token);
-    const token_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8, &client_scid)) orelse return error.UnexpectedState;
+    const token_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(token_dgram);
 
     // Client receives and stores the NEW_TOKEN over 1-RTT.
-    try client.processProtectedShortDatagramWithInstalledKeys(9, client_scid.len, token_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(9 * ms, client_scid.len, token_dgram);
     try std.testing.expectEqualStrings(token, client.latestNewToken().?);
 }
 
@@ -74820,36 +74823,36 @@ test "Tls13Backend + Connection: Retry then resend ClientHello and complete hand
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 13, &client_scid, &server_scid, &[_]u8{}, retry_secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(14, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(14 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
 
     // 11. Client receives ServerHello + Handshake flight -> client Finished.
     try client.processProtectedLongDatagramInSpace(.initial, 15, retry_secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(16, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(16 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(17, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(17 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
 
     // 12. Server receives client Finished -> handshake confirmed + 1-RTT keys.
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(18, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(18 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
     try std.testing.expect(server.handshakeConfirmed());
 
     // 13. Server sends HANDSHAKE_DONE over 1-RTT.
     try server.sendHandshakeDone();
-    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(19, &client_scid)) orelse return error.UnexpectedState;
+    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(19 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(hd_dgram);
 
     // 14. Client receives HANDSHAKE_DONE -> handshake confirmed.
-    try client.processProtectedShortDatagramWithInstalledKeys(20, client_scid.len, hd_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(20 * ms, client_scid.len, hd_dgram);
     try std.testing.expect(client.handshakeConfirmed());
 
     // 15. Client sends 1-RTT PING; server receives -> 1-RTT acked.
     try client.sendPing();
-    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(21, &server_scid)) orelse return error.UnexpectedState;
+    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(21 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ping_dgram);
-    try server.processProtectedShortDatagramWithInstalledKeys(22, server_scid.len, ping_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(22 * ms, server_scid.len, ping_dgram);
     try std.testing.expect(server.peerAddressValidated());
 }
 
@@ -74906,25 +74909,25 @@ test "Tls13Backend + Connection: HANDSHAKE_DONE over 1-RTT on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Server queues HANDSHAKE_DONE and emits it over 1-RTT.
     try server.sendHandshakeDone();
-    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8, &client_scid)) orelse return error.UnexpectedState;
+    const hd_dgram = (try server.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(hd_dgram);
     try std.testing.expect(server.handshake_done_sent);
 
     // Client receives HANDSHAKE_DONE, confirming the handshake.
-    try client.processProtectedShortDatagramWithInstalledKeys(9, client_scid.len, hd_dgram);
+    try client.processProtectedShortDatagramWithInstalledKeys(9 * ms, client_scid.len, hd_dgram);
     try std.testing.expect(client.handshake_confirmed);
 }
 
@@ -74981,25 +74984,25 @@ test "Tls13Backend + Connection: application close on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client initiates an application-layer close (APPLICATION_CLOSE frame).
     try client.closeApplication(0, "done");
-    const close_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const close_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(close_dgram);
     try std.testing.expect(close_dgram.len > 0);
 
     // Server receives the close — further operations should reflect closing state.
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, close_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, close_dgram);
     try std.testing.expectError(error.ConnectionClosed, server.sendOnStream(0, "x", false));
 }
 
@@ -75056,15 +75059,15 @@ test "Tls13Backend + Connection: DATA_BLOCKED over 1-RTT on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client sends up to the server's connection flow-control limit, then the
@@ -75074,12 +75077,12 @@ test "Tls13Backend + Connection: DATA_BLOCKED over 1-RTT on TLS-owned path" {
     try std.testing.expectError(error.FlowControlBlocked, client.sendOnStream(stream_id, "!", false));
 
     // Client emits the STREAM + DATA_BLOCKED over 1-RTT (one or two datagrams).
-    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(stream_dgram);
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, stream_dgram);
-    if (try client.pollProtectedShortDatagramWithInstalledKeys(10, &server_scid)) |blocked_dgram| {
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, stream_dgram);
+    if (try client.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &server_scid)) |blocked_dgram| {
         defer std.testing.allocator.free(blocked_dgram);
-        try server.processProtectedShortDatagramWithInstalledKeys(11, server_scid.len, blocked_dgram);
+        try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_scid.len, blocked_dgram);
     }
 
     // Server records the peer's DATA_BLOCKED limit.
@@ -75139,15 +75142,15 @@ test "Tls13Backend + Connection: STREAM_DATA_BLOCKED over 1-RTT on TLS-owned pat
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client sends up to the server's stream flow-control limit, then the next
@@ -75157,12 +75160,12 @@ test "Tls13Backend + Connection: STREAM_DATA_BLOCKED over 1-RTT on TLS-owned pat
     try std.testing.expectError(error.FlowControlBlocked, client.sendOnStream(stream_id, "!", false));
 
     // Client emits the STREAM + STREAM_DATA_BLOCKED over 1-RTT (one or two datagrams).
-    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const stream_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(stream_dgram);
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, stream_dgram);
-    if (try client.pollProtectedShortDatagramWithInstalledKeys(10, &server_scid)) |blocked_dgram| {
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, stream_dgram);
+    if (try client.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &server_scid)) |blocked_dgram| {
         defer std.testing.allocator.free(blocked_dgram);
-        try server.processProtectedShortDatagramWithInstalledKeys(11, server_scid.len, blocked_dgram);
+        try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_scid.len, blocked_dgram);
     }
 
     // Server records the peer's stream DATA_BLOCKED limit.
@@ -75222,15 +75225,15 @@ test "Tls13Backend + Connection: STREAMS_BLOCKED over 1-RTT on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client opens streams up to the server's bidi stream-count limit.
@@ -75240,9 +75243,9 @@ test "Tls13Backend + Connection: STREAMS_BLOCKED over 1-RTT on TLS-owned path" {
     try std.testing.expectError(error.FlowControlBlocked, client.openStream());
 
     // Client emits the STREAMS_BLOCKED over 1-RTT.
-    const blocked_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const blocked_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(blocked_dgram);
-    try server.processProtectedShortDatagramWithInstalledKeys(9, server_scid.len, blocked_dgram);
+    try server.processProtectedShortDatagramWithInstalledKeys(9 * ms, server_scid.len, blocked_dgram);
 
     // Server records the peer's STREAMS_BLOCKED limit.
     try std.testing.expectEqual(@as(u64, 2), server.peerStreamsBlockedBidiLimit().?);
@@ -75301,28 +75304,28 @@ test "Tls13Backend + Connection: PTO backoff doubles deadline on TLS-owned path"
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client sends a PING over 1-RTT (in-flight, never ACKed).
     try client.sendPing();
-    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const ping_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ping_dgram);
-    const deadline1 = client.ptoDeadlineMillis(.application) orelse return error.UnexpectedState;
+    const deadline1 = client.ptoDeadline(.application) orelse return error.UnexpectedState;
 
     // Service the PTO: a probe is sent and the PTO backoff count increments.
-    _ = (try client.serviceLossDetectionTimer(1_000_000)) orelse return error.UnexpectedState;
+    _ = (try client.serviceLossDetectionTimer(1_000_000 * ms)) orelse return error.UnexpectedState;
     const pto_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(1_000_001, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(pto_dgram);
-    const deadline2 = client.ptoDeadlineMillis(.application) orelse return error.UnexpectedState;
+    const deadline2 = client.ptoDeadline(.application) orelse return error.UnexpectedState;
 
     // The backed-off PTO deadline must be later than the original.
     try std.testing.expect(deadline2 > deadline1);
@@ -75381,15 +75384,15 @@ test "Tls13Backend + Connection: initiateOneRttKeyUpdate on TLS-owned path" {
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
 
     // Client initiates a 1-RTT key update via the Connection API: this
@@ -75397,7 +75400,7 @@ test "Tls13Backend + Connection: initiateOneRttKeyUpdate on TLS-owned path" {
     // unlike the caller-owned key-phase-state variant.
     try client.initiateOneRttKeyUpdate();
     try client.sendPing();
-    const ku_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8, &server_scid)) orelse return error.UnexpectedState;
+    const ku_dgram = (try client.pollProtectedShortDatagramWithInstalledKeys(8 * ms, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(ku_dgram);
 
     // Server processes the key-update packet with its peer (receive) state.
@@ -75550,7 +75553,7 @@ test "Tls13Backend + Connection: 0-RTT early data round-trip on TLS-owned path" 
     defer std.testing.allocator.free(zero_rtt);
 
     // Server opens the 0-RTT datagram with installed + accepted peer keys.
-    try server.processProtectedZeroRttDatagramWithInstalledKeys(3, zero_rtt);
+    try server.processProtectedZeroRttDatagramWithInstalledKeys(3 * ms, zero_rtt);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try server.recvOnStream(stream_id, &recv_buf)) orelse return error.UnexpectedState;
     try std.testing.expectEqualStrings("early data", recv_buf[0..recv_len]);
@@ -75610,15 +75613,15 @@ test "Tls13Backend + Connection: NewSessionTicket lets client derive resumption 
     const sh = (try server.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid, &server_scid, &[_]u8{}, secrets.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh);
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
-    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid, &server_scid)) orelse return error.UnexpectedState;
+    const shs = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid, &server_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 4, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(5, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs);
     _ = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
-    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid, &client_scid)) orelse return error.UnexpectedState;
+    const cf = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid, &client_scid)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf);
-    try server.processProtectedHandshakeDatagramWithInstalledKeys(7, cf);
+    try server.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf);
     const server_final = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
     try std.testing.expect(server_final.handshake_confirmed);
 
@@ -75693,15 +75696,15 @@ test "Tls13Backend + Connection: resumption PSK from handshake drives 0-RTT roun
     const sh1 = (try server1.pollProtectedLongCryptoDatagramInSpace(.initial, 2, &client_scid1, &server_scid1, &[_]u8{}, secrets1.server)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(sh1);
     _ = try server1.driveCryptoBackendInSpace(.handshake, server1_backend.cryptoBackend(), &scratch);
-    const shs1 = (try server1.pollProtectedHandshakeDatagramWithInstalledKeys(3, &client_scid1, &server_scid1)) orelse return error.UnexpectedState;
+    const shs1 = (try server1.pollProtectedHandshakeDatagramWithInstalledKeys(3 * ms, &client_scid1, &server_scid1)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(shs1);
     try client1.processProtectedLongDatagramInSpace(.initial, 4, secrets1.server, sh1);
     _ = try client1.driveCryptoBackendInSpace(.initial, client1_backend.cryptoBackend(), &scratch);
-    try client1.processProtectedHandshakeDatagramWithInstalledKeys(5, shs1);
+    try client1.processProtectedHandshakeDatagramWithInstalledKeys(5 * ms, shs1);
     _ = try client1.driveCryptoBackendInSpace(.handshake, client1_backend.cryptoBackend(), &scratch);
-    const cf1 = (try client1.pollProtectedHandshakeDatagramWithInstalledKeys(6, &server_scid1, &client_scid1)) orelse return error.UnexpectedState;
+    const cf1 = (try client1.pollProtectedHandshakeDatagramWithInstalledKeys(6 * ms, &server_scid1, &client_scid1)) orelse return error.UnexpectedState;
     defer std.testing.allocator.free(cf1);
-    try server1.processProtectedHandshakeDatagramWithInstalledKeys(7, cf1);
+    try server1.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, cf1);
     const server1_final = try server1.driveCryptoBackendInSpace(.handshake, server1_backend.cryptoBackend(), &scratch);
     try std.testing.expect(server1_final.handshake_confirmed);
 
@@ -75798,7 +75801,7 @@ test "Tls13Backend + Connection: resumption PSK from handshake drives 0-RTT roun
     defer std.testing.allocator.free(zero_rtt);
 
     // Server opens the 0-RTT datagram with installed + accepted peer keys.
-    try server2.processProtectedZeroRttDatagramWithInstalledKeys(11, zero_rtt);
+    try server2.processProtectedZeroRttDatagramWithInstalledKeys(11 * ms, zero_rtt);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try server2.recvOnStream(stream_id, &recv_buf)) orelse return error.UnexpectedState;
     try std.testing.expectEqualStrings("early data", recv_buf[0..recv_len]);
@@ -75894,7 +75897,7 @@ test "Tls13Backend + Connection: rejectZeroRtt drops early data on TLS-owned pat
     // Server cannot open the 0-RTT datagram: keys were discarded by reject.
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedZeroRttDatagramWithInstalledKeys(3, zero_rtt),
+        server.processProtectedZeroRttDatagramWithInstalledKeys(3 * ms, zero_rtt),
     );
 
     // No early data was delivered to the stream.
@@ -75988,7 +75991,7 @@ test "Tls13Backend + Connection: accept_zero_rtt config auto-accepts early data"
     defer std.testing.allocator.free(zero_rtt);
 
     // Server opens the 0-RTT datagram with auto-accepted peer keys.
-    try server.processProtectedZeroRttDatagramWithInstalledKeys(3, zero_rtt);
+    try server.processProtectedZeroRttDatagramWithInstalledKeys(3 * ms, zero_rtt);
     var recv_buf: [32]u8 = undefined;
     const recv_len = (try server.recvOnStream(stream_id, &recv_buf)) orelse return error.UnexpectedState;
     try std.testing.expectEqualStrings("early data", recv_buf[0..recv_len]);
@@ -76086,7 +76089,7 @@ test "Tls13Backend + Connection: accept_zero_rtt=false ignores early data" {
     // accepted per the configured policy.
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedZeroRttDatagramWithInstalledKeys(3, zero_rtt),
+        server.processProtectedZeroRttDatagramWithInstalledKeys(3 * ms, zero_rtt),
     );
 
     // No early data was delivered to the stream.
@@ -76114,7 +76117,7 @@ test "Tls13Backend + Connection: accept_zero_rtt=false ignores early data" {
     defer std.testing.allocator.free(shs);
     try client.processProtectedLongDatagramInSpace(.initial, 6, secrets.server, sh);
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
-    try client.processProtectedHandshakeDatagramWithInstalledKeys(7, shs);
+    try client.processProtectedHandshakeDatagramWithInstalledKeys(7 * ms, shs);
     const rejection = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
     try std.testing.expectEqual(false, rejection.zero_rtt_accepted.?);
     try std.testing.expect(rejection.zero_rtt_keys_discarded);
@@ -76152,16 +76155,16 @@ test "checkPtoTimeouts discards retained peer previous key after one PTO" {
 
     // Server receives the gen-1 PING: peer state advances and the old gen-0
     // receive key is retained for one PTO (RFC 9001 §6.5 / RFC 9002 §6.2).
-    try server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, ping);
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
 
     // Within the PTO retain window the previous key is still held.
-    try server.checkPtoTimeouts(12);
+    try server.checkPtoTimeouts(12 * ms);
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
 
     // After the PTO retain window expires the previous key is discarded.
-    try server.checkPtoTimeouts(10_000);
+    try server.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(?bool, false), server.peerOneRttRetainsKeyGeneration(0));
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(1));
 }
@@ -76197,7 +76200,7 @@ test "delayed previous-key packet opens without advancing peer key phase" {
 
     // Server receives the gen-1 PING: peer state advances to gen 1 and the old
     // gen-0 receive key is retained for one PTO (RFC 9001 §6.5).
-    try server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, ping);
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
 
@@ -76223,7 +76226,7 @@ test "delayed previous-key packet opens without advancing peer key phase" {
         &delayed_plaintext,
     );
     defer std.testing.allocator.free(delayed_ping);
-    try server.processProtectedShortDatagramWithInstalledKeys(12, server_dcid.len, delayed_ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(12 * ms, server_dcid.len, delayed_ping);
     // The delayed old-key packet must NOT advance peer key-phase state.
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), server.peerOneRttRetainsKeyGeneration(0));
@@ -76231,7 +76234,7 @@ test "delayed previous-key packet opens without advancing peer key phase" {
 
     // After the PTO retain window expires the previous key is discarded; a
     // further old-key packet then fails to authenticate (RFC 9001 §6.5).
-    try server.checkPtoTimeouts(10_000);
+    try server.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(?bool, false), server.peerOneRttRetainsKeyGeneration(0));
     const stale_ping = try protection.protectShortPacketAes128(
         std.testing.allocator,
@@ -76247,7 +76250,7 @@ test "delayed previous-key packet opens without advancing peer key phase" {
     defer std.testing.allocator.free(stale_ping);
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagramWithInstalledKeys(13, server_dcid.len, stale_ping),
+        server.processProtectedShortDatagramWithInstalledKeys(13 * ms, server_dcid.len, stale_ping),
     );
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
 }
@@ -76280,11 +76283,11 @@ test "discarded previous-key packet queues KEY_UPDATE_ERROR close" {
         &server_dcid,
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
-    try server.processProtectedShortDatagramWithInstalledKeys(11, server_dcid.len, ping);
+    try server.processProtectedShortDatagramWithInstalledKeys(11 * ms, server_dcid.len, ping);
     try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
 
     // Discard the retained previous key past the PTO retain window.
-    try server.checkPtoTimeouts(10_000);
+    try server.checkPtoTimeouts(10_000 * ms);
     try std.testing.expectEqual(@as(?bool, false), server.peerOneRttRetainsKeyGeneration(0));
 
     // A packet protected with the discarded gen-0 key phase is a peer protocol
@@ -76309,7 +76312,7 @@ test "discarded previous-key packet queues KEY_UPDATE_ERROR close" {
     defer std.testing.allocator.free(stale_ping);
     try std.testing.expectError(
         error.InvalidPacket,
-        server.processProtectedShortDatagramWithInstalledKeys(12, server_dcid.len, stale_ping),
+        server.processProtectedShortDatagramWithInstalledKeys(12 * ms, server_dcid.len, stale_ping),
     );
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
     try std.testing.expectEqual(
@@ -76338,7 +76341,7 @@ test "sendDatagram and recvDatagram roundtrip through pollTx and frame processin
 
     // Sender polls the datagram frame.
     var out_buf: [1500]u8 = undefined;
-    const payload = (try sender.pollTx(0, &out_buf)) orelse return error.TestUnexpectedResult;
+    const payload = (try sender.pollTx(0 * ms, &out_buf)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 0), sender.pendingDatagramCount());
 
     // Receiver processes the datagram frame.

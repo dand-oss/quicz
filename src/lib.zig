@@ -17,7 +17,6 @@ pub const tls13 = @import("tls/tls13.zig");
 pub const pq_kex = @import("tls/pq_kex.zig");
 pub const qlog = @import("qlog/qlog.zig");
 pub const cubic = @import("quic/cubic.zig");
-pub const bbr = @import("quic/bbr.zig");
 pub const pmtu = @import("quic/pmtu.zig");
 pub const h3 = @import("h3/frame.zig");
 pub const qpack = @import("h3/qpack.zig");
@@ -53,7 +52,6 @@ comptime {
     _ = pq_kex;
     _ = qlog;
     _ = cubic;
-    _ = bbr;
     _ = pacer;
     _ = duration;
     _ = pmtu;

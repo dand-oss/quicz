@@ -190,7 +190,7 @@ pub const Aes128KeyPhaseState = struct {
     /// window expires, or once a newer advance overwrites it.
     previous: ?Aes128PacketProtectionKeys = null,
     previous_key_phase: ?bool = null,
-    previous_discard_deadline_millis: ?i64 = null,
+    previous_discard_deadline_nanos: ?i64 = null,
     /// Key phase of the most recently discarded previous generation, kept after
     /// the retain window expires so packets protected with keys older than the
     /// retained generation can be surfaced as KEY_UPDATE_ERROR (RFC 9001 §6.5).
@@ -276,27 +276,27 @@ pub const Aes128KeyPhaseState = struct {
         return true;
     }
 
-    /// Schedule the retained previous key to be discarded at `deadline_millis`.
+    /// Schedule the retained previous key to be discarded at `deadline_nanos`.
     /// Has no effect when no previous generation is retained.
-    pub fn schedulePreviousDiscard(self: *Aes128KeyPhaseState, deadline_millis: i64) void {
+    pub fn schedulePreviousDiscard(self: *Aes128KeyPhaseState, deadline_nanos: i64) void {
         if (self.previous == null) return;
-        self.previous_discard_deadline_millis = deadline_millis;
+        self.previous_discard_deadline_nanos = deadline_nanos;
     }
 
     /// Return the deadline for discarding the retained previous generation.
-    pub fn previousDiscardDeadlineMillis(self: Aes128KeyPhaseState) ?i64 {
-        return self.previous_discard_deadline_millis;
+    pub fn previousDiscardDeadline(self: Aes128KeyPhaseState) ?i64 {
+        return self.previous_discard_deadline_nanos;
     }
 
     /// Drop the retained previous key once its discard deadline has passed.
     /// Returns true if the previous key was discarded by this call.
-    pub fn discardExpiredPrevious(self: *Aes128KeyPhaseState, now_millis: i64) bool {
-        const deadline = self.previous_discard_deadline_millis orelse return false;
-        if (now_millis < deadline) return false;
+    pub fn discardExpiredPrevious(self: *Aes128KeyPhaseState, now_nanos: i64) bool {
+        const deadline = self.previous_discard_deadline_nanos orelse return false;
+        if (now_nanos < deadline) return false;
         self.discarded_previous_key_phase = self.previous_key_phase;
         self.previous = null;
         self.previous_key_phase = null;
-        self.previous_discard_deadline_millis = null;
+        self.previous_discard_deadline_nanos = null;
         return true;
     }
 
@@ -307,7 +307,7 @@ pub const Aes128KeyPhaseState = struct {
         // overwrites any previous that was not yet discarded.
         self.previous = self.current;
         self.previous_key_phase = self.current_key_phase;
-        self.previous_discard_deadline_millis = null;
+        self.previous_discard_deadline_nanos = null;
         self.current = self.next;
         self.next = nextAes128PacketProtectionKeys(self.current);
         self.current_key_phase = !self.current_key_phase;

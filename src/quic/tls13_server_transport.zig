@@ -31,10 +31,10 @@ pub const ServerTransportDeadline = union(enum) {
     key_discard: i64,
 
     /// Return the monotonic deadline value for socket wait selection.
-    pub fn deadlineMillis(self: ServerTransportDeadline) i64 {
+    pub fn deadline(self: ServerTransportDeadline) i64 {
         return switch (self) {
-            .recovery => |deadline| deadline.deadline_millis,
-            .idle_timeout, .close_timeout, .key_discard => |deadline| deadline,
+            .recovery => |dl| dl.deadline_nanos,
+            .idle_timeout, .close_timeout, .key_discard => |dl| dl,
         };
     }
 };
@@ -184,10 +184,10 @@ pub const Tls13ServerTransport = struct {
         application_error_code: u64,
         frame_type: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?[]u8 {
         try self.connection.closeConnection(application_error_code, frame_type, reason);
-        return self.pollApplicationDatagram(now_millis);
+        return self.pollApplicationDatagram(now_nanos);
     }
 
     /// Queue a protected APPLICATION_CLOSE and poll it for send.
@@ -195,32 +195,32 @@ pub const Tls13ServerTransport = struct {
         self: *Tls13ServerTransport,
         application_error_code: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?[]u8 {
         try self.connection.closeApplication(application_error_code, reason);
-        return self.pollApplicationDatagram(now_millis);
+        return self.pollApplicationDatagram(now_nanos);
     }
 
     /// Return the active close deadline after `close()` queues a close.
-    pub fn closeDeadlineMillis(self: *const Tls13ServerTransport) ?i64 {
-        return self.connection.closeDeadlineMillis();
+    pub fn closeDeadline(self: *const Tls13ServerTransport) ?i64 {
+        return self.connection.closeDeadline();
     }
 
     /// Return one protected 1-RTT datagram queued by this transport.
     pub fn pollApplicationDatagram(
         self: *Tls13ServerTransport,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?[]u8 {
         const peer_connection_id = self.connection.peerDestinationConnectionId() orelse return error.InvalidPacket;
         return self.connection.pollProtectedShortDatagramWithInstalledKeys(
-            now_millis,
+            now_nanos,
             peer_connection_id,
         );
     }
 
     /// Return the owned connection's current loss/PTO wakeup deadline.
-    pub fn lossDetectionTimerDeadlineMillis(self: *const Tls13ServerTransport) ?LossDetectionTimerDeadline {
-        return self.connection.lossDetectionTimerDeadlineMillis();
+    pub fn lossDetectionTimerDeadline(self: *const Tls13ServerTransport) ?LossDetectionTimerDeadline {
+        return self.connection.lossDetectionTimerDeadline();
     }
 
     /// Select the earliest lifecycle deadline for this connection.
@@ -234,18 +234,18 @@ pub const Tls13ServerTransport = struct {
         var next: ?ServerTransportDeadline = null;
 
         if (state == .active) {
-            if (self.connection.idleTimeoutDeadlineMillis()) |deadline| {
+            if (self.connection.idleTimeoutDeadline()) |deadline| {
                 next = .{ .idle_timeout = deadline };
             }
-            if (self.connection.lossDetectionTimerDeadlineMillis()) |deadline| {
+            if (self.connection.lossDetectionTimerDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .recovery = deadline });
             }
-            if (self.connection.oneRttKeyDiscardDeadlineMillis()) |deadline| {
+            if (self.connection.oneRttKeyDiscardDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .key_discard = deadline });
             }
         }
         if (state == .closing or state == .draining) {
-            if (self.connection.closeDeadlineMillis()) |deadline| {
+            if (self.connection.closeDeadline()) |deadline| {
                 next = selectEarlierDeadline(next, .{ .close_timeout = deadline });
             }
         }
@@ -259,29 +259,29 @@ pub const Tls13ServerTransport = struct {
     /// unchanged and return null.
     pub fn serviceDueDeadline(
         self: *Tls13ServerTransport,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?ServerTransportDeadline {
         const deadline = self.nextDeadline() orelse return null;
-        if (deadline.deadlineMillis() > now_millis) return null;
+        if (deadline.deadline() > now_nanos) return null;
 
         switch (deadline) {
             .recovery => {
-                _ = try self.connection.serviceLossDetectionTimer(now_millis);
+                _ = try self.connection.serviceLossDetectionTimer(now_nanos);
             },
             .idle_timeout => {
-                self.connection.checkIdleTimeouts(now_millis) catch |err| switch (err) {
+                self.connection.checkIdleTimeouts(now_nanos) catch |err| switch (err) {
                     error.ConnectionClosed => {},
                     else => return err,
                 };
             },
             .close_timeout => {
-                self.connection.checkCloseTimeouts(now_millis) catch |err| switch (err) {
+                self.connection.checkCloseTimeouts(now_nanos) catch |err| switch (err) {
                     error.ConnectionClosed => {},
                     else => return err,
                 };
             },
             .key_discard => {
-                _ = self.connection.discardExpiredOneRttKeys(now_millis);
+                _ = self.connection.discardExpiredOneRttKeys(now_nanos);
             },
         }
         return deadline;
@@ -297,7 +297,7 @@ fn selectEarlierDeadline(
     candidate: ServerTransportDeadline,
 ) ServerTransportDeadline {
     if (current) |existing| {
-        if (existing.deadlineMillis() <= candidate.deadlineMillis()) return existing;
+        if (existing.deadline() <= candidate.deadline()) return existing;
     }
     return candidate;
 }
@@ -377,13 +377,13 @@ test "Tls13ServerTransport services idle lifecycle deadline" {
         .{ .alpn = &alpn },
     );
     defer transport.deinit();
-    transport.connection.last_packet_activity_millis = 10;
+    transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
 
     const deadline = transport.nextDeadline() orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(i64, 20), deadline.deadlineMillis());
+    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expect((try transport.serviceDueDeadline(19)) == null);
-    const serviced = try transport.serviceDueDeadline(20) orelse return error.TestUnexpectedResult;
+    try std.testing.expect((try transport.serviceDueDeadline(19 * 1_000_000)) == null);
+    const serviced = try transport.serviceDueDeadline(20 * 1_000_000) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .idle_timeout);
     try std.testing.expectEqual(transport_types.ConnectionState.closed, transport.connection.connectionState());
 }
@@ -409,7 +409,7 @@ test "Tls13ServerTransport sends to the newest peer connection ID" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0, writer.getWritten());
+    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try transport.connection.sendPing();
 
     const datagram = (try transport.pollApplicationDatagram(1)) orelse return error.TestUnexpectedResult;
@@ -446,15 +446,15 @@ test "Tls13ServerTransport closes with protected application output and deadline
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try transport.connection.processDatagram(0, writer.getWritten());
+    try transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     const datagram = (try transport.close(88, 0, "server close", 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(datagram);
     try std.testing.expectEqual(transport_types.ConnectionState.closing, transport.connection.connectionState());
-    const close_deadline = transport.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = transport.closeDeadline() orelse return error.TestUnexpectedResult;
     const next_deadline = transport.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(next_deadline == .close_timeout);
-    try std.testing.expectEqual(close_deadline, next_deadline.deadlineMillis());
+    try std.testing.expectEqual(close_deadline, next_deadline.deadline());
 
     var opened = try protection.unprotectShortPacketAes128(
         std.testing.allocator,

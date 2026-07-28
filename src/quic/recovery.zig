@@ -1,10 +1,15 @@
 const std = @import("std");
 const cubic_module = @import("cubic.zig");
-const bbr_module = @import("bbr.zig");
 const connection_config = @import("connection_config.zig");
 const hystart_module = @import("hybrid_slow_start.zig");
+const duration = @import("../time/duration.zig");
+pub const ns_per_us = duration.ns_per_us;
+pub const ns_per_ms = duration.ns_per_ms;
+pub const ns_per_s = duration.ns_per_s;
 
 pub const timer_granularity_ns: u64 = 1_000_000; // kGranularity = 1ms (RFC 9002)
+
+
 pub const time_threshold_numerator: u64 = 9;
 pub const time_threshold_denominator: u64 = 8;
 pub const persistent_congestion_threshold: u64 = 3;
@@ -72,7 +77,7 @@ pub const Recovery = struct {
     congestion_avoidance_bytes_acked: usize = 0,
     /// Explicit congestion state machine (RFC 9002 §7.3).
     congestion_state: CongestionState = .slow_start,
-    congestion_recovery_start_time_millis: ?i64 = null,
+    congestion_recovery_start_time_nanos: ?i64 = null,
     /// Set when entering recovery; cleared after one packet is sent (fast retransmission).
     fast_retransmission_required: bool = false,
     /// Largest packet number sent (updated by Connection on each send).
@@ -85,13 +90,12 @@ pub const Recovery = struct {
     ssthresh: usize = std.math.maxInt(usize),
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
-    bbr: bbr_module.BbrState = .{},
     /// HyStart++ slow start controller. Monitors RTT increases to exit
     /// slow start before overshooting available bandwidth.
     hystart: hystart_module.HybridSlowStart,
     /// Timestamp of the most recently sent ack-eliciting packet (millis).
     /// Set by Connection on each send; used by HyStart++ for RTT round detection.
-    last_sent_time_millis: i64 = 0,
+    last_sent_time_nanos: i64 = 0,
     /// PTO jitter percentage (0–50). 0 = deterministic (test default).
     pto_jitter_percentage: u8 = 0,
     /// PRNG for PTO jitter. Seeded from init; deterministic seed keeps
@@ -180,11 +184,11 @@ pub const Recovery = struct {
     pub fn onPacketAcked(
         self: *Recovery,
         bytes: usize,
-        sent_time_millis: i64,
+        sent_time_nanos: i64,
         latest_rtt_ns: u64,
         ack_delay_ns: u64,
     ) void {
-        self.onPacketAckedWithUtilization(bytes, sent_time_millis, latest_rtt_ns, ack_delay_ns, true);
+        self.onPacketAckedWithUtilization(bytes, sent_time_nanos, latest_rtt_ns, ack_delay_ns, true);
     }
 
     /// Record an acknowledged packet, with explicit congestion-window utilization.
@@ -196,7 +200,7 @@ pub const Recovery = struct {
     pub fn onPacketAckedWithUtilization(
         self: *Recovery,
         bytes: usize,
-        sent_time_millis: i64,
+        sent_time_nanos: i64,
         latest_rtt_ns: u64,
         ack_delay_ns: u64,
         congestion_window_utilized: bool,
@@ -207,12 +211,12 @@ pub const Recovery = struct {
         if (self.inSlowStart()) {
             self.hystart.onRttUpdate(
                 @floatFromInt(self.congestion_window),
-                sent_time_millis,
-                self.last_sent_time_millis,
+                sent_time_nanos,
+                self.last_sent_time_nanos,
                 latest_rtt_ns,
             );
         }
-        self.onAckedBytesForCongestion(bytes, sent_time_millis, congestion_window_utilized);
+        self.onAckedBytesForCongestion(bytes, sent_time_nanos, congestion_window_utilized);
     }
 
     /// Record acknowledged bytes without taking an RTT sample.
@@ -224,31 +228,31 @@ pub const Recovery = struct {
     pub fn onPacketAckedWithoutRttSample(
         self: *Recovery,
         bytes: usize,
-        sent_time_millis: i64,
+        sent_time_nanos: i64,
         congestion_window_utilized: bool,
     ) void {
         self.removeBytesInFlight(bytes);
-        self.onAckedBytesForCongestion(bytes, sent_time_millis, congestion_window_utilized);
+        self.onAckedBytesForCongestion(bytes, sent_time_nanos, congestion_window_utilized);
     }
 
     fn onAckedBytesForCongestion(
         self: *Recovery,
         bytes: usize,
-        sent_time_millis: i64,
+        sent_time_nanos: i64,
         congestion_window_utilized: bool,
     ) void {
         self.pto_count = 0;
         if (!congestion_window_utilized) {
             // RFC 8312 §5.8: signal app-limited to CUBIC epoch
             if (self.congestion_algorithm == .cubic) {
-                self.cubic.onAppLimited(sent_time_millis);
+                self.cubic.onAppLimited(sent_time_nanos);
             }
             return;
         }
         // No cwnd growth during recovery. Recovery ends when
         // an ACK arrives for a packet sent after the recovery started.
         if (self.congestion_state == .recovery) {
-            if (self.inCongestionRecovery(sent_time_millis)) return;
+            if (self.inCongestionRecovery(sent_time_nanos)) return;
             // Packet sent after recovery start → exit recovery.
             self.congestion_state = .congestion_avoidance;
         }
@@ -267,17 +271,17 @@ pub const Recovery = struct {
             return;
         }
 
-        self.growCongestionAvoidance(bytes, sent_time_millis);
+        self.growCongestionAvoidance(bytes, sent_time_nanos);
     }
 
     /// Record packet loss and start a congestion recovery period if needed.
-    pub fn onPacketLost(self: *Recovery, bytes: usize, lost_packet_sent_time_millis: i64, now_millis: i64) void {
-        self.onPacketLostWithNumber(bytes, lost_packet_sent_time_millis, now_millis, null);
+    pub fn onPacketLost(self: *Recovery, bytes: usize, lost_packet_sent_time_nanos: i64, now_nanos: i64) void {
+        self.onPacketLostWithNumber(bytes, lost_packet_sent_time_nanos, now_nanos, null);
     }
 
-    pub fn onPacketLostWithNumber(self: *Recovery, bytes: usize, lost_packet_sent_time_millis: i64, now_millis: i64, lost_pn: ?u64) void {
+    pub fn onPacketLostWithNumber(self: *Recovery, bytes: usize, lost_packet_sent_time_nanos: i64, now_nanos: i64, lost_pn: ?u64) void {
         self.removeBytesInFlight(bytes);
-        self.onCongestionEventWithPacketNumber(lost_packet_sent_time_millis, now_millis, lost_pn);
+        self.onCongestionEventWithPacketNumber(lost_packet_sent_time_nanos, now_nanos, lost_pn);
     }
 
     /// Enter NewReno congestion recovery for a loss or ECN-CE congestion event.
@@ -285,13 +289,13 @@ pub const Recovery = struct {
     /// The caller is responsible for bytes-in-flight accounting. Loss removes
     /// packet bytes before calling this; ECN-CE marks an acknowledged packet as
     /// a congestion signal without treating that packet as lost.
-    pub fn onCongestionEvent(self: *Recovery, sent_time_millis: i64, now_millis: i64) void {
-        self.onCongestionEventWithPacketNumber(sent_time_millis, now_millis, null);
+    pub fn onCongestionEvent(self: *Recovery, sent_time_nanos: i64, now_nanos: i64) void {
+        self.onCongestionEventWithPacketNumber(sent_time_nanos, now_nanos, null);
     }
 
     /// Packet-number-based congestion event (RFC 6582).
     /// Losses for packets sent before the last cutback are a single event (RFC 6582).
-    pub fn onCongestionEventWithPacketNumber(self: *Recovery, sent_time_millis: i64, now_millis: i64, lost_packet_number: ?u64) void {
+    pub fn onCongestionEventWithPacketNumber(self: *Recovery, sent_time_nanos: i64, now_nanos: i64, lost_packet_number: ?u64) void {
         // Once in recovery, block ALL congestion events (RFC 9002 §7.3.2).
         if (self.congestion_state == .recovery) return;
         // Fallback for connections without state tracking (tests).
@@ -300,10 +304,10 @@ pub const Recovery = struct {
                 if (pn <= last_cut) return;
             }
         } else {
-            if (self.inCongestionRecovery(sent_time_millis)) return;
+            if (self.inCongestionRecovery(sent_time_nanos)) return;
         }
         self.congestion_state = .recovery;
-        self.congestion_recovery_start_time_millis = now_millis;
+        self.congestion_recovery_start_time_nanos = now_nanos;
         self.fast_retransmission_required = true;
         self.largest_sent_at_last_cutback = self.largest_sent_packet_number;
         self.congestion_avoidance_bytes_acked = 0;
@@ -317,23 +321,18 @@ pub const Recovery = struct {
                 self.congestion_window = self.cubic.onCongestionEvent(
                     self.congestion_window,
                     self.max_datagram_size,
-                    now_millis,
+                    now_nanos,
                 );
-                self.ssthresh = self.congestion_window;
-                self.hystart.onCongestionEvent(@floatFromInt(self.ssthresh));
-            },
-            .bbr => {
-                self.bbr.onPacketLost(now_millis, self.max_datagram_size);
                 self.ssthresh = self.congestion_window;
                 self.hystart.onCongestionEvent(@floatFromInt(self.ssthresh));
             },
         }
     }
 
-    /// Return whether a congestion signal for `sent_time_millis` would start a
+    /// Return whether a congestion signal for `sent_time_nanos` would start a
     /// new recovery period rather than being suppressed by the current one.
-    pub fn wouldStartCongestionRecovery(self: Recovery, sent_time_millis: i64) bool {
-        return !self.inCongestionRecovery(sent_time_millis);
+    pub fn wouldStartCongestionRecovery(self: Recovery, sent_time_nanos: i64) bool {
+        return !self.inCongestionRecovery(sent_time_nanos);
     }
 
     /// Mark one PTO expiration and apply exponential backoff to future PTOs.
@@ -428,7 +427,7 @@ pub const Recovery = struct {
     }
 
     /// Persistent congestion duration from RFC 9002 Section 7.6.1.
-    pub fn persistentCongestionDurationNs(self: Recovery) u64 {
+    pub fn persistentCongestionDuration(self: Recovery) u64 {
         return std.math.mul(u64, self.basePtoNs(true), persistent_congestion_threshold) catch std.math.maxInt(u64);
     }
 
@@ -436,7 +435,7 @@ pub const Recovery = struct {
     ///
     /// Initial and Handshake packet number spaces use a zero max_ack_delay for
     /// PTO, so their persistent-congestion period must use the same base PTO.
-    pub fn persistentCongestionDurationNsWithoutMaxAckDelay(self: Recovery) u64 {
+    pub fn persistentCongestionDurationWithoutMaxAckDelay(self: Recovery) u64 {
         return std.math.mul(u64, self.basePtoNs(false), persistent_congestion_threshold) catch std.math.maxInt(u64);
     }
 
@@ -445,7 +444,7 @@ pub const Recovery = struct {
         self.congestion_window = minimumCongestionWindow(self.max_datagram_size);
         self.congestion_state = .slow_start;
         self.congestion_avoidance_bytes_acked = 0;
-        self.congestion_recovery_start_time_millis = null;
+        self.congestion_recovery_start_time_nanos = null;
         self.fast_retransmission_required = false;
     }
 
@@ -471,20 +470,19 @@ pub const Recovery = struct {
         return false;
     }
 
-    fn inCongestionRecovery(self: Recovery, sent_time_millis: i64) bool {
-        const recovery_start = self.congestion_recovery_start_time_millis orelse return false;
-        return sent_time_millis <= recovery_start;
+    fn inCongestionRecovery(self: Recovery, sent_time_nanos: i64) bool {
+        const recovery_start = self.congestion_recovery_start_time_nanos orelse return false;
+        return sent_time_nanos <= recovery_start;
     }
 
     fn removeBytesInFlight(self: *Recovery, bytes: usize) void {
         self.bytes_in_flight = if (bytes >= self.bytes_in_flight) 0 else self.bytes_in_flight - bytes;
     }
 
-    fn growCongestionAvoidance(self: *Recovery, bytes: usize, now_millis: i64) void {
+    fn growCongestionAvoidance(self: *Recovery, bytes: usize, now_nanos: i64) void {
         switch (self.congestion_algorithm) {
             .new_reno => self.growCongestionAvoidanceNewReno(bytes),
-            .cubic => self.growCongestionAvoidanceCubic(bytes, now_millis),
-            .bbr => self.growCongestionAvoidanceBbr(bytes),
+            .cubic => self.growCongestionAvoidanceCubic(bytes, now_nanos),
         }
     }
 
@@ -504,27 +502,44 @@ pub const Recovery = struct {
         }
     }
 
-    fn growCongestionAvoidanceCubic(self: *Recovery, bytes: usize, now_millis: i64) void {
-        _ = bytes;
-        // CUBIC uses time-based window growth via the cubic function.
-        // The window is updated based on elapsed time since the last loss.
-        if (self.congestion_recovery_start_time_millis == null) return;
-        const now_ms = now_millis;
+    fn growCongestionAvoidanceCubic(self: *Recovery, bytes: usize, now_nanos: i64) void {
+        if (self.congestion_recovery_start_time_nanos == null) return;
+        const mds_f: f64 = @floatFromInt(self.max_datagram_size);
+        const cwnd_f: f64 = @floatFromInt(self.congestion_window);
+        const rtt_ns: i64 = @intCast(self.smoothed_rtt_ns);
+
+        // RFC 9438 §4: compute W_cubic(t+RTT) as the per-RTT target.
         const target = self.cubic.cubicWindow(
             self.congestion_window,
             self.max_datagram_size,
-            now_ms,
+            now_nanos + rtt_ns,
         );
-        if (target > self.congestion_window) {
-            self.congestion_window = target;
-        }
-    }
+        const target_f: f64 = @floatFromInt(target);
 
-    fn growCongestionAvoidanceBbr(self: *Recovery, bytes: usize) void {
-        _ = bytes;
-        // BBR sets cwnd based on BtlBw * RTprop * gain.
-        // The BBR state machine updates cwnd internally via onPacketAcked.
-        self.congestion_window = self.bbr.currentCwnd();
+        // Limit increase to half the acked bytes (Linux CUBIC behavior).
+        const max_cwnd = cwnd_f + @as(f64, @floatFromInt(bytes)) / 2.0;
+
+        if (target_f <= cwnd_f) {
+            // TCP-friendly region (RFC 9438 §4.2): grow by bytes_acked / cwnd
+            // per ACK, equivalent to NewReno CA increment.
+            const increment = @as(f64, @floatFromInt(bytes)) * mds_f / cwnd_f;
+            const inc_usize: usize = @intFromFloat(@max(increment, 1.0));
+            self.congestion_window = @min(
+                self.congestion_window + inc_usize,
+                @as(usize, @intFromFloat(max_cwnd)),
+            );
+            return;
+        }
+
+        // Concave/Convex region (RFC 9438 §4.3-4.4): per-ACK increment
+        // = (target - cwnd) / cwnd * mds.
+        const rate = (target_f - cwnd_f) / cwnd_f;
+        const increment = rate * mds_f;
+        const inc_usize: usize = @intFromFloat(@max(increment, 1.0));
+        self.congestion_window = @min(
+            self.congestion_window + inc_usize,
+            @as(usize, @intFromFloat(max_cwnd)),
+        );
     }
 
     /// Minimum trackable RTT (1ms). Prevents zero-RTT samples from collapsing
@@ -845,7 +860,7 @@ test "congestion recovery period avoids repeated loss reduction and ACK growth" 
     recovery.onPacketLost(1200, 10, 100);
     const recovery_window = recovery.congestion_window;
     try std.testing.expect(recovery_window < initial_window);
-    try std.testing.expectEqual(@as(?i64, 100), recovery.congestion_recovery_start_time_millis);
+    try std.testing.expectEqual(@as(?i64, 100), recovery.congestion_recovery_start_time_nanos);
     try std.testing.expect(!recovery.wouldStartCongestionRecovery(10));
     try std.testing.expect(!recovery.wouldStartCongestionRecovery(20));
 
@@ -917,7 +932,7 @@ test "ECN congestion event enters recovery without removing bytes in flight" {
     try std.testing.expect(recovery_window < initial_window);
     try std.testing.expectEqual(recovery_window, recovery.ssthresh);
     try std.testing.expectEqual(@as(usize, 2400), recovery.bytes_in_flight);
-    try std.testing.expectEqual(@as(?i64, 100), recovery.congestion_recovery_start_time_millis);
+    try std.testing.expectEqual(@as(?i64, 100), recovery.congestion_recovery_start_time_nanos);
 
     recovery.onCongestionEvent(20, 110);
     try std.testing.expectEqual(recovery_window, recovery.congestion_window);
@@ -930,26 +945,26 @@ test "ECN congestion event enters recovery without removing bytes in flight" {
 test "persistent congestion duration and response follow RFC 9002 bounds" {
     var recovery = Recovery.init(.{ .max_datagram_size = 1200, .initial_rtt_ns = 100_000_000, .max_ack_delay_ns = 25_000_000 });
 
-    try std.testing.expectEqual(@as(u64, 975_000_000), recovery.persistentCongestionDurationNs());
-    try std.testing.expectEqual(@as(u64, 900_000_000), recovery.persistentCongestionDurationNsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), recovery.persistentCongestionDuration());
+    try std.testing.expectEqual(@as(u64, 900_000_000), recovery.persistentCongestionDurationWithoutMaxAckDelay());
     recovery.onPtoExpired();
     recovery.onPtoExpired();
     try std.testing.expectEqual(@as(u64, 1_300_000_000), recovery.ptoNs());
-    try std.testing.expectEqual(@as(u64, 975_000_000), recovery.persistentCongestionDurationNs());
-    try std.testing.expectEqual(@as(u64, 900_000_000), recovery.persistentCongestionDurationNsWithoutMaxAckDelay());
+    try std.testing.expectEqual(@as(u64, 975_000_000), recovery.persistentCongestionDuration());
+    try std.testing.expectEqual(@as(u64, 900_000_000), recovery.persistentCongestionDurationWithoutMaxAckDelay());
 
     recovery.congestion_window = 12_000;
     recovery.ssthresh = 6_000;
-    recovery.congestion_recovery_start_time_millis = 42;
+    recovery.congestion_recovery_start_time_nanos = 42;
     recovery.onPersistentCongestion();
     try std.testing.expectEqual(minimumCongestionWindow(1200), recovery.congestion_window);
     try std.testing.expectEqual(@as(usize, 6_000), recovery.ssthresh);
-    try std.testing.expectEqual(@as(?i64, null), recovery.congestion_recovery_start_time_millis);
+    try std.testing.expectEqual(@as(?i64, null), recovery.congestion_recovery_start_time_nanos);
     try std.testing.expect(recovery.wouldStartCongestionRecovery(43));
 
     recovery.congestion_avoidance_bytes_acked = 600;
     recovery.onCongestionEvent(43, 50);
-    try std.testing.expectEqual(@as(?i64, 50), recovery.congestion_recovery_start_time_millis);
+    try std.testing.expectEqual(@as(?i64, 50), recovery.congestion_recovery_start_time_nanos);
     try std.testing.expectEqual(@as(usize, 0), recovery.congestion_avoidance_bytes_acked);
     try std.testing.expectEqual(minimumCongestionWindow(1200), recovery.congestion_window);
     try std.testing.expectEqual(@as(usize, 1200), recovery.ssthresh);
@@ -1009,11 +1024,11 @@ test "CUBIC congestion control through Recovery interface" {
     r.onPacketLost(1200, 50, 100);
     try std.testing.expectEqual(@as(usize, 1200), r.bytes_in_flight);
     try std.testing.expect(r.congestion_window < initial_cwnd);
-    try std.testing.expect(r.congestion_recovery_start_time_millis != null);
+    try std.testing.expect(r.congestion_recovery_start_time_nanos != null);
 
     // CUBIC state should be set
     try std.testing.expect(r.cubic.w_max > 0);
-    try std.testing.expect(r.cubic.epoch_start_ms != null);
+    try std.testing.expect(r.cubic.epoch_start_nanos != null);
 }
 
 test "NewReno still works when selected" {
@@ -1039,7 +1054,7 @@ test "PN-based recovery blocks then allows growth after cutback ACK" {
     const cwnd_before = r.congestion_window;
 
     // Loss at PN 50 → cutback, largest_sent_at_last_cutback = 100
-    r.onPacketLostWithNumber(1200, 10, 20, 50);
+    r.onPacketLostWithNumber(1200, 1_000_000_000, 2_000_000_000, 50);
     try std.testing.expect(r.congestion_window < cwnd_before);
     try std.testing.expectEqual(@as(?u64, 100), r.largest_sent_at_last_cutback);
 
@@ -1047,12 +1062,12 @@ test "PN-based recovery blocks then allows growth after cutback ACK" {
     r.notifyLargestAcked(90);
     try std.testing.expect(r.inRecoveryByPacketNumber());
     const cwnd_in_recovery = r.congestion_window;
-    r.onPacketAckedWithUtilization(1200, 15, 100_000_000, 0, true);
+    r.onPacketAckedWithUtilization(1200, 1_500_000_000, 100_000_000, 0, true);
     try std.testing.expectEqual(cwnd_in_recovery, r.congestion_window);
 
     // ACK for PN 101 (after cutback) → recovery ends, growth resumes
     r.notifyLargestAcked(101);
     try std.testing.expect(!r.inRecoveryByPacketNumber());
-    r.onPacketAckedWithUtilization(1200, 25, 100_000_000, 0, true);
+    r.onPacketAckedWithUtilization(1200, 5_000_000_000, 100_000_000, 0, true);
     try std.testing.expect(r.congestion_window > cwnd_in_recovery);
 }

@@ -41,13 +41,13 @@ pub fn main() !void {
     var pre_confirm = try quicz.Connection.init(allocator, .client, .{ .initial_rtt_ns = 100 });
     defer pre_confirm.deinit();
     _ = try pre_confirm.recordPacketSentInSpace(.application, 10, 100);
-    if (pre_confirm.ptoDeadlineMillis(.application) != null) return error.PtoRecoveryExampleFailed;
-    if (pre_confirm.lossDetectionTimerDeadlineMillis() != null) return error.PtoRecoveryExampleFailed;
+    if (pre_confirm.ptoDeadline(.application) != null) return error.PtoRecoveryExampleFailed;
+    if (pre_confirm.lossDetectionTimerDeadline() != null) return error.PtoRecoveryExampleFailed;
     try pre_confirm.checkPtoTimeouts(10_000);
     if (pre_confirm.pending_ping_count != 0) return error.PtoRecoveryExampleFailed;
     if (pre_confirm.recovery_state.pto_count != 0) return error.PtoRecoveryExampleFailed;
     try pre_confirm.confirmHandshake();
-    const pre_confirm_deadline = pre_confirm.ptoDeadlineMillis(.application) orelse return error.PtoRecoveryExampleFailed;
+    const pre_confirm_deadline = pre_confirm.ptoDeadline(.application) orelse return error.PtoRecoveryExampleFailed;
     std.debug.print(
         "[pto] application PTO gated until handshake confirmed deadline={d}\n",
         .{pre_confirm_deadline},
@@ -61,15 +61,15 @@ pub fn main() !void {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    const anti_deadlock_deadline = anti_deadlock.lossDetectionTimerDeadlineMillis() orelse return error.PtoRecoveryExampleFailed;
+    const anti_deadlock_deadline = anti_deadlock.lossDetectionTimerDeadline() orelse return error.PtoRecoveryExampleFailed;
     if (anti_deadlock_deadline.space != .initial) return error.PtoRecoveryExampleFailed;
     if (anti_deadlock_deadline.kind != .pto) return error.PtoRecoveryExampleFailed;
     if (anti_deadlock.totalBytesInFlight() != 0) return error.PtoRecoveryExampleFailed;
-    const anti_deadlock_serviced = (try anti_deadlock.serviceLossDetectionTimer(anti_deadlock_deadline.deadline_millis)) orelse return error.PtoRecoveryExampleFailed;
+    const anti_deadlock_serviced = (try anti_deadlock.serviceLossDetectionTimer(anti_deadlock_deadline.deadline_nanos)) orelse return error.PtoRecoveryExampleFailed;
     if (anti_deadlock_serviced.space != .initial) return error.PtoRecoveryExampleFailed;
     if (anti_deadlock.initial_packet_space.pending_ping_count != 1) return error.PtoRecoveryExampleFailed;
     var anti_deadlock_out: [32]u8 = undefined;
-    const anti_deadlock_probe = (try anti_deadlock.pollTxInSpace(.initial, anti_deadlock_deadline.deadline_millis + 1, &anti_deadlock_out)) orelse return error.PtoRecoveryExampleFailed;
+    const anti_deadlock_probe = (try anti_deadlock.pollTxInSpace(.initial, anti_deadlock_deadline.deadline_nanos + 1, &anti_deadlock_out)) orelse return error.PtoRecoveryExampleFailed;
     var anti_deadlock_decoded = try quicz.frame.decodeFrameSlice(anti_deadlock_probe, allocator);
     defer quicz.frame.deinitFrame(&anti_deadlock_decoded.frame, allocator);
     switch (anti_deadlock_decoded.frame) {
@@ -78,7 +78,7 @@ pub fn main() !void {
     }
     std.debug.print(
         "[pto] client anti-deadlock PTO deadline={d} emitted Initial PING bytes={d}\n",
-        .{ anti_deadlock_deadline.deadline_millis, anti_deadlock_probe.len },
+        .{ anti_deadlock_deadline.deadline_nanos, anti_deadlock_probe.len },
     );
 
     var initial_ack_client = try quicz.Connection.init(allocator, .client, .{ .initial_rtt_ns = 100 });
@@ -123,14 +123,14 @@ pub fn main() !void {
     if ((limited_server.antiAmplificationLimitRemaining() orelse return error.PtoRecoveryExampleFailed) != 0) {
         return error.PtoRecoveryExampleFailed;
     }
-    if (limited_server.ptoDeadlineMillis(.initial) != null) return error.PtoRecoveryExampleFailed;
-    if (limited_server.lossDetectionTimerDeadlineMillis() != null) return error.PtoRecoveryExampleFailed;
+    if (limited_server.ptoDeadline(.initial) != null) return error.PtoRecoveryExampleFailed;
+    if (limited_server.lossDetectionTimerDeadline() != null) return error.PtoRecoveryExampleFailed;
     try limited_server.checkPtoTimeouts(10_000);
     if (limited_server.initial_packet_space.pending_ping_count != 0) return error.PtoRecoveryExampleFailed;
     if (limited_server.initial_packet_space.recovery_state.pto_count != 0) return error.PtoRecoveryExampleFailed;
 
     const anti_amp_serviced = (try limited_server.recordPeerAddressDatagramReceived(10_000, 1)) orelse return error.PtoRecoveryExampleFailed;
-    const anti_amp_pto_deadline = anti_amp_serviced.deadline_millis;
+    const anti_amp_pto_deadline = anti_amp_serviced.deadline_nanos;
     if (anti_amp_serviced.space != .initial) return error.PtoRecoveryExampleFailed;
     if (anti_amp_serviced.kind != .pto) return error.PtoRecoveryExampleFailed;
     if (limited_server.initial_packet_space.pending_ping_count != 1) return error.PtoRecoveryExampleFailed;
@@ -154,20 +154,20 @@ pub fn main() !void {
     try conn.confirmHandshake();
 
     _ = try conn.recordPacketSentInSpace(.application, 10, 100);
-    const timer = conn.lossDetectionTimerDeadlineMillis() orelse return error.PtoRecoveryExampleFailed;
+    const timer = conn.lossDetectionTimerDeadline() orelse return error.PtoRecoveryExampleFailed;
     if (timer.space != .application) return error.PtoRecoveryExampleFailed;
     if (timer.kind != .pto) return error.PtoRecoveryExampleFailed;
-    const deadline = timer.deadline_millis;
+    const deadline = timer.deadline_nanos;
     conn.recovery_state.congestion_window = conn.bytesInFlight(.application);
     if (conn.recovery_state.canSend(1)) return error.PtoRecoveryExampleFailed;
 
     if ((try conn.serviceLossDetectionTimer(deadline - 1)) != null) return error.PtoRecoveryExampleFailed;
-    if (conn.ptoDeadlineMillis(.application) != deadline) return error.PtoRecoveryExampleFailed;
+    if (conn.ptoDeadline(.application) != deadline) return error.PtoRecoveryExampleFailed;
 
     const serviced = (try conn.serviceLossDetectionTimer(deadline)) orelse return error.PtoRecoveryExampleFailed;
     if (serviced.space != .application) return error.PtoRecoveryExampleFailed;
     if (serviced.kind != .pto) return error.PtoRecoveryExampleFailed;
-    if (conn.ptoDeadlineMillis(.application) == null) return error.PtoRecoveryExampleFailed;
+    if (conn.ptoDeadline(.application) == null) return error.PtoRecoveryExampleFailed;
     if (conn.pto_probe_count != 1) return error.PtoRecoveryExampleFailed;
 
     var out_buf: [32]u8 = undefined;
@@ -194,7 +194,7 @@ pub fn main() !void {
     try stream_probe.sendOnStream(stream_id, "old", false);
     _ = (try stream_probe.pollTx(10, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
     try stream_probe.sendOnStream(stream_id, "new", false);
-    const stream_probe_deadline = stream_probe.ptoDeadlineMillis(.application) orelse return error.PtoRecoveryExampleFailed;
+    const stream_probe_deadline = stream_probe.ptoDeadline(.application) orelse return error.PtoRecoveryExampleFailed;
     try stream_probe.checkPtoTimeouts(stream_probe_deadline);
 
     const stream_probe_payload = (try stream_probe.pollTx(stream_probe_deadline + 1, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
@@ -220,7 +220,7 @@ pub fn main() !void {
     const retransmit_stream_id = try retransmit_probe.openStream();
     try retransmit_probe.sendOnStream(retransmit_stream_id, "old", false);
     _ = (try retransmit_probe.pollTx(10, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
-    const retransmit_deadline = retransmit_probe.ptoDeadlineMillis(.application) orelse return error.PtoRecoveryExampleFailed;
+    const retransmit_deadline = retransmit_probe.ptoDeadline(.application) orelse return error.PtoRecoveryExampleFailed;
     try retransmit_probe.checkPtoTimeouts(retransmit_deadline);
 
     const retransmit_payload = (try retransmit_probe.pollTx(retransmit_deadline + 1, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
@@ -247,7 +247,7 @@ pub fn main() !void {
     try reset_probe.sendOnStream(reset_stream_id, "rst", false);
     try reset_probe.resetStream(reset_stream_id, 21);
     _ = (try reset_probe.pollTx(10, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
-    const reset_probe_deadline = reset_probe.ptoDeadlineMillis(.application) orelse return error.PtoRecoveryExampleFailed;
+    const reset_probe_deadline = reset_probe.ptoDeadline(.application) orelse return error.PtoRecoveryExampleFailed;
     try reset_probe.checkPtoTimeouts(reset_probe_deadline);
     if (reset_probe.pending_reset_streams.items.len != 1) return error.PtoRecoveryExampleFailed;
     const reset_retransmit = (try reset_probe.pollTx(reset_probe_deadline + 1, &out_buf)) orelse return error.PtoRecoveryExampleFailed;
@@ -294,7 +294,7 @@ pub fn main() !void {
     )) orelse return error.PtoRecoveryExampleFailed;
     defer allocator.free(first_crypto);
 
-    const crypto_deadline = crypto_probe.ptoDeadlineMillis(.application) orelse return error.PtoRecoveryExampleFailed;
+    const crypto_deadline = crypto_probe.ptoDeadline(.application) orelse return error.PtoRecoveryExampleFailed;
     try crypto_probe.checkPtoTimeouts(crypto_deadline);
     if (crypto_probe.pending_ping_count != 0) return error.PtoRecoveryExampleFailed;
 
@@ -332,11 +332,11 @@ pub fn main() !void {
         .ack_delay = 1,
         .first_ack_range = 0,
     });
-    if (handshake_rtt.smoothedRttMillis(.handshake) != 102) return error.PtoRecoveryExampleFailed;
+    if (handshake_rtt.smoothedRtt(.handshake) != 102) return error.PtoRecoveryExampleFailed;
 
     std.debug.print(
         "[pto] handshake ACK delay ignored for RTT smoothed={d}\n",
-        .{handshake_rtt.smoothedRttMillis(.handshake)},
+        .{handshake_rtt.smoothedRtt(.handshake)},
     );
 
     var shared_rtt = try quicz.Connection.init(allocator, .server, .{ .initial_rtt_ns = 100 });
@@ -350,17 +350,17 @@ pub fn main() !void {
         .ack_delay = 5,
         .first_ack_range = 0,
     });
-    const shared_handshake_deadline = shared_rtt.ptoDeadlineMillis(.handshake) orelse return error.PtoRecoveryExampleFailed;
-    if (shared_rtt.smoothedRttMillis(.handshake) != 50) return error.PtoRecoveryExampleFailed;
-    if (shared_rtt.smoothedRttMillis(.application) != 50) return error.PtoRecoveryExampleFailed;
+    const shared_handshake_deadline = shared_rtt.ptoDeadline(.handshake) orelse return error.PtoRecoveryExampleFailed;
+    if (shared_rtt.smoothedRtt(.handshake) != 50) return error.PtoRecoveryExampleFailed;
+    if (shared_rtt.smoothedRtt(.application) != 50) return error.PtoRecoveryExampleFailed;
     if (shared_handshake_deadline != 160) return error.PtoRecoveryExampleFailed;
 
     std.debug.print(
         "[pto] RTT shared across spaces initial_smoothed={d} handshake_deadline={d} application_smoothed={d}\n",
         .{
-            shared_rtt.smoothedRttMillis(.initial),
+            shared_rtt.smoothedRtt(.initial),
             shared_handshake_deadline,
-            shared_rtt.smoothedRttMillis(.application),
+            shared_rtt.smoothedRtt(.application),
         },
     );
 
@@ -371,19 +371,19 @@ pub fn main() !void {
     _ = try spaces.recordPacketSentInSpace(.initial, 10, 100);
     _ = try spaces.recordPacketSentInSpace(.handshake, 20, 100);
 
-    const initial_deadline = spaces.ptoDeadlineMillis(.initial) orelse return error.PtoRecoveryExampleFailed;
-    const handshake_deadline = spaces.ptoDeadlineMillis(.handshake) orelse return error.PtoRecoveryExampleFailed;
+    const initial_deadline = spaces.ptoDeadline(.initial) orelse return error.PtoRecoveryExampleFailed;
+    const handshake_deadline = spaces.ptoDeadline(.handshake) orelse return error.PtoRecoveryExampleFailed;
     if (initial_deadline != 310) return error.PtoRecoveryExampleFailed;
     if (handshake_deadline != 320) return error.PtoRecoveryExampleFailed;
-    const spaces_timer = spaces.lossDetectionTimerDeadlineMillis() orelse return error.PtoRecoveryExampleFailed;
+    const spaces_timer = spaces.lossDetectionTimerDeadline() orelse return error.PtoRecoveryExampleFailed;
     if (spaces_timer.space != .initial) return error.PtoRecoveryExampleFailed;
     if (spaces_timer.kind != .pto) return error.PtoRecoveryExampleFailed;
-    if (spaces_timer.deadline_millis != initial_deadline) return error.PtoRecoveryExampleFailed;
+    if (spaces_timer.deadline_nanos != initial_deadline) return error.PtoRecoveryExampleFailed;
 
     const initial_serviced = (try spaces.serviceLossDetectionTimer(initial_deadline)) orelse return error.PtoRecoveryExampleFailed;
     if (initial_serviced.space != .initial) return error.PtoRecoveryExampleFailed;
     if (initial_serviced.kind != .pto) return error.PtoRecoveryExampleFailed;
-    const backed_off_handshake_deadline = spaces.ptoDeadlineMillis(.handshake) orelse return error.PtoRecoveryExampleFailed;
+    const backed_off_handshake_deadline = spaces.ptoDeadline(.handshake) orelse return error.PtoRecoveryExampleFailed;
     if (backed_off_handshake_deadline != 620) return error.PtoRecoveryExampleFailed;
 
     const initial_payload = (try spaces.pollTxInSpace(.initial, initial_deadline + 1, &out_buf)) orelse return error.PtoRecoveryExampleFailed;

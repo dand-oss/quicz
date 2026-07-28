@@ -97,7 +97,7 @@ fn expectStreamClosed(
 fn processCryptoFrame(
     conn: *quicz.Connection,
     space: quicz.PacketNumberSpace,
-    now_millis: i64,
+    now_nanos: i64,
     offset: u64,
     data: []const u8,
 ) !void {
@@ -107,7 +107,7 @@ fn processCryptoFrame(
         .offset = offset,
         .data = data,
     } });
-    try conn.processDatagramInSpace(space, now_millis, writer.getWritten());
+    try conn.processDatagramInSpace(space, now_nanos, writer.getWritten());
 }
 
 const MockCryptoBackend = struct {

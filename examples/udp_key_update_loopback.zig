@@ -230,7 +230,7 @@ pub fn main() !void {
     const second_update_pto_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         41,
         &client,
-        second_update_timer.timer.deadline_millis,
+        second_update_timer.timer.deadline_nanos,
         &server_dcid,
     );
     const second_update_pto_serviced = second_update_pto_result.serviced orelse return error.UnexpectedState;
@@ -248,7 +248,7 @@ pub fn main() !void {
         51,
         &server,
         second_pto_received.path,
-        second_update_timer.timer.deadline_millis + 1,
+        second_update_timer.timer.deadline_nanos + 1,
         second_pto_received.data,
     );
     try require(second_pto_route.connection_id == 51);
@@ -301,7 +301,7 @@ pub fn main() !void {
     const second_ack = (try server_lifecycle.pollProtectedShortDatagramWithInstalledKeys(
         51,
         &server,
-        second_update_timer.timer.deadline_millis + 3,
+        second_update_timer.timer.deadline_nanos + 3,
         &client_dcid,
     )) orelse return error.UnexpectedState;
     defer allocator.free(second_ack);
@@ -314,7 +314,7 @@ pub fn main() !void {
         41,
         &client,
         second_ack_received.path,
-        second_update_timer.timer.deadline_millis + 4,
+        second_update_timer.timer.deadline_nanos + 4,
         second_ack_received.data,
     );
     try require(second_ack_route.connection_id == 41);
@@ -338,7 +338,7 @@ pub fn main() !void {
         client_retains_first_update,
         client_retains_current,
         second_update_ping.len,
-        second_update_timer.timer.deadline_millis,
+        second_update_timer.timer.deadline_nanos,
         second_update_pto_probe.len,
         second_pto_ack_largest,
         stale_generation_1_ping.len,

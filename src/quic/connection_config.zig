@@ -87,7 +87,6 @@ pub const PreferredAddress = struct {
 
 /// Congestion control algorithm selection.
 pub const CongestionAlgorithm = enum {
-    bbr,
     new_reno,
     cubic,
 };

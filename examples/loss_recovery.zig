@@ -61,10 +61,10 @@ pub fn main() !void {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    const timer = time_threshold.lossDetectionTimerDeadlineMillis() orelse return error.LossRecoveryExampleFailed;
+    const timer = time_threshold.lossDetectionTimerDeadline() orelse return error.LossRecoveryExampleFailed;
     if (timer.space != .application) return error.LossRecoveryExampleFailed;
     if (timer.kind != .loss_time) return error.LossRecoveryExampleFailed;
-    const deadline = timer.deadline_millis;
+    const deadline = timer.deadline_nanos;
     if (time_threshold.sentPacketCount(.application) != 1) return error.LossRecoveryExampleFailed;
     const serviced = (try time_threshold.serviceLossDetectionTimer(deadline)) orelse return error.LossRecoveryExampleFailed;
     if (serviced.space != .application) return error.LossRecoveryExampleFailed;
@@ -185,10 +185,10 @@ pub fn main() !void {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    if (persistent.recovery_state.min_rtt_ms != 50) return error.LossRecoveryExampleFailed;
+    if (persistent.recovery_state.min_rtt_ns != 50) return error.LossRecoveryExampleFailed;
     persistent.recovery_state.onPtoExpired();
     persistent.recovery_state.onPtoExpired();
-    const persistent_duration = persistent.recovery_state.persistentCongestionDurationMs();
+    const persistent_duration = persistent.recovery_state.persistentCongestionDuration();
     _ = try persistent.recordPacketSentInSpace(.application, 100, 100);
     _ = try persistent.recordPacketSentInSpace(.application, 1000, 100);
     _ = try persistent.recordPacketSentInSpace(.application, 1100, 100);
@@ -201,14 +201,14 @@ pub fn main() !void {
     if (persistent.congestionWindow(.application) != quicz.recovery.minimumCongestionWindow(1200)) {
         return error.LossRecoveryExampleFailed;
     }
-    const refreshed_min_rtt = persistent.recovery_state.min_rtt_ms orelse return error.LossRecoveryExampleFailed;
+    const refreshed_min_rtt = persistent.recovery_state.min_rtt_ns orelse return error.LossRecoveryExampleFailed;
     if (refreshed_min_rtt != 500) return error.LossRecoveryExampleFailed;
-    const persistent_recovery_cleared = persistent.recovery_state.congestion_recovery_start_time_millis == null;
+    const persistent_recovery_cleared = persistent.recovery_state.congestion_recovery_start_time_nanos == null;
     if (!persistent_recovery_cleared) return error.LossRecoveryExampleFailed;
     if (!persistent.recovery_state.wouldStartCongestionRecovery(1800)) return error.LossRecoveryExampleFailed;
     persistent.recovery_state.congestion_avoidance_bytes_acked = 600;
     persistent.recovery_state.onCongestionEvent(1800, 1900);
-    const persistent_reentry_start = persistent.recovery_state.congestion_recovery_start_time_millis orelse return error.LossRecoveryExampleFailed;
+    const persistent_reentry_start = persistent.recovery_state.congestion_recovery_start_time_nanos orelse return error.LossRecoveryExampleFailed;
     if (persistent_reentry_start != 1900) return error.LossRecoveryExampleFailed;
     if (persistent.recovery_state.congestion_avoidance_bytes_acked != 0) return error.LossRecoveryExampleFailed;
     std.debug.print(
@@ -300,7 +300,7 @@ pub fn main() !void {
     if (recovery_ack_accounting.congestion_avoidance_bytes_acked != 0) return error.LossRecoveryExampleFailed;
     if (recovery_ack_accounting.bytes_in_flight != 10_800) return error.LossRecoveryExampleFailed;
     if (recovery_ack_accounting.pto_count != 0) return error.LossRecoveryExampleFailed;
-    const recovery_ack_latest_rtt = recovery_ack_accounting.latest_rtt_ms orelse return error.LossRecoveryExampleFailed;
+    const recovery_ack_latest_rtt = recovery_ack_accounting.latest_rtt_ns orelse return error.LossRecoveryExampleFailed;
     if (recovery_ack_latest_rtt != 80) return error.LossRecoveryExampleFailed;
     std.debug.print(
         "[loss] recovery ACK accounting cwnd={d} latest_rtt={d} inflight={d} credit={d}\n",
@@ -405,8 +405,8 @@ pub fn main() !void {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    const baseline_latest_rtt = rtt_sampling.recovery_state.latest_rtt_ms orelse return error.LossRecoveryExampleFailed;
-    const baseline_smoothed_rtt = rtt_sampling.smoothedRttMillis(.application);
+    const baseline_latest_rtt = rtt_sampling.recovery_state.latest_rtt_ns orelse return error.LossRecoveryExampleFailed;
+    const baseline_smoothed_rtt = rtt_sampling.smoothedRtt(.application);
     const lower_ack_ranges = [_]quicz.frame.AckRange{
         .{ .gap = 0, .ack_range = 0 },
     };
@@ -420,9 +420,9 @@ pub fn main() !void {
     if (rtt_sampling.sentPacketCount(.application) != 1) return error.LossRecoveryExampleFailed;
     if (rtt_sampling.bytesInFlight(.application) != 100) return error.LossRecoveryExampleFailed;
     if (rtt_sampling.recovery_state.pto_count != 0) return error.LossRecoveryExampleFailed;
-    const lower_ack_latest_rtt = rtt_sampling.recovery_state.latest_rtt_ms orelse return error.LossRecoveryExampleFailed;
+    const lower_ack_latest_rtt = rtt_sampling.recovery_state.latest_rtt_ns orelse return error.LossRecoveryExampleFailed;
     if (lower_ack_latest_rtt != baseline_latest_rtt) return error.LossRecoveryExampleFailed;
-    if (rtt_sampling.smoothedRttMillis(.application) != baseline_smoothed_rtt) return error.LossRecoveryExampleFailed;
+    if (rtt_sampling.smoothedRtt(.application) != baseline_smoothed_rtt) return error.LossRecoveryExampleFailed;
     std.debug.print(
         "[loss] old-largest ACK preserved RTT latest={d} smoothed={d} remaining={d}\n",
         .{ baseline_latest_rtt, baseline_smoothed_rtt, rtt_sampling.sentPacketCount(.application) },
@@ -483,7 +483,7 @@ pub fn main() !void {
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    if (ack_delay.smoothedRttMillis(.application) != 102) return error.LossRecoveryExampleFailed;
+    if (ack_delay.smoothedRtt(.application) != 102) return error.LossRecoveryExampleFailed;
 
     _ = try ack_delay.recordPacketSentInSpace(.application, 220, 100);
     try ack_delay.confirmHandshake();
@@ -492,9 +492,9 @@ pub fn main() !void {
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    if (ack_delay.smoothedRttMillis(.application) != 103) return error.LossRecoveryExampleFailed;
+    if (ack_delay.smoothedRtt(.application) != 103) return error.LossRecoveryExampleFailed;
     std.debug.print(
         "[loss] post-handshake ACK delay capped smoothed_rtt_ms={d}\n",
-        .{ack_delay.smoothedRttMillis(.application)},
+        .{ack_delay.smoothedRtt(.application)},
     );
 }

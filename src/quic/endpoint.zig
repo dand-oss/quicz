@@ -470,12 +470,12 @@ pub const AddressValidationPolicy = struct {
         self: *const AddressValidationPolicy,
         allocator: std.mem.Allocator,
         kind: address_validation_token.Kind,
-        now_millis: i64,
-        lifetime_millis: u64,
+        now_nanos: i64,
+        lifetime_nanos: u64,
         path: Udp4Tuple,
         nonce: address_validation_token.Nonce,
     ) address_validation_token.Error![]u8 {
-        return self.issueTokenForPathForVersion(allocator, kind, .v1, now_millis, lifetime_millis, path, nonce);
+        return self.issueTokenForPathForVersion(allocator, kind, .v1, now_nanos, lifetime_nanos, path, nonce);
     }
 
     /// Issue an address-validation token for a specific originating QUIC version.
@@ -484,8 +484,8 @@ pub const AddressValidationPolicy = struct {
         allocator: std.mem.Allocator,
         kind: address_validation_token.Kind,
         originating_version: packet.Version,
-        now_millis: i64,
-        lifetime_millis: u64,
+        now_nanos: i64,
+        lifetime_nanos: u64,
         path: Udp4Tuple,
         nonce: address_validation_token.Nonce,
     ) address_validation_token.Error![]u8 {
@@ -493,8 +493,8 @@ pub const AddressValidationPolicy = struct {
         return address_validation_token.encode(allocator, self.current_secret, .{
             .kind = kind,
             .originating_version = originating_version,
-            .issued_millis = now_millis,
-            .lifetime_millis = lifetime_millis,
+            .issued_nanos = now_nanos,
+            .lifetime_nanos = lifetime_nanos,
             .peer_address = &binding,
             .nonce = nonce,
         });
@@ -507,11 +507,11 @@ pub const AddressValidationPolicy = struct {
     pub fn validateTokenForPath(
         self: *AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
-        now_millis: i64,
+        now_nanos: i64,
         path: Udp4Tuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
-        return self.validateTokenForPathForVersion(expected_kind, .v1, now_millis, path, encoded);
+        return self.validateTokenForPathForVersion(expected_kind, .v1, now_nanos, path, encoded);
     }
 
     /// Validate a version-bound address token and record replay state.
@@ -519,14 +519,14 @@ pub const AddressValidationPolicy = struct {
         self: *AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         path: Udp4Tuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         const validation = try self.validateTokenForPathWithoutReplayForVersion(
             expected_kind,
             expected_originating_version,
-            now_millis,
+            now_nanos,
             path,
             encoded,
         );
@@ -538,11 +538,11 @@ pub const AddressValidationPolicy = struct {
     pub fn validateTokenForPathWithoutReplay(
         self: *const AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
-        now_millis: i64,
+        now_nanos: i64,
         path: Udp4Tuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
-        return self.validateTokenForPathWithoutReplayForVersion(expected_kind, .v1, now_millis, path, encoded);
+        return self.validateTokenForPathWithoutReplayForVersion(expected_kind, .v1, now_nanos, path, encoded);
     }
 
     /// Validate a version-bound address token without recording replay state.
@@ -550,24 +550,24 @@ pub const AddressValidationPolicy = struct {
         self: *const AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         path: Udp4Tuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         const binding = path.peerAddressValidationBinding();
-        return self.validateTokenForBinding(expected_kind, expected_originating_version, now_millis, &binding, encoded);
+        return self.validateTokenForBinding(expected_kind, expected_originating_version, now_nanos, &binding, encoded);
     }
 
     fn validateTokenForBinding(
         self: *const AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
-        now_millis: i64,
+        now_nanos: i64,
         peer_address: []const u8,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         var authenticated_error: ?address_validation_token.Error = null;
-        if (address_validation_token.validateForVersion(self.current_secret, expected_kind, expected_originating_version, now_millis, peer_address, encoded)) |validation| {
+        if (address_validation_token.validateForVersion(self.current_secret, expected_kind, expected_originating_version, now_nanos, peer_address, encoded)) |validation| {
             return validation;
         } else |err| switch (err) {
             error.InvalidToken => {},
@@ -580,7 +580,7 @@ pub const AddressValidationPolicy = struct {
         var index = self.previous_secrets.items.len;
         while (index > 0) {
             index -= 1;
-            if (address_validation_token.validateForVersion(self.previous_secrets.items[index], expected_kind, expected_originating_version, now_millis, peer_address, encoded)) |validation| {
+            if (address_validation_token.validateForVersion(self.previous_secrets.items[index], expected_kind, expected_originating_version, now_nanos, peer_address, encoded)) |validation| {
                 return validation;
             } else |err| switch (err) {
                 error.InvalidToken => {},
@@ -1462,8 +1462,8 @@ test "Udp4Tuple creates remote peer address-validation binding" {
 
     const encoded = try address_validation_token.encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 1_000,
-        .lifetime_millis = 10_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 10_000,
         .peer_address = &binding,
         .nonce = nonce,
     });

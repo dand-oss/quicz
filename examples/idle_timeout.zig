@@ -16,14 +16,14 @@ pub fn main() !void {
     try conn.applyPeerTransportParameters(.{
         .max_idle_timeout = 80,
     });
-    if (conn.effectiveIdleTimeoutMillis() != 80) return error.IdleTimeoutExampleFailed;
+    if (conn.effectiveIdleTimeout() != 80) return error.IdleTimeoutExampleFailed;
 
     try conn.sendPing();
     var tx: [16]u8 = undefined;
     const ping_payload = (try conn.pollTx(10, &tx)) orelse return error.IdleTimeoutExampleFailed;
     if (ping_payload.len != 1) return error.IdleTimeoutExampleFailed;
 
-    const deadline = conn.idleTimeoutDeadlineMillis() orelse return error.IdleTimeoutExampleFailed;
+    const deadline = conn.idleTimeoutDeadline() orelse return error.IdleTimeoutExampleFailed;
     try conn.checkIdleTimeouts(deadline - 1);
     if (conn.connectionState() != .active) return error.IdleTimeoutExampleFailed;
 
@@ -59,7 +59,7 @@ pub fn main() !void {
     try lifecycle.armRecoveryTimerFromConnection(endpoint_connection_id, &endpoint_conn);
     if (lifecycle.routeCount() != 1 or lifecycle.recoveryTimerCount() != 1) return error.IdleTimeoutExampleFailed;
 
-    const endpoint_deadline = endpoint_conn.idleTimeoutDeadlineMillis() orelse return error.IdleTimeoutExampleFailed;
+    const endpoint_deadline = endpoint_conn.idleTimeoutDeadline() orelse return error.IdleTimeoutExampleFailed;
     if ((try lifecycle.checkIdleTimeoutsAndRetireConnection(endpoint_connection_id, &endpoint_conn, endpoint_deadline - 1)) != null) {
         return error.IdleTimeoutExampleFailed;
     }
@@ -73,7 +73,7 @@ pub fn main() !void {
     std.debug.print(
         "[idle] effective_timeout_ms={} deadline={} state={s} endpoint_routes_retired={} endpoint_timer_disarmed={}\n",
         .{
-            conn.effectiveIdleTimeoutMillis().?,
+            conn.effectiveIdleTimeout().?,
             deadline,
             @tagName(conn.connectionState()),
             retired.routes_retired,

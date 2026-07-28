@@ -5,6 +5,9 @@
 //! loss event, providing better throughput on high-BDP paths.
 
 const std = @import("std");
+const duration = @import("../time/duration.zig");
+
+
 
 /// CUBIC state tracked per packet number space.
 pub const CubicState = struct {
@@ -12,16 +15,16 @@ pub const CubicState = struct {
     w_max: f64 = 0,
     /// Time period K for the cubic function: K = cbrt(W_max * (1-beta) / C).
     k: f64 = 0,
-    /// Epoch start time (millis) — when the current congestion avoidance began.
-    epoch_start_ms: ?i64 = null,
+    /// Epoch start time (nanos) — when the current congestion avoidance began.
+    epoch_start_nanos: ?i64 = null,
     /// TCP-friendly cwnd estimate.
     tcp_cwnd: f64 = 0,
-    /// Last ACK time in the current epoch.
-    last_ack_ms: ?i64 = null,
-    /// When app-limited period started (RFC 8312 §5.8).
-    app_limited_start_ms: ?i64 = null,
-    /// When the window was last increased.
-    window_increase_ms: ?i64 = null,
+    /// Last ACK time in the current epoch (nanos).
+    last_ack_nanos: ?i64 = null,
+    /// When app-limited period started (RFC 8312 §5.8, nanos).
+    app_limited_start_nanos: ?i64 = null,
+    /// When the window was last increased (nanos).
+    window_increase_nanos: ?i64 = null,
 
     /// CUBIC constant C (default 0.4 per RFC 9438).
     pub const C: f64 = 0.4;
@@ -30,15 +33,15 @@ pub const CubicState = struct {
 
     /// Handle a congestion event (packet loss).
     /// Returns the new congestion window after multiplicative decrease.
-    pub fn onCongestionEvent(self: *CubicState, cwnd: usize, max_datagram_size: usize, now_ms: i64) usize {
+    pub fn onCongestionEvent(self: *CubicState, cwnd: usize, max_datagram_size: usize, now_nanos: i64) usize {
         const cwnd_f: f64 = @floatFromInt(cwnd);
         const mds_f: f64 = @floatFromInt(max_datagram_size);
 
         // W_max in segments
         self.w_max = cwnd_f / mds_f;
-        self.epoch_start_ms = now_ms;
+        self.epoch_start_nanos = now_nanos;
         self.tcp_cwnd = self.w_max;
-        self.last_ack_ms = now_ms;
+        self.last_ack_nanos = now_nanos;
 
         // K = cbrt(W_max * (1 - beta) / C)
         const w_max_reduction = self.w_max * (1.0 - beta) / C;
@@ -51,31 +54,30 @@ pub const CubicState = struct {
     }
 
     /// Mark the start of an application-limited period (RFC 8312 §5.8).
-    pub fn onAppLimited(self: *CubicState, now_ms: i64) void {
-        if (self.app_limited_start_ms == null) {
-            self.app_limited_start_ms = now_ms;
+    pub fn onAppLimited(self: *CubicState, now_nanos: i64) void {
+        if (self.app_limited_start_nanos == null) {
+            self.app_limited_start_nanos = now_nanos;
         }
     }
 
     /// Compute the CUBIC congestion window for the current time.
     /// Returns the target cwnd in bytes.
-    pub fn cubicWindow(self: *CubicState, cwnd: usize, max_datagram_size: usize, now_ms: i64) usize {
-        const epoch_start = self.epoch_start_ms orelse return cwnd;
+    pub fn cubicWindow(self: *CubicState, cwnd: usize, max_datagram_size: usize, now_nanos: i64) usize {
+        const epoch_start = self.epoch_start_nanos orelse return cwnd;
 
         // RFC 8312 §5.8: exclude app-limited periods from t
-        if (self.app_limited_start_ms) |al_start| {
-            const al_duration = now_ms - al_start;
+        if (self.app_limited_start_nanos) |al_start| {
+            const al_duration = now_nanos - al_start;
             if (al_duration > 0) {
-                self.epoch_start_ms = epoch_start + al_duration;
+                self.epoch_start_nanos = epoch_start + al_duration;
             }
-            self.app_limited_start_ms = null;
-            self.window_increase_ms = now_ms;
+            self.app_limited_start_nanos = null;
+            self.window_increase_nanos = now_nanos;
         }
 
-        const adjusted_epoch = self.epoch_start_ms orelse return cwnd;
+        const adjusted_epoch = self.epoch_start_nanos orelse return cwnd;
         const mds_f: f64 = @floatFromInt(max_datagram_size);
-        const t: f64 = @floatFromInt(now_ms - adjusted_epoch);
-        const t_sec = t / 1000.0;
+        const t_sec = duration.nanosToSecsF(now_nanos - adjusted_epoch);
 
         // W(t) = C * (t - K)^3 + W_max  (in segments)
         const diff = t_sec - self.k;
@@ -96,11 +98,11 @@ pub const CubicState = struct {
     pub fn reset(self: *CubicState) void {
         self.w_max = 0;
         self.k = 0;
-        self.epoch_start_ms = null;
+        self.epoch_start_nanos = null;
         self.tcp_cwnd = 0;
-        self.last_ack_ms = null;
-        self.app_limited_start_ms = null;
-        self.window_increase_ms = null;
+        self.last_ack_nanos = null;
+        self.app_limited_start_nanos = null;
+        self.window_increase_nanos = null;
     }
 };
 
@@ -124,7 +126,7 @@ test "CUBIC onCongestionEvent reduces window by beta" {
     const mds: usize = 1200;
     const cwnd: usize = 10 * mds; // 10 segments
 
-    const new_cwnd = cubic.onCongestionEvent(cwnd, mds, 1000);
+    const new_cwnd = cubic.onCongestionEvent(cwnd, mds, 1_000_000_000);
 
     // cwnd should be approximately 10 * 0.7 = 7 segments = 8400 bytes
     try std.testing.expect(new_cwnd >= 6 * mds);
@@ -144,23 +146,23 @@ test "CUBIC window grows cubically after loss" {
     const w0 = cubic.cubicWindow(reduced, mds, 0);
     try std.testing.expect(w0 >= reduced);
 
-    // At t=K, window should be approximately W_max
-    const k_ms: i64 = @intFromFloat(cubic.k * 1000.0);
-    const w_at_k = cubic.cubicWindow(reduced, mds, k_ms);
+    // At t=K (seconds → nanos), window should be approximately W_max
+    const k_nanos: i64 = @intFromFloat(cubic.k * @as(f64, @floatFromInt(duration.ns_per_s)));
+    const w_at_k = cubic.cubicWindow(reduced, mds, k_nanos);
     try std.testing.expect(w_at_k >= reduced);
 
     // Window should grow over time
-    const w_later = cubic.cubicWindow(reduced, mds, k_ms * 2);
+    const w_later = cubic.cubicWindow(reduced, mds, k_nanos * 2);
     try std.testing.expect(w_later >= w_at_k);
 }
 
 test "CUBIC reset clears state" {
     var cubic = CubicState{};
-    _ = cubic.onCongestionEvent(12000, 1200, 1000);
-    try std.testing.expect(cubic.epoch_start_ms != null);
+    _ = cubic.onCongestionEvent(12000, 1200, 1_000_000_000);
+    try std.testing.expect(cubic.epoch_start_nanos != null);
 
     cubic.reset();
-    try std.testing.expect(cubic.epoch_start_ms == null);
+    try std.testing.expect(cubic.epoch_start_nanos == null);
     try std.testing.expect(cubic.w_max == 0);
     try std.testing.expect(cubic.k == 0);
 }

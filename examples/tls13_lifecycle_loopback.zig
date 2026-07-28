@@ -380,9 +380,9 @@ pub fn main() !void {
     _ = client.streamState(stream_id) catch null;
     _ = client.peerStreamDataBlockedLimit(stream_id);
     // M5/M6: query idle-timeout + close-deadline state.
-    _ = client.effectiveIdleTimeoutMillis();
-    _ = client.idleTimeoutDeadlineMillis();
-    _ = client.closeDeadlineMillis();
+    _ = client.effectiveIdleTimeout();
+    _ = client.idleTimeoutDeadline();
+    _ = client.closeDeadline();
     // M5: endpoint lifecycle route + reset-token counts.
     try require(client_lifecycle.routeCount() > 0);
     _ = client_lifecycle.statelessResetTokenCount();
@@ -406,7 +406,7 @@ pub fn main() !void {
     _ = client.peerVersionInformation();
     _ = server.peerVersionInformation();
     // M6: query smoothed RTT (RFC 9002 §5.4).
-    _ = client.smoothedRttMillis(.application);
+    _ = client.smoothedRtt(.application);
     // M5: query original DCID / retry SCID transport-parameter bindings.
     _ = server.originalDestinationConnectionId();
     _ = server.retrySourceConnectionId();
@@ -415,7 +415,7 @@ pub fn main() !void {
     // M6: query available congestion window + full flag.
     _ = client.availableCongestionWindow(.application);
     _ = client.congestionWindowFull(.application);
-    _ = client.lossDetectionDeadlineMillis(.application);
+    _ = client.lossDetectionDeadline(.application);
     // M6: query pending-ACK largest packet number (RFC 9000 §19.3).
     _ = client.pendingAckLargest(.application);
     // M5: query ECN counts (RFC 9000 §19.4).
@@ -569,7 +569,7 @@ pub fn main() !void {
         defer allocator.free(hd_dgram);
         try server_socket.send(io, &client_socket.address, hd_dgram);
     }
-    _ = client.lossDetectionTimerDeadlineMillis();
+    _ = client.lossDetectionTimerDeadline();
     // M5: query ECN validation state + next outgoing spin bit.
     _ = client.ecnValidationState(.application);
     _ = client.nextOutgoingSpinBit();

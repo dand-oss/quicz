@@ -1085,7 +1085,7 @@ pub fn main() !void {
     try printConnectionClose(gpa, connection_close);
     std.debug.print(
         "[close] sender state={s} deadline_ms={}\n",
-        .{ @tagName(client.connectionState()), client.closeDeadlineMillis().? },
+        .{ @tagName(client.connectionState()), client.closeDeadline().? },
     );
     try server.processDatagram(0, connection_close);
     printPeerClose("receiver", server.peerClose() orelse return error.UnexpectedState);
@@ -1106,7 +1106,7 @@ pub fn main() !void {
         .{@tagName(client.connectionState())},
     );
 
-    try requirePollError(error.ConnectionClosed, client.pollTx(client.closeDeadlineMillis().?, &datagram));
+    try requirePollError(error.ConnectionClosed, client.pollTx(client.closeDeadline().?, &datagram));
     std.debug.print("[close] sender expired state={s}\n", .{@tagName(client.connectionState())});
 
     var app_server = try quicz.Connection.init(gpa, .server, .{});

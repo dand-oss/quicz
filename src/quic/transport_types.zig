@@ -233,14 +233,14 @@ pub const LossDetectionTimerKind = enum {
 
 /// Earliest modeled QUIC loss detection timer deadline.
 ///
-/// `deadline_millis` uses the same caller-controlled millisecond clock passed
+/// `deadline_nanos` uses the same caller-controlled millisecond clock passed
 /// to send, receive, and recovery APIs. When any packet number space has a
 /// loss-time deadline, RFC 9002 gives that timer precedence over PTO.
 pub const LossDetectionTimerDeadline = struct {
     /// Packet number space whose timer should be serviced.
     space: PacketNumberSpace,
-    /// Timer cause to handle at `deadline_millis`.
+    /// Timer cause to handle at `deadline_nanos`.
     kind: LossDetectionTimerKind,
     /// Absolute deadline in the connection's caller-controlled millisecond clock.
-    deadline_millis: i64,
+    deadline_nanos: i64,
 };

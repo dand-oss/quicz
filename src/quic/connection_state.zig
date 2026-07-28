@@ -64,14 +64,14 @@ pub const PendingPathChallenge = struct {
 /// PATH_CHALLENGE data sent and awaiting response.
 pub const OutstandingPathChallenge = struct {
     data: [8]u8,
-    sent_time_millis: i64,
+    sent_time_nanos: i64,
     transmissions: u8,
 };
 
 /// Sent packet metadata retained for ACK/loss accounting.
 pub const SentPacket = struct {
     packet_number: u64,
-    sent_time_millis: i64,
+    sent_time_nanos: i64,
     bytes: usize,
     ecn_codepoint: EcnCodepoint = .not_ect,
     stream_frame: ?PendingStreamFrame = null,
@@ -93,7 +93,7 @@ pub const SentPacket = struct {
 
 /// RTT estimator rollback snapshot for one packet number space.
 pub const RttEstimateSnapshot = struct {
-    first_rtt_sample_sent_time_millis: ?i64,
+    first_rtt_sample_sent_time_nanos: ?i64,
     latest_rtt_ns: ?u64,
     min_rtt_ns: ?u64,
     smoothed_rtt_ns: u64,

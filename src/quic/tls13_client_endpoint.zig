@@ -71,19 +71,19 @@ pub const Tls13ClientEndpoint = struct {
     }
 
     /// Queue ClientHello and mirror the resulting recovery timer.
-    pub fn begin(self: *Tls13ClientEndpoint, now_millis: i64, scratch: []u8) ![]u8 {
-        const datagram = try self.transport.begin(now_millis, scratch);
+    pub fn begin(self: *Tls13ClientEndpoint, now_nanos: i64, scratch: []u8) ![]u8 {
+        const datagram = try self.transport.begin(now_nanos, scratch);
         errdefer self.transport.connection.allocator.free(datagram);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return datagram;
     }
 
     /// Queue ClientHello and return it with the committed UDP route.
-    pub fn beginWithRoutePath(self: *Tls13ClientEndpoint, now_millis: i64, scratch: []u8) !ApplicationDatagramPathResult {
+    pub fn beginWithRoutePath(self: *Tls13ClientEndpoint, now_nanos: i64, scratch: []u8) !ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         return .{
-            .datagram = try self.begin(now_millis, scratch),
+            .datagram = try self.begin(now_nanos, scratch),
             .path = path,
         };
     }
@@ -91,7 +91,7 @@ pub const Tls13ClientEndpoint = struct {
     /// Route and process one peer datagram through the owned transport.
     pub fn receive(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
     ) !ReceiveResult {
@@ -100,7 +100,7 @@ pub const Tls13ClientEndpoint = struct {
         const route = try self.lifecycle.routeDatagram(self.path, datagram);
         if (route.connection_id != self.connection_id) return error.InvalidPacket;
         if (datagram.len != 0 and packet.parseHeaderForm(datagram[0]) == .short) {
-            if (self.transport.connection.processStatelessResetDatagram(now_millis, datagram)) |sequence_number| {
+            if (self.transport.connection.processStatelessResetDatagram(now_nanos, datagram)) |sequence_number| {
                 try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
                 return .{
                     .route = route,
@@ -109,7 +109,7 @@ pub const Tls13ClientEndpoint = struct {
                 };
             }
         }
-        const progress = try self.transport.receive(now_millis, scratch, datagram);
+        const progress = try self.transport.receive(now_nanos, scratch, datagram);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return .{ .route = route, .transport = progress };
     }
@@ -118,13 +118,13 @@ pub const Tls13ClientEndpoint = struct {
     /// with the endpoint's committed UDP route.
     pub fn receiveWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
     ) !ReceiveDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
-        const received = try self.receive(now_millis, scratch, datagram);
+        const received = try self.receive(now_nanos, scratch, datagram);
         return .{
             .receive = received,
             .outbound_initial = if (received.transport.outbound_initial) |bytes| .{
@@ -147,13 +147,13 @@ pub const Tls13ClientEndpoint = struct {
     /// error.
     pub fn receiveWithRoutePathOrClose(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
     ) !ReceiveOrCloseDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
-        const received = self.receive(now_millis, scratch, datagram) catch |err| {
+        const received = self.receive(now_nanos, scratch, datagram) catch |err| {
             if (err != error.InvalidPacket and err != error.ConnectionClosed) return err;
             return .{
                 .receive_error = switch (err) {
@@ -162,7 +162,7 @@ pub const Tls13ClientEndpoint = struct {
                     else => unreachable,
                 },
                 .outbound_application = if (err == error.InvalidPacket and self.transport.connection.connectionState() == .closing)
-                    try self.pollApplicationDatagramWithRoutePath(now_millis)
+                    try self.pollApplicationDatagramWithRoutePath(now_nanos)
                 else
                     null,
                 .next_deadline = self.nextDeadline(),
@@ -179,7 +179,7 @@ pub const Tls13ClientEndpoint = struct {
                 .path = path,
             } else null,
             .outbound_application = if (received.transport.application_processed)
-                try self.pollApplicationDatagramWithRoutePath(now_millis)
+                try self.pollApplicationDatagramWithRoutePath(now_nanos)
             else
                 null,
             .next_deadline = self.nextDeadline(),
@@ -193,7 +193,7 @@ pub const Tls13ClientEndpoint = struct {
     /// inputs still preserve queued application output for normal polling.
     pub fn receiveWithRoutePathOrCloseAndDrainDatagrams(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
         out: []ApplicationDatagramPathResult,
@@ -206,7 +206,7 @@ pub const Tls13ClientEndpoint = struct {
             .drain = .{ .first_route_error = err },
             .next_deadline = self.nextDeadline(),
         };
-        const received = self.receive(now_millis, scratch, datagram) catch |err| {
+        const received = self.receive(now_nanos, scratch, datagram) catch |err| {
             if (err != error.InvalidPacket and err != error.ConnectionClosed) return err;
             var result = ReceiveOrCloseDatagramPathDrainResult{
                 .receive_error = switch (err) {
@@ -220,7 +220,7 @@ pub const Tls13ClientEndpoint = struct {
                 result.drain = if (out.len == 0)
                     .{ .first_error = error.BufferTooSmall }
                 else
-                    try self.drainApplicationDatagramsWithRoutePath(now_millis, out);
+                    try self.drainApplicationDatagramsWithRoutePath(now_nanos, out);
                 result.next_deadline = self.nextDeadline();
             }
             return result;
@@ -241,7 +241,7 @@ pub const Tls13ClientEndpoint = struct {
             result.drain = if (out.len == 0)
                 .{ .first_error = error.BufferTooSmall }
             else
-                try self.drainApplicationDatagramsWithRoutePath(now_millis, out);
+                try self.drainApplicationDatagramsWithRoutePath(now_nanos, out);
             result.next_deadline = self.nextDeadline();
         }
         return result;
@@ -250,7 +250,7 @@ pub const Tls13ClientEndpoint = struct {
     /// Run one bounded client receive step and service one due deadline.
     pub fn receiveDatagramStepWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
         receive_out: []ApplicationDatagramPathResult,
@@ -258,14 +258,14 @@ pub const Tls13ClientEndpoint = struct {
     ) !DatagramStepPathResult {
         const selected_deadline = self.nextDeadline();
         const received = try self.receiveWithRoutePathOrCloseAndDrainDatagrams(
-            now_millis,
+            now_nanos,
             scratch,
             datagram,
             receive_out,
         );
         if (due_out.len == 0) {
             if (self.nextDeadline()) |deadline| {
-                if (deadline == .recovery and deadline.deadlineMillis() <= now_millis) {
+                if (deadline == .recovery and deadline.deadline() <= now_nanos) {
                     return .{
                         .receive = received,
                         .due = .{
@@ -278,10 +278,10 @@ pub const Tls13ClientEndpoint = struct {
                 }
             }
         }
-        var due = try self.serviceDueDeadlineAndDrainDatagramsWithRoutePath(now_millis, due_out);
+        var due = try self.serviceDueDeadlineAndDrainDatagramsWithRoutePath(now_nanos, due_out);
         if (due == null) {
             if (selected_deadline) |deadline| {
-                if (deadline.deadlineMillis() <= now_millis) {
+                if (deadline.deadline() <= now_nanos) {
                     switch (deadline) {
                         .idle_timeout, .close_timeout => {
                             if (self.transport.connection.connectionState() == .closed) {
@@ -324,18 +324,18 @@ pub const Tls13ClientEndpoint = struct {
     }
 
     /// Poll one protected application datagram and refresh recovery scheduling.
-    pub fn pollApplicationDatagram(self: *Tls13ClientEndpoint, now_millis: i64) !?[]u8 {
-        const datagram = try self.transport.pollApplicationDatagram(now_millis);
+    pub fn pollApplicationDatagram(self: *Tls13ClientEndpoint, now_nanos: i64) !?[]u8 {
+        const datagram = try self.transport.pollApplicationDatagram(now_nanos);
         errdefer if (datagram) |bytes| self.transport.connection.allocator.free(bytes);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return datagram;
     }
 
     /// Poll one protected application datagram with its committed UDP route.
-    pub fn pollApplicationDatagramWithRoutePath(self: *Tls13ClientEndpoint, now_millis: i64) !?ApplicationDatagramPathResult {
+    pub fn pollApplicationDatagramWithRoutePath(self: *Tls13ClientEndpoint, now_nanos: i64) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -348,14 +348,14 @@ pub const Tls13ClientEndpoint = struct {
     /// the caller still owns the first `datagrams_written` entries.
     pub fn drainApplicationDatagramsWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !ApplicationDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         var result = ApplicationDatagramPathDrainResult{};
         while (result.datagrams_written < out.len) {
-            const datagram = self.pollApplicationDatagram(now_millis) catch |err| {
+            const datagram = self.pollApplicationDatagram(now_nanos) catch |err| {
                 result.first_error = err;
                 return result;
             };
@@ -376,28 +376,28 @@ pub const Tls13ClientEndpoint = struct {
     /// Service one due client deadline and keep endpoint lifecycle state in sync.
     pub fn serviceDueDeadline(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?client_transport.ClientTransportDeadline {
         const deadline = self.transport.nextDeadline() orelse return null;
-        if (deadline.deadlineMillis() > now_millis) return null;
+        if (deadline.deadline() > now_nanos) return null;
 
         switch (deadline) {
             .idle_timeout => {
                 _ = try self.lifecycle.checkIdleTimeoutsAndRetireConnection(
                     self.connection_id,
                     &self.transport.connection,
-                    now_millis,
+                    now_nanos,
                 );
             },
             .close_timeout => {
                 _ = try self.lifecycle.checkCloseTimeoutsAndRetireConnection(
                     self.connection_id,
                     &self.transport.connection,
-                    now_millis,
+                    now_nanos,
                 );
             },
             .recovery, .key_discard => {
-                _ = try self.transport.serviceDueDeadline(now_millis);
+                _ = try self.transport.serviceDueDeadline(now_nanos);
                 try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
             },
         }
@@ -410,17 +410,17 @@ pub const Tls13ClientEndpoint = struct {
     /// datagram, depending on the due packet number space.
     pub fn serviceDueDeadlineAndPollDatagramWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?DueDeadlineDatagramPathResult {
         const deadline = self.nextDeadline() orelse return null;
-        if (deadline.deadlineMillis() > now_millis) return null;
+        if (deadline.deadline() > now_nanos) return null;
         if (deadline == .recovery) {
             const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
             _ = try self.lifecycle.currentRoutePath(local_source_connection_id);
         }
-        const serviced = (try self.serviceDueDeadline(now_millis)) orelse return null;
+        const serviced = (try self.serviceDueDeadline(now_nanos)) orelse return null;
         const datagram = switch (serviced) {
-            .recovery => |recovery| try self.pollRecoveryDatagramWithRoutePath(recovery, now_millis),
+            .recovery => |recovery| try self.pollRecoveryDatagramWithRoutePath(recovery, now_nanos),
             .idle_timeout, .close_timeout, .key_discard => null,
         };
         return .{
@@ -436,11 +436,11 @@ pub const Tls13ClientEndpoint = struct {
     /// initialized slots own their datagrams even when `drain.first_error` is set.
     pub fn serviceDueDeadlineAndDrainDatagramsWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !?DueDeadlineDatagramPathDrainResult {
         const deadline = self.nextDeadline() orelse return null;
-        if (deadline.deadlineMillis() > now_millis) return null;
+        if (deadline.deadline() > now_nanos) return null;
         if (deadline == .recovery) {
             if (out.len == 0) return error.BufferTooSmall;
             const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return .{
@@ -454,7 +454,7 @@ pub const Tls13ClientEndpoint = struct {
                 .next_deadline = self.nextDeadline(),
             };
         }
-        const serviced = (try self.serviceDueDeadline(now_millis)) orelse return null;
+        const serviced = (try self.serviceDueDeadline(now_nanos)) orelse return null;
         if (serviced != .recovery) {
             return .{
                 .deadline = serviced,
@@ -466,7 +466,7 @@ pub const Tls13ClientEndpoint = struct {
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         var drain = ApplicationDatagramPathDrainResult{};
         while (drain.datagrams_written < out.len) {
-            const datagram = self.transport.pollRecoveryDatagram(serviced.recovery, now_millis) catch |err| {
+            const datagram = self.transport.pollRecoveryDatagram(serviced.recovery, now_nanos) catch |err| {
                 drain.first_error = err;
                 return .{
                     .deadline = serviced,
@@ -493,11 +493,11 @@ pub const Tls13ClientEndpoint = struct {
     fn pollRecoveryDatagramWithRoutePath(
         self: *Tls13ClientEndpoint,
         recovery: transport_types.LossDetectionTimerDeadline,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
-        const datagram = (try self.transport.pollRecoveryDatagram(recovery, now_millis)) orelse return null;
+        const datagram = (try self.transport.pollRecoveryDatagram(recovery, now_nanos)) orelse return null;
         errdefer self.transport.connection.allocator.free(datagram);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return .{
@@ -525,7 +525,7 @@ pub const Tls13ClientEndpoint = struct {
     /// the follow-up transport from `version_negotiation.followup_config`.
     pub fn processVersionNegotiationFollowupRoute(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         datagram: []const u8,
         followup_connection_id: u64,
         followup_local_initial_source_connection_id: []const u8,
@@ -535,7 +535,7 @@ pub const Tls13ClientEndpoint = struct {
             self.connection_id,
             followup_connection_id,
             &self.transport.connection,
-            now_millis,
+            now_nanos,
             &self.transport.original_destination_connection_id,
             &self.transport.local_source_connection_id,
             followup_local_initial_source_connection_id,
@@ -555,7 +555,7 @@ pub const Tls13ClientEndpoint = struct {
     /// selected version and queues its first ClientHello Initial.
     pub fn processVersionNegotiationRestartWithRoutePath(
         self: *Tls13ClientEndpoint,
-        now_millis: i64,
+        now_nanos: i64,
         scratch: []u8,
         datagram: []const u8,
         followup_connection_id: u64,
@@ -564,7 +564,7 @@ pub const Tls13ClientEndpoint = struct {
         tls_config: tls13.TlsConfig,
     ) !?VersionNegotiationRestartResult {
         const followup = (try self.processVersionNegotiationFollowupRoute(
-            now_millis,
+            now_nanos,
             datagram,
             followup_connection_id,
             &followup_local_initial_source_connection_id,
@@ -582,7 +582,7 @@ pub const Tls13ClientEndpoint = struct {
         errdefer followup_transport.deinit();
 
         const path = try self.lifecycle.currentRoutePath(&followup_local_initial_source_connection_id);
-        const initial_datagram = try followup_transport.begin(now_millis, scratch);
+        const initial_datagram = try followup_transport.begin(now_nanos, scratch);
         errdefer followup_transport.connection.allocator.free(initial_datagram);
         try self.lifecycle.armRecoveryTimerFromConnection(followup_connection_id, &followup_transport.connection);
 
@@ -623,12 +623,12 @@ pub const Tls13ClientEndpoint = struct {
         stream_id: u64,
         data: []const u8,
         fin: bool,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         try self.transport.sendStream(stream_id, data, fin);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -643,7 +643,7 @@ pub const Tls13ClientEndpoint = struct {
         stream_id: u64,
         data: []const u8,
         fin: bool,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !ApplicationControlDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
@@ -651,7 +651,7 @@ pub const Tls13ClientEndpoint = struct {
         if (out.len == 0) return error.BufferTooSmall;
         try self.transport.sendStream(stream_id, data, fin);
         return .{
-            .drain = try self.drainApplicationDatagramsWithRoutePath(now_millis, out),
+            .drain = try self.drainApplicationDatagramsWithRoutePath(now_nanos, out),
             .next_deadline = self.nextDeadline(),
         };
     }
@@ -670,12 +670,12 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         stream_id: u64,
         application_error_code: u64,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         try self.transport.resetStream(stream_id, application_error_code);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -689,7 +689,7 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         stream_id: u64,
         application_error_code: u64,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !ApplicationControlDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
@@ -697,7 +697,7 @@ pub const Tls13ClientEndpoint = struct {
         if (out.len == 0) return error.BufferTooSmall;
         try self.transport.resetStream(stream_id, application_error_code);
         return .{
-            .drain = try self.drainApplicationDatagramsWithRoutePath(now_millis, out),
+            .drain = try self.drainApplicationDatagramsWithRoutePath(now_nanos, out),
             .next_deadline = self.nextDeadline(),
         };
     }
@@ -716,12 +716,12 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         stream_id: u64,
         application_error_code: u64,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         try self.transport.stopSending(stream_id, application_error_code);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -735,7 +735,7 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         stream_id: u64,
         application_error_code: u64,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !ApplicationControlDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
@@ -743,7 +743,7 @@ pub const Tls13ClientEndpoint = struct {
         if (out.len == 0) return error.BufferTooSmall;
         try self.transport.stopSending(stream_id, application_error_code);
         return .{
-            .drain = try self.drainApplicationDatagramsWithRoutePath(now_millis, out),
+            .drain = try self.drainApplicationDatagramsWithRoutePath(now_nanos, out),
             .next_deadline = self.nextDeadline(),
         };
     }
@@ -769,8 +769,8 @@ pub const Tls13ClientEndpoint = struct {
     }
 
     /// Return the smoothed RTT estimate in milliseconds for one space.
-    pub fn smoothedRttMillis(self: *const Tls13ClientEndpoint, space: connection_module.PacketNumberSpace) u64 {
-        return self.transport.connection.smoothedRttMillis(space);
+    pub fn smoothedRtt(self: *const Tls13ClientEndpoint, space: connection_module.PacketNumberSpace) u64 {
+        return self.transport.connection.smoothedRtt(space);
     }
 
     /// Queue a protected application CONNECTION_CLOSE and poll it for UDP send.
@@ -779,9 +779,9 @@ pub const Tls13ClientEndpoint = struct {
         application_error_code: u64,
         frame_type: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?[]u8 {
-        const datagram = try self.transport.close(application_error_code, frame_type, reason, now_millis);
+        const datagram = try self.transport.close(application_error_code, frame_type, reason, now_nanos);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return datagram;
     }
@@ -791,9 +791,9 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         application_error_code: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?[]u8 {
-        const datagram = try self.transport.closeApplication(application_error_code, reason, now_millis);
+        const datagram = try self.transport.closeApplication(application_error_code, reason, now_nanos);
         try self.lifecycle.armRecoveryTimerFromConnection(self.connection_id, &self.transport.connection);
         return datagram;
     }
@@ -804,12 +804,12 @@ pub const Tls13ClientEndpoint = struct {
         application_error_code: u64,
         frame_type: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         try self.transport.connection.closeConnection(application_error_code, frame_type, reason);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -821,12 +821,12 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         application_error_code: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
     ) !?ApplicationDatagramPathResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
         const path = try self.lifecycle.currentRoutePath(local_source_connection_id);
         try self.transport.connection.closeApplication(application_error_code, reason);
-        const datagram = (try self.pollApplicationDatagram(now_millis)) orelse return null;
+        const datagram = (try self.pollApplicationDatagram(now_nanos)) orelse return null;
         return .{
             .datagram = datagram,
             .path = path,
@@ -839,7 +839,7 @@ pub const Tls13ClientEndpoint = struct {
         application_error_code: u64,
         frame_type: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !CloseDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
@@ -847,7 +847,7 @@ pub const Tls13ClientEndpoint = struct {
         if (out.len == 0) return error.BufferTooSmall;
         try self.transport.connection.closeConnection(application_error_code, frame_type, reason);
         return .{
-            .drain = try self.drainApplicationDatagramsWithRoutePath(now_millis, out),
+            .drain = try self.drainApplicationDatagramsWithRoutePath(now_nanos, out),
             .next_deadline = self.nextDeadline(),
         };
     }
@@ -857,7 +857,7 @@ pub const Tls13ClientEndpoint = struct {
         self: *Tls13ClientEndpoint,
         application_error_code: u64,
         reason: []const u8,
-        now_millis: i64,
+        now_nanos: i64,
         out: []ApplicationDatagramPathResult,
     ) !CloseDatagramPathDrainResult {
         const local_source_connection_id = self.transport.connection.localInitialSourceConnectionId() orelse return error.UnknownConnectionId;
@@ -865,22 +865,22 @@ pub const Tls13ClientEndpoint = struct {
         if (out.len == 0) return error.BufferTooSmall;
         try self.transport.connection.closeApplication(application_error_code, reason);
         return .{
-            .drain = try self.drainApplicationDatagramsWithRoutePath(now_millis, out),
+            .drain = try self.drainApplicationDatagramsWithRoutePath(now_nanos, out),
             .next_deadline = self.nextDeadline(),
         };
     }
 
     /// Return the active close deadline after `close()` has queued a close.
-    pub fn closeDeadlineMillis(self: *const Tls13ClientEndpoint) ?i64 {
-        return self.transport.closeDeadlineMillis();
+    pub fn closeDeadline(self: *const Tls13ClientEndpoint) ?i64 {
+        return self.transport.closeDeadline();
     }
 
     /// Retire the registered route after the close deadline has elapsed.
-    pub fn retireAtCloseDeadline(self: *Tls13ClientEndpoint, now_millis: i64) !?endpoint_lifecycle.EndpointConnectionRetireResult {
+    pub fn retireAtCloseDeadline(self: *Tls13ClientEndpoint, now_nanos: i64) !?endpoint_lifecycle.EndpointConnectionRetireResult {
         return self.lifecycle.checkCloseTimeoutsAndRetireConnection(
             self.connection_id,
             &self.transport.connection,
-            now_millis,
+            now_nanos,
         );
     }
 
@@ -1165,7 +1165,7 @@ test "Tls13ClientEndpoint polls application output with committed route path" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const stream_id = try client.openStream();
@@ -1242,7 +1242,7 @@ test "Tls13ClientEndpoint route-bound application poll fails before consuming ou
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     try client.transport.connection.sendPing();
     _ = client.lifecycle.retireConnection(client.connection_id);
@@ -1337,7 +1337,7 @@ test "Tls13ClientEndpoint receive returns route-bound close on frame error" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1409,7 +1409,7 @@ test "Tls13ClientEndpoint receive close drain reports zero output capacity" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1508,7 +1508,7 @@ test "Tls13ClientEndpoint receive step reports zero receive output capacity" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     var plaintext: [32]u8 = [_]u8{0} ** 32;
     var plaintext_writer = buffer.fixedWriter(&plaintext);
@@ -1589,7 +1589,7 @@ test "Tls13ClientEndpoint receive drains route-bound close on frame error" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const invalid_plaintext = [_]u8{0x1f} ++ ([_]u8{0} ** 31);
@@ -1654,11 +1654,11 @@ test "Tls13ClientEndpoint receive reports closed state without close output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectError(error.ConnectionClosed, client.transport.connection.checkCloseTimeouts(close_deadline));
     try std.testing.expectEqual(transport_types.ConnectionState.closed, client.transport.connection.connectionState());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
@@ -1713,7 +1713,7 @@ test "Tls13ClientEndpoint receive does not drain queued application output on ro
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const decoy_datagram = [_]u8{ 0x40, 0xd1, 0xd2, 0xd3, 0xd4, 0x00 };
@@ -1779,10 +1779,10 @@ test "Tls13ClientEndpoint services Initial recovery with committed route output"
     try std.testing.expectEqual(transport_types.PacketNumberSpace.initial, deadline.recovery.space);
     _ = try client.updatePath(new_path);
 
-    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis() - 1);
+    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline() - 1);
     try std.testing.expect(before_deadline == null);
 
-    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis())) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline())) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .recovery);
     try std.testing.expectEqual(transport_types.PacketNumberSpace.initial, serviced.deadline.recovery.space);
     const output = serviced.datagram orelse return error.TestUnexpectedResult;
@@ -1866,10 +1866,10 @@ test "Tls13ClientEndpoint services Handshake recovery with committed route outpu
     try std.testing.expectEqual(transport_types.PacketNumberSpace.handshake, deadline.recovery.space);
     _ = try client.updatePath(new_path);
 
-    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis() - 1);
+    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline() - 1);
     try std.testing.expect(before_deadline == null);
 
-    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis())) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline())) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .recovery);
     try std.testing.expectEqual(transport_types.PacketNumberSpace.handshake, serviced.deadline.recovery.space);
     const output = serviced.datagram orelse return error.TestUnexpectedResult;
@@ -1922,7 +1922,7 @@ test "Tls13ClientEndpoint services due recovery with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -1931,17 +1931,17 @@ test "Tls13ClientEndpoint services due recovery with committed route output" {
     try std.testing.expect(deadline == .recovery);
 
     _ = try client.updatePath(new_path);
-    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis() - 1);
+    const before_deadline = try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline() - 1);
     try std.testing.expect(before_deadline == null);
 
     try std.testing.expect(try client.lifecycle.retireConnectionIdOnPath(&client_scid, new_path));
-    try std.testing.expectError(error.UnknownConnectionId, client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis()));
+    try std.testing.expectError(error.UnknownConnectionId, client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline()));
     const preserved_deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(preserved_deadline == .recovery);
     try std.testing.expectEqual(transport_types.PacketNumberSpace.application, preserved_deadline.recovery.space);
     try client.lifecycle.registerConnectionId(client.connection_id, &client_scid, new_path, .{ .active_migration_disabled = false });
 
-    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis())) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline())) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .recovery);
     const output = serviced.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(output.datagram);
@@ -1992,7 +1992,7 @@ test "Tls13ClientEndpoint drains due recovery with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -2003,12 +2003,12 @@ test "Tls13ClientEndpoint drains due recovery with committed route output" {
 
     _ = try client.updatePath(new_path);
     var out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
-    const before_deadline = try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadlineMillis() - 1, &out);
+    const before_deadline = try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadline() - 1, &out);
     try std.testing.expect(before_deadline == null);
 
     var zero_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
     try std.testing.expectError(error.BufferTooSmall, client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(
-        deadline.deadlineMillis(),
+        deadline.deadline(),
         &zero_out,
     ));
     const zero_preserved_deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
@@ -2016,7 +2016,7 @@ test "Tls13ClientEndpoint drains due recovery with committed route output" {
     try std.testing.expectEqual(transport_types.PacketNumberSpace.application, zero_preserved_deadline.recovery.space);
 
     try std.testing.expect(try client.lifecycle.retireConnectionIdOnPath(&client_scid, new_path));
-    const missing_route_due = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadlineMillis(), &out)) orelse return error.TestUnexpectedResult;
+    const missing_route_due = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadline(), &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(missing_route_due.deadline == .recovery);
     try std.testing.expectEqual(transport_types.PacketNumberSpace.application, missing_route_due.deadline.recovery.space);
     try std.testing.expectEqual(@as(usize, 0), missing_route_due.drain.datagrams_written);
@@ -2030,7 +2030,7 @@ test "Tls13ClientEndpoint drains due recovery with committed route output" {
     try std.testing.expectEqual(transport_types.PacketNumberSpace.application, preserved_deadline.recovery.space);
     try client.lifecycle.registerConnectionId(client.connection_id, &client_scid, new_path, .{ .active_migration_disabled = false });
 
-    const serviced = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadlineMillis(), &out)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadline(), &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .recovery);
     try std.testing.expectEqual(transport_types.PacketNumberSpace.application, serviced.deadline.recovery.space);
     try std.testing.expectEqual(@as(usize, 1), serviced.drain.datagrams_written);
@@ -2085,7 +2085,7 @@ test "Tls13ClientEndpoint receive step drains due recovery with committed route 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.sendPing();
 
     const first = (try client.pollApplicationDatagramWithRoutePath(10)) orelse return error.TestUnexpectedResult;
@@ -2101,7 +2101,7 @@ test "Tls13ClientEndpoint receive step drains due recovery with committed route 
     var receive_out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     var zero_due_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
     const zero_step = try client.receiveDatagramStepWithRoutePath(
-        deadline.deadlineMillis(),
+        deadline.deadline(),
         &scratch,
         &decoy_datagram,
         &receive_out,
@@ -2123,7 +2123,7 @@ test "Tls13ClientEndpoint receive step drains due recovery with committed route 
 
     var due_out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const step = try client.receiveDatagramStepWithRoutePath(
-        deadline.deadlineMillis(),
+        deadline.deadline(),
         &scratch,
         &decoy_datagram,
         &receive_out,
@@ -2174,7 +2174,7 @@ test "Tls13ClientEndpoint receive step reports key discard while reporting input
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_millis = 10;
+    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
 
     try client.transport.connection.initiateOneRttKeyUpdate();
     var scratch: [128]u8 = undefined;
@@ -2187,7 +2187,7 @@ test "Tls13ClientEndpoint receive step reports key discard while reporting input
     var due_out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const malformed_short = [_]u8{ 0x40, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x00 };
     const step = try client.receiveDatagramStepWithRoutePath(
-        deadline.deadlineMillis(),
+        deadline.deadline(),
         &scratch,
         &malformed_short,
         &receive_out,
@@ -2232,16 +2232,16 @@ test "Tls13ClientEndpoint services key discard deadline without input" {
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_millis = 10;
+    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
     try client.transport.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), client.transport.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), client.transport.connection.localOneRttRetainsKeyGeneration(0));
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .key_discard);
-    try std.testing.expect((try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis() - 1)) == null);
+    try std.testing.expect((try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline() - 1)) == null);
 
-    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadlineMillis())) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndPollDatagramWithRoutePath(deadline.deadline())) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .key_discard);
     try std.testing.expect(serviced.datagram == null);
     try std.testing.expectEqual(@as(?bool, false), client.transport.connection.localOneRttRetainsKeyGeneration(0));
@@ -2276,7 +2276,7 @@ test "Tls13ClientEndpoint drains key discard deadline without input" {
         .local = client_secret,
         .peer = server_secret,
     });
-    client.transport.connection.last_packet_activity_millis = 10;
+    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
     try client.transport.connection.initiateOneRttKeyUpdate();
     try std.testing.expectEqual(@as(?u64, 1), client.transport.connection.localOneRttKeyUpdateCount());
     try std.testing.expectEqual(@as(?bool, true), client.transport.connection.localOneRttRetainsKeyGeneration(0));
@@ -2284,9 +2284,9 @@ test "Tls13ClientEndpoint drains key discard deadline without input" {
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .key_discard);
     var out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
-    try std.testing.expect((try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadlineMillis() - 1, &out)) == null);
+    try std.testing.expect((try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadline() - 1, &out)) == null);
 
-    const serviced = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadlineMillis(), &out)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadlineAndDrainDatagramsWithRoutePath(deadline.deadline(), &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced.deadline == .key_discard);
     try std.testing.expectEqual(@as(usize, 0), serviced.drain.datagrams_written);
     try std.testing.expectEqual(@as(?Tls13ClientEndpoint.ApplicationDatagramPollError, null), serviced.drain.first_error);
@@ -2555,9 +2555,9 @@ test "Tls13ClientEndpoint receive enters draining on active stateless reset" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.confirmHandshake();
-    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1, 64);
+    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
     try client.lifecycle.armRecoveryTimerFromConnection(client.connection_id, &client.transport.connection);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.recoveryTimerCount());
 
@@ -2578,7 +2578,7 @@ test "Tls13ClientEndpoint receive enters draining on active stateless reset" {
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .close_timeout);
-    _ = try client.serviceDueDeadline(deadline.deadlineMillis());
+    _ = try client.serviceDueDeadline(deadline.deadline());
     try std.testing.expectEqual(@as(usize, 0), client.lifecycle.routeCount());
 }
 
@@ -2612,9 +2612,9 @@ test "Tls13ClientEndpoint receive step reports active stateless reset and close 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     try client.transport.connection.confirmHandshake();
-    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1, 64);
+    _ = try client.transport.connection.recordPacketSentInSpace(.application, 1 * 1_000_000, 64);
     try client.lifecycle.armRecoveryTimerFromConnection(client.connection_id, &client.transport.connection);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.recoveryTimerCount());
 
@@ -2646,7 +2646,7 @@ test "Tls13ClientEndpoint receive step reports active stateless reset and close 
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
     const next_deadline = step.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expect(next_deadline == .close_timeout);
-    try std.testing.expectEqual(client.transport.closeDeadlineMillis().?, next_deadline.deadlineMillis());
+    try std.testing.expectEqual(client.transport.closeDeadline().?, next_deadline.deadline());
 }
 
 test "Tls13ClientEndpoint retires its route when idle deadline closes the client" {
@@ -2668,17 +2668,17 @@ test "Tls13ClientEndpoint retires its route when idle deadline closes the client
         client_scid,
     );
     defer client.deinit();
-    client.transport.connection.last_packet_activity_millis = 10;
+    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expectEqual(@as(i64, 20), deadline.deadlineMillis());
+    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
-    try std.testing.expect((try client.serviceDueDeadline(19)) == null);
+    try std.testing.expect((try client.serviceDueDeadline(19 * 1_000_000)) == null);
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
-    const serviced = (try client.serviceDueDeadline(20)) orelse return error.TestUnexpectedResult;
+    const serviced = (try client.serviceDueDeadline(20 * 1_000_000)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .idle_timeout);
     try std.testing.expectEqual(@as(usize, 0), client.lifecycle.routeCount());
     try std.testing.expectEqual(@as(usize, 0), client.lifecycle.recoveryTimerCount());
@@ -2703,11 +2703,11 @@ test "Tls13ClientEndpoint receive step retires idle route while reporting input"
         client_scid,
     );
     defer client.deinit();
-    client.transport.connection.last_packet_activity_millis = 10;
+    client.transport.connection.last_packet_activity_nanos = 10 * 1_000_000;
 
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .idle_timeout);
-    try std.testing.expectEqual(@as(i64, 20), deadline.deadlineMillis());
+    try std.testing.expectEqual(@as(i64, 20 * 1_000_000), deadline.deadline());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
     const malformed_short = [_]u8{ 0x40, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x00 };
@@ -2715,7 +2715,7 @@ test "Tls13ClientEndpoint receive step retires idle route while reporting input"
     var receive_out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     var due_out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const step = try client.receiveDatagramStepWithRoutePath(
-        deadline.deadlineMillis(),
+        deadline.deadline(),
         &scratch,
         &malformed_short,
         &receive_out,
@@ -2775,14 +2775,14 @@ test "Tls13ClientEndpoint closes with committed route output" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
     try std.testing.expect(close_datagram.path.eql(new_path));
     try std.testing.expect(close_datagram.datagram.len != 0);
-    try std.testing.expect(client.closeDeadlineMillis() != null);
+    try std.testing.expect(client.closeDeadline() != null);
 }
 
 test "Tls13ClientEndpoint route-bound controls fail before mutating when route is missing" {
@@ -2874,7 +2874,7 @@ test "Tls13ClientEndpoint drains route-bound stream controls without preflight m
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     const send_stream_id = try client.openStream();
@@ -2960,13 +2960,13 @@ test "Tls13ClientEndpoint drains close output with committed route and deadline"
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     var zero_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
     try std.testing.expectError(error.BufferTooSmall, client.closeWithRoutePathAndDrainDatagrams(0, 0, "done", 1, &zero_out));
     try std.testing.expectEqual(transport_types.ConnectionState.active, client.transport.connection.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), client.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), client.closeDeadline());
 
     var out: [2]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const closed = try client.closeWithRoutePathAndDrainDatagrams(0, 0, "done", 1, &out);
@@ -2979,7 +2979,7 @@ test "Tls13ClientEndpoint drains close output with committed route and deadline"
     }
     const close_deadline = closed.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expect(close_deadline == .close_timeout);
-    try std.testing.expect(client.closeDeadlineMillis() != null);
+    try std.testing.expect(client.closeDeadline() != null);
 }
 
 test "Tls13ClientEndpoint drains application close output with committed route" {
@@ -3022,13 +3022,13 @@ test "Tls13ClientEndpoint drains application close output with committed route" 
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
     _ = try client.updatePath(new_path);
 
     var zero_out: [0]Tls13ClientEndpoint.ApplicationDatagramPathResult = .{};
     try std.testing.expectError(error.BufferTooSmall, client.closeApplicationWithRoutePathAndDrainDatagrams(57, "app done", 1, &zero_out));
     try std.testing.expectEqual(transport_types.ConnectionState.active, client.transport.connection.connectionState());
-    try std.testing.expectEqual(@as(?i64, null), client.closeDeadlineMillis());
+    try std.testing.expectEqual(@as(?i64, null), client.closeDeadline());
 
     var out: [1]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const closed = try client.closeApplicationWithRoutePathAndDrainDatagrams(57, "app done", 1, &out);
@@ -3050,7 +3050,7 @@ test "Tls13ClientEndpoint drains application close output with committed route" 
     }
     const close_deadline = closed.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expect(close_deadline == .close_timeout);
-    try std.testing.expect(client.closeDeadlineMillis() != null);
+    try std.testing.expect(client.closeDeadline() != null);
 }
 
 test "Tls13ClientEndpoint retires its route when close deadline elapses" {
@@ -3089,14 +3089,14 @@ test "Tls13ClientEndpoint retires its route when close deadline elapses" {
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     const deadline = client.nextDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expect(deadline == .close_timeout);
-    try std.testing.expectEqual(close_deadline, deadline.deadlineMillis());
+    try std.testing.expectEqual(close_deadline, deadline.deadline());
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
     try std.testing.expect((try client.serviceDueDeadline(close_deadline - 1)) == null);
@@ -3144,11 +3144,11 @@ test "Tls13ClientEndpoint receive step retires close route while reporting input
         .connection_id = &peer_connection_id,
         .stateless_reset_token = reset_token,
     } });
-    try client.transport.connection.processDatagram(0, writer.getWritten());
+    try client.transport.connection.processDatagram(0 * 1_000_000, writer.getWritten());
 
     const close_datagram = (try client.closeWithRoutePath(0, 0, "done", 1)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
-    const close_deadline = client.closeDeadlineMillis() orelse return error.TestUnexpectedResult;
+    const close_deadline = client.closeDeadline() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), client.lifecycle.routeCount());
 
     const malformed_short = [_]u8{ 0x40, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x00 };

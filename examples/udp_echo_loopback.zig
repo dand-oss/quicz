@@ -181,7 +181,7 @@ pub fn main() !void {
     try require(server_echo_timer.connection_id == server_handle);
     try require(server_echo_timer.timer.space == .application);
     try require(server_echo_timer.timer.kind == .pto);
-    const server_echo_deadline = server_echo_timer.timer.deadline_millis;
+    const server_echo_deadline = server_echo_timer.timer.deadline_nanos;
 
     const server_pto_result = try server_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         server_handle,

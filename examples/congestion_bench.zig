@@ -3,7 +3,6 @@
 //! Usage:
 //!   zig build run-congestion-bench
 //!
-//! Compares NewReno, CUBIC, and BBR congestion window behaviour on a
 //! simulated loopback path with periodic packet loss.  For each algorithm
 //! the benchmark:
 //!
@@ -51,10 +50,9 @@ pub fn main() !void {
     const algos = [_]struct { name: []const u8, config: RecoveryConfig }{
         .{ .name = "NewReno", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .new_reno } },
         .{ .name = "CUBIC", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .cubic } },
-        .{ .name = "BBR", .config = .{ .max_datagram_size = @intCast(max_datagram_size), .initial_rtt_ns = initial_rtt_ns, .congestion_algorithm = .bbr } },
     };
 
-    var results: [3]AlgoResult = undefined;
+    var results: [2]AlgoResult = undefined;
 
     for (algos, 0..) |entry, idx| {
         results[idx] = runSimulation(entry.name, entry.config, stdout) catch |err| {

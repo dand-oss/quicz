@@ -73,14 +73,14 @@ pub const HybridSlowStart = struct {
     ///
     /// Parameters:
     /// - `congestion_window`: current cwnd in bytes
-    /// - `time_sent_millis`: send time of the ACKed packet
-    /// - `last_sent_time_millis`: send time of the most recently sent packet
+    /// - `time_sent_nanos`: send time of the ACKed packet
+    /// - `last_sent_time_nanos`: send time of the most recently sent packet
     /// - `rtt_ns`: measured RTT in nanoseconds
     pub fn onRttUpdate(
         self: *HybridSlowStart,
         congestion_window: f32,
-        time_sent_millis: i64,
-        last_sent_time_millis: i64,
+        time_sent_nanos: i64,
+        last_sent_time_nanos: i64,
         rtt_ns: u64,
     ) void {
         const ss_found = self.thresholdFound();
@@ -93,7 +93,7 @@ pub const HybridSlowStart = struct {
         // An RTT round ends when a packet sent after the round-start packet
         // is acknowledged.
         const round_over = if (self.rtt_round_end_time) |end_time|
-            time_sent_millis >= end_time
+            time_sent_nanos >= end_time
         else
             true;
 
@@ -101,7 +101,7 @@ pub const HybridSlowStart = struct {
             self.last_min_rtt_ns = self.cur_min_rtt_ns;
             self.cur_min_rtt_ns = null;
             self.sample_count = 0;
-            self.rtt_round_end_time = last_sent_time_millis;
+            self.rtt_round_end_time = last_sent_time_nanos;
         }
 
         if (self.sample_count < N_SAMPLING) {

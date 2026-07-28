@@ -66,7 +66,7 @@ fn receiveProtectedShortDatagram(
     connection: *quicz.Connection,
     socket: *std.Io.net.Socket,
     receive_buf: []u8,
-    now_millis: i64,
+    now_nanos: i64,
     keys: quicz.protection.Aes128PacketProtectionKeys,
 ) !ReceivedRoute {
     const received = try socket.receiveTimeout(io, receive_buf, receiveTimeout());
@@ -78,7 +78,7 @@ fn receiveProtectedShortDatagram(
             connection_id,
             connection,
             path,
-            now_millis,
+            now_nanos,
             keys,
             received.data,
         ),

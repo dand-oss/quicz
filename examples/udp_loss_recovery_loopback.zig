@@ -48,7 +48,7 @@ const PacketThresholdResult = struct {
 const TimeThresholdResult = struct {
     client_port: u16,
     server_port: u16,
-    deadline_millis: i64,
+    deadline_nanos: i64,
     remaining_before_deadline: usize,
     remaining_after_deadline: usize,
     bytes_after_deadline: usize,
@@ -154,12 +154,12 @@ fn sendClientPing(
     server_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
     server: *quicz.Connection,
-    now_millis: i64,
+    now_nanos: i64,
     receive_buf: []u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
 ) !usize {
     try client.sendPing();
-    const packet = (try client.pollProtectedShortDatagram(now_millis, &server_dcid, keys)) orelse return error.UnexpectedState;
+    const packet = (try client.pollProtectedShortDatagram(now_nanos, &server_dcid, keys)) orelse return error.UnexpectedState;
     defer allocator.free(packet);
 
     try client_socket.send(io, &server_socket.address, packet);
@@ -168,7 +168,7 @@ fn sendClientPing(
         51,
         server,
         received.path,
-        now_millis + 1,
+        now_nanos + 1,
         keys,
         received.data,
     );
@@ -184,7 +184,7 @@ fn sendServerAck(
     client_socket: *std.Io.net.Socket,
     client_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
-    now_millis: i64,
+    now_nanos: i64,
     server_packet_number: u64,
     ack: quicz.frame.AckFrame,
     receive_buf: []u8,
@@ -209,7 +209,7 @@ fn sendServerAck(
         41,
         client,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -325,7 +325,7 @@ fn runTimeThresholdPhase(allocator: std.mem.Allocator, io: std.Io) !TimeThreshol
     try require(timer.connection_id == client_connection_id);
     try require(timer.timer.space == .application);
     try require(timer.timer.kind == .loss_time);
-    const deadline = timer.timer.deadline_millis;
+    const deadline = timer.timer.deadline_nanos;
     try require(client.sentPacketCount(.application) == 1);
     try require(client.bytesInFlight(.application) == first_packet_len);
 
@@ -346,7 +346,7 @@ fn runTimeThresholdPhase(allocator: std.mem.Allocator, io: std.Io) !TimeThreshol
     return .{
         .client_port = client_local.port,
         .server_port = server_local.port,
-        .deadline_millis = deadline,
+        .deadline_nanos = deadline,
         .remaining_before_deadline = remaining_before_deadline,
         .remaining_after_deadline = client.sentPacketCount(.application),
         .bytes_after_deadline = client.bytesInFlight(.application),
@@ -373,7 +373,7 @@ pub fn main() !void {
         packet_threshold.ack_bytes,
         time_threshold.client_port,
         time_threshold.server_port,
-        time_threshold.deadline_millis,
+        time_threshold.deadline_nanos,
         time_threshold.remaining_before_deadline,
         time_threshold.remaining_after_deadline,
         time_threshold.bytes_after_deadline,

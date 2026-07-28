@@ -49,7 +49,7 @@ pub const EndpointLossDetectionTimers = struct {
         connection_id: u64,
         connection: anytype,
     ) Error!void {
-        try self.update(connection_id, connection.lossDetectionTimerDeadlineMillis());
+        try self.update(connection_id, connection.lossDetectionTimerDeadline());
     }
 
     /// Remove one connection timer from endpoint scheduling state.
@@ -64,7 +64,7 @@ pub const EndpointLossDetectionTimers = struct {
         if (self.entries.items.len == 0) return null;
         var earliest = self.entries.items[0];
         for (self.entries.items[1..]) |entry| {
-            if (entry.timer.deadline_millis < earliest.timer.deadline_millis) {
+            if (entry.timer.deadline_nanos < earliest.timer.deadline_nanos) {
                 earliest = entry;
             }
         }
@@ -88,9 +88,9 @@ pub const EndpointLossDetectionTimers = struct {
         self: *EndpointLossDetectionTimers,
         connection_id: u64,
         connection: anytype,
-        now_millis: i64,
+        now_nanos: i64,
     ) Error!?EndpointLossDetectionTimerDeadline {
-        const serviced = try connection.serviceLossDetectionTimer(now_millis);
+        const serviced = try connection.serviceLossDetectionTimer(now_nanos);
         try self.armFromConnection(connection_id, connection);
         const timer = serviced orelse return null;
         return .{

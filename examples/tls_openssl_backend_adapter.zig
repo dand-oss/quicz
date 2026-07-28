@@ -83,7 +83,7 @@ const AdapterPeerBackendConfirmation = struct {
 const AdapterApplicationSocketEcho = struct {
     request_bytes: usize,
     request_datagram_bytes: usize,
-    client_pto_deadline_millis: i64,
+    client_pto_deadline_nanos: i64,
     client_pto_datagram_bytes: usize,
     client_pto_route: u64,
     server_pto_ack_largest: u64,
@@ -1037,7 +1037,7 @@ fn verifyAdapterApplicationSocketEcho(
     const client_pto_result = try loop.client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagramWithInstalledKeys(
         adapter_client_handle,
         client,
-        client_stream_timer.timer.deadline_millis,
+        client_stream_timer.timer.deadline_nanos,
         &adapter_application_server_dcid,
     );
     const client_pto_serviced = client_pto_result.serviced orelse return error.UnexpectedState;
@@ -1055,7 +1055,7 @@ fn verifyAdapterApplicationSocketEcho(
         adapter_server_handle,
         server,
         pto_received.path,
-        client_stream_timer.timer.deadline_millis + 1,
+        client_stream_timer.timer.deadline_nanos + 1,
         pto_received.data,
     );
     try require(pto_route.connection_id == adapter_server_handle);
@@ -1131,7 +1131,7 @@ fn verifyAdapterApplicationSocketEcho(
         &adapter_application_server_dcid,
     )) orelse return error.UnexpectedState;
     defer loop.allocator.free(close_datagram);
-    const client_close_deadline = client.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const client_close_deadline = client.closeDeadline() orelse return error.UnexpectedState;
     try require(client_close_deadline > 60);
     try loop.client_socket.send(loop.currentIo(), &loop.server_socket.address, close_datagram);
 
@@ -1146,7 +1146,7 @@ fn verifyAdapterApplicationSocketEcho(
     try require(close_route.connection_id == adapter_server_handle);
     try require(std.mem.eql(u8, close_route.destination_connection_id.asSlice(), &adapter_application_server_dcid));
     try require(server.connectionState() == .draining);
-    const server_drain_deadline = server.closeDeadlineMillis() orelse return error.UnexpectedState;
+    const server_drain_deadline = server.closeDeadline() orelse return error.UnexpectedState;
     try require(server_drain_deadline > 61);
     const server_close_error_code = switch (server.peerClose() orelse return error.UnexpectedState) {
         .connection => |close| blk: {
@@ -1181,7 +1181,7 @@ fn verifyAdapterApplicationSocketEcho(
     return .{
         .request_bytes = request_len,
         .request_datagram_bytes = request_datagram.len,
-        .client_pto_deadline_millis = client_stream_timer.timer.deadline_millis,
+        .client_pto_deadline_nanos = client_stream_timer.timer.deadline_nanos,
         .client_pto_datagram_bytes = client_pto_probe.len,
         .client_pto_route = pto_route.connection_id,
         .server_pto_ack_largest = server_pto_ack_largest,
@@ -1661,7 +1661,7 @@ pub fn main() !void {
         .{
             c.quicz_openssl_tls_backend_keylog_callbacks(openssl_context),
             c.quicz_openssl_tls_backend_keylog_bytes(openssl_context),
-            adapter_application_socket.client_pto_deadline_millis,
+            adapter_application_socket.client_pto_deadline_nanos,
             adapter_application_socket.client_pto_datagram_bytes,
             adapter_application_socket.client_pto_route,
             adapter_application_socket.server_pto_ack_largest,

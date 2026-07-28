@@ -159,7 +159,7 @@ pub fn main() !void {
     const server_pto_result = try server_lifecycle.serviceRecoveryTimerAndPollProtectedHandshakeDatagramWithInstalledKeys(
         server_handle,
         &server,
-        server_handshake_timer.timer.deadline_millis,
+        server_handshake_timer.timer.deadline_nanos,
         &client_dcid,
         &server_dcid,
     );
@@ -178,7 +178,7 @@ pub fn main() !void {
         client_handle,
         &client,
         server_pto_received.path,
-        server_handshake_timer.timer.deadline_millis + 1,
+        server_handshake_timer.timer.deadline_nanos + 1,
         server_pto_received.data,
     );
     try require(client_pto_route.connection_id == client_handle);
@@ -190,7 +190,7 @@ pub fn main() !void {
     const client_ack = (try client_lifecycle.pollProtectedHandshakeDatagramWithInstalledKeys(
         client_handle,
         &client,
-        server_handshake_timer.timer.deadline_millis + 2,
+        server_handshake_timer.timer.deadline_nanos + 2,
         &server_dcid,
         &client_dcid,
     )) orelse return error.UnexpectedState;
@@ -203,7 +203,7 @@ pub fn main() !void {
         server_handle,
         &server,
         client_ack_received.path,
-        server_handshake_timer.timer.deadline_millis + 3,
+        server_handshake_timer.timer.deadline_nanos + 3,
         client_ack_received.data,
     );
     try require(server_ack_route.connection_id == server_handle);
@@ -211,12 +211,12 @@ pub fn main() !void {
     try require(server.sentPacketCount(.handshake) == 0);
     try require(server.bytesInFlight(.handshake) == 0);
 
-    const client_flight_millis = server_handshake_timer.timer.deadline_millis + 4;
+    const client_flight_nanos = server_handshake_timer.timer.deadline_nanos + 4;
     try client.sendCryptoInSpace(.handshake, "client handshake keys");
     const client_handshake = (try client_lifecycle.pollProtectedHandshakeDatagramWithInstalledKeys(
         client_handle,
         &client,
-        client_flight_millis,
+        client_flight_nanos,
         &server_dcid,
         &client_dcid,
     )) orelse return error.UnexpectedState;
@@ -229,7 +229,7 @@ pub fn main() !void {
         server_handle,
         &server,
         client_handshake_received.path,
-        client_flight_millis + 1,
+        client_flight_nanos + 1,
         client_handshake_received.data,
     );
     try require(server_handshake_route.connection_id == server_handle);
@@ -244,7 +244,7 @@ pub fn main() !void {
     const server_ack = (try server_lifecycle.pollProtectedHandshakeDatagramWithInstalledKeys(
         server_handle,
         &server,
-        client_flight_millis + 2,
+        client_flight_nanos + 2,
         &client_dcid,
         &server_dcid,
     )) orelse return error.UnexpectedState;
@@ -257,7 +257,7 @@ pub fn main() !void {
         client_handle,
         &client,
         server_ack_received.path,
-        client_flight_millis + 3,
+        client_flight_nanos + 3,
         server_ack_received.data,
     );
     try require(client_ack_route.connection_id == client_handle);
@@ -270,7 +270,7 @@ pub fn main() !void {
         client_local.port,
         server_local.port,
         server_handshake.len,
-        server_handshake_timer.timer.deadline_millis,
+        server_handshake_timer.timer.deadline_nanos,
         server_pto_probe.len,
         client_pto_route.connection_id,
         client_ack.len,

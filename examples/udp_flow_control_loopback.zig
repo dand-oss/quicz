@@ -72,12 +72,12 @@ fn sendClientPacket(
     server: *quicz.Connection,
     client_socket: *std.Io.net.Socket,
     server_socket: *std.Io.net.Socket,
-    now_millis: i64,
+    now_nanos: i64,
     server_dcid: []const u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
     receive_buf: []u8,
 ) !usize {
-    const packet = (try client.pollProtectedShortDatagram(now_millis, server_dcid, keys)) orelse return error.UnexpectedState;
+    const packet = (try client.pollProtectedShortDatagram(now_nanos, server_dcid, keys)) orelse return error.UnexpectedState;
     defer allocator.free(packet);
     try client_socket.send(io, &server_socket.address, packet);
 
@@ -86,7 +86,7 @@ fn sendClientPacket(
         51,
         server,
         received.path,
-        now_millis + 1,
+        now_nanos + 1,
         keys,
         received.data,
     );
@@ -103,12 +103,12 @@ fn sendServerPacket(
     client: *quicz.Connection,
     server_socket: *std.Io.net.Socket,
     client_socket: *std.Io.net.Socket,
-    now_millis: i64,
+    now_nanos: i64,
     client_dcid: []const u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
     receive_buf: []u8,
 ) !usize {
-    const packet = (try server.pollProtectedShortDatagram(now_millis, client_dcid, keys)) orelse return error.UnexpectedState;
+    const packet = (try server.pollProtectedShortDatagram(now_nanos, client_dcid, keys)) orelse return error.UnexpectedState;
     defer allocator.free(packet);
     try server_socket.send(io, &client_socket.address, packet);
 
@@ -117,7 +117,7 @@ fn sendServerPacket(
         41,
         client,
         received.path,
-        now_millis + 1,
+        now_nanos + 1,
         keys,
         received.data,
     );
@@ -274,7 +274,7 @@ pub fn main() !void {
     const resumed_pto_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         41,
         &client,
-        resumed_timer.timer.deadline_millis,
+        resumed_timer.timer.deadline_nanos,
         &server_dcid,
         secrets.client,
     );
@@ -292,7 +292,7 @@ pub fn main() !void {
         51,
         &server,
         resumed_pto_received.path,
-        resumed_timer.timer.deadline_millis + 1,
+        resumed_timer.timer.deadline_nanos + 1,
         secrets.client,
         resumed_pto_received.data,
     );
@@ -311,7 +311,7 @@ pub fn main() !void {
         &client,
         &server_socket,
         &client_socket,
-        resumed_timer.timer.deadline_millis + 2,
+        resumed_timer.timer.deadline_nanos + 2,
         &client_dcid,
         secrets.server,
         &client_receive_buf,
@@ -327,7 +327,7 @@ pub fn main() !void {
         max_data_packet,
         max_stream_packet,
         resumed_packet,
-        resumed_timer.timer.deadline_millis,
+        resumed_timer.timer.deadline_nanos,
         resumed_pto_probe.len,
         resumed_ack_largest,
         resumed_pto_ack_largest,

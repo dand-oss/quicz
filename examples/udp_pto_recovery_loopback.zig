@@ -63,7 +63,7 @@ fn sendClientPacket(
     server_lifecycle: *quicz.EndpointConnectionLifecycle,
     server: *quicz.Connection,
     packet: []const u8,
-    now_millis: i64,
+    now_nanos: i64,
     server_dcid: []const u8,
     receive_buf: []u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
@@ -75,7 +75,7 @@ fn sendClientPacket(
         51,
         server,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -90,7 +90,7 @@ fn sendServerPacket(
     client_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
     packet: []const u8,
-    now_millis: i64,
+    now_nanos: i64,
     client_dcid: []const u8,
     receive_buf: []u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
@@ -102,7 +102,7 @@ fn sendServerPacket(
         41,
         client,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -117,7 +117,7 @@ fn sendClientLongPacket(
     server_lifecycle: *quicz.EndpointConnectionLifecycle,
     server: *quicz.Connection,
     packet: []const u8,
-    now_millis: i64,
+    now_nanos: i64,
     server_connection_id: u64,
     server_dcid: []const u8,
     receive_buf: []u8,
@@ -130,7 +130,7 @@ fn sendClientLongPacket(
         server_connection_id,
         server,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -146,7 +146,7 @@ fn sendServerLongPacket(
     client_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
     packet: []const u8,
-    now_millis: i64,
+    now_nanos: i64,
     client_connection_id: u64,
     client_dcid: []const u8,
     receive_buf: []u8,
@@ -159,7 +159,7 @@ fn sendServerLongPacket(
         client_connection_id,
         client,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -427,7 +427,7 @@ pub fn main() !void {
     try require(long_pto_timer.connection_id == long_client_connection_id);
     try require(long_pto_timer.timer.space == .handshake);
     try require(long_pto_timer.timer.kind == .pto);
-    const long_pto_deadline = long_pto_timer.timer.deadline_millis;
+    const long_pto_deadline = long_pto_timer.timer.deadline_nanos;
     const long_pto_result = try long_client_lifecycle.serviceRecoveryTimerAndPollProtectedLongDatagram(
         long_client_connection_id,
         &long_client,
@@ -562,7 +562,7 @@ pub fn main() !void {
     try require(zero_rtt_timer.connection_id == zero_rtt_client_connection_id);
     try require(zero_rtt_timer.timer.space == .application);
     try require(zero_rtt_timer.timer.kind == .pto);
-    const zero_rtt_pto_deadline = zero_rtt_timer.timer.deadline_millis;
+    const zero_rtt_pto_deadline = zero_rtt_timer.timer.deadline_nanos;
     const zero_rtt_probe_result = try zero_rtt_client_lifecycle.serviceRecoveryTimerAndPollProtectedZeroRttDatagramWithInstalledKeys(
         zero_rtt_client_connection_id,
         &zero_rtt_client,
@@ -647,7 +647,7 @@ pub fn main() !void {
     try require(ping_timer.connection_id == client_connection_id);
     try require(ping_timer.timer.space == .application);
     try require(ping_timer.timer.kind == .pto);
-    const ping_deadline = ping_timer.timer.deadline_millis;
+    const ping_deadline = ping_timer.timer.deadline_nanos;
     try require((try client_lifecycle.serviceRecoveryTimer(client_connection_id, &client, ping_deadline - 1)) == null);
     try require(client.sentPacketCount(.application) == 1);
     try require(client_lifecycle.recoveryTimerCount() == 1);
@@ -697,7 +697,7 @@ pub fn main() !void {
     );
     try require(client.sentPacketCount(.application) == 0);
     try require(client.bytesInFlight(.application) == 0);
-    try require(client.ptoDeadlineMillis(.application) == null);
+    try require(client.ptoDeadline(.application) == null);
     try client_lifecycle.armRecoveryTimerFromConnection(client_connection_id, &client);
     try require(client_lifecycle.recoveryTimerCount() == 0);
 
@@ -724,7 +724,7 @@ pub fn main() !void {
     try require(stream_timer.connection_id == client_connection_id);
     try require(stream_timer.timer.space == .application);
     try require(stream_timer.timer.kind == .pto);
-    const stream_deadline = stream_timer.timer.deadline_millis;
+    const stream_deadline = stream_timer.timer.deadline_nanos;
     const stream_probe_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         client_connection_id,
         &client,
@@ -774,7 +774,7 @@ pub fn main() !void {
     );
     try require(client.sentPacketCount(.application) == 0);
     try require(client.bytesInFlight(.application) == 0);
-    try require(client.ptoDeadlineMillis(.application) == null);
+    try require(client.ptoDeadline(.application) == null);
     try client_lifecycle.armRecoveryTimerFromConnection(client_connection_id, &client);
     try require(client_lifecycle.recoveryTimerCount() == 0);
 
@@ -804,7 +804,7 @@ pub fn main() !void {
     try require(retransmit_timer.connection_id == client_connection_id);
     try require(retransmit_timer.timer.space == .application);
     try require(retransmit_timer.timer.kind == .pto);
-    const retransmit_deadline = retransmit_timer.timer.deadline_millis;
+    const retransmit_deadline = retransmit_timer.timer.deadline_nanos;
     const retransmit_probe_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         client_connection_id,
         &client,
@@ -860,7 +860,7 @@ pub fn main() !void {
     );
     try require(client.sentPacketCount(.application) == 0);
     try require(client.bytesInFlight(.application) == 0);
-    try require(client.ptoDeadlineMillis(.application) == null);
+    try require(client.ptoDeadline(.application) == null);
     try client_lifecycle.armRecoveryTimerFromConnection(client_connection_id, &client);
     try require(client_lifecycle.recoveryTimerCount() == 0);
 
@@ -888,7 +888,7 @@ pub fn main() !void {
     try require(crypto_timer.connection_id == client_connection_id);
     try require(crypto_timer.timer.space == .application);
     try require(crypto_timer.timer.kind == .pto);
-    const crypto_deadline = crypto_timer.timer.deadline_millis;
+    const crypto_deadline = crypto_timer.timer.deadline_nanos;
     const crypto_probe_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedShortDatagram(
         client_connection_id,
         &client,
@@ -942,7 +942,7 @@ pub fn main() !void {
     );
     try require(client.sentPacketCount(.application) == 0);
     try require(client.bytesInFlight(.application) == 0);
-    try require(client.ptoDeadlineMillis(.application) == null);
+    try require(client.ptoDeadline(.application) == null);
     try client_lifecycle.armRecoveryTimerFromConnection(client_connection_id, &client);
     try require(client_lifecycle.recoveryTimerCount() == 0);
 

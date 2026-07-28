@@ -48,8 +48,8 @@ pub const Context = struct {
     kind: Kind,
     /// QUIC version that originally caused this token to be issued.
     originating_version: packet.Version = .v1,
-    issued_millis: i64,
-    lifetime_millis: u64,
+    issued_nanos: i64,
+    lifetime_nanos: u64,
     peer_address: []const u8,
     nonce: Nonce,
 };
@@ -58,8 +58,8 @@ pub const Context = struct {
 pub const Validation = struct {
     kind: Kind,
     originating_version: packet.Version,
-    issued_millis: i64,
-    lifetime_millis: u64,
+    issued_nanos: i64,
+    lifetime_nanos: u64,
     nonce: Nonce,
 };
 
@@ -200,9 +200,9 @@ pub fn encode(allocator: std.mem.Allocator, secret: Secret, context: Context) Er
     offset += 1;
     std.mem.writeInt(u32, encoded[offset..][0..version_len], @intFromEnum(context.originating_version), .big);
     offset += version_len;
-    std.mem.writeInt(u64, encoded[offset..][0..8], @intCast(context.issued_millis), .big);
+    std.mem.writeInt(u64, encoded[offset..][0..8], @intCast(context.issued_nanos), .big);
     offset += 8;
-    std.mem.writeInt(u64, encoded[offset..][0..8], context.lifetime_millis, .big);
+    std.mem.writeInt(u64, encoded[offset..][0..8], context.lifetime_nanos, .big);
     offset += 8;
     @memcpy(encoded[offset..][0..nonce_len], &context.nonce);
     offset += nonce_len;
@@ -217,11 +217,11 @@ pub fn encode(allocator: std.mem.Allocator, secret: Secret, context: Context) Er
 pub fn validate(
     secret: Secret,
     expected_kind: Kind,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
 ) Error!Validation {
-    return validateForVersion(secret, expected_kind, .v1, now_millis, peer_address, encoded);
+    return validateForVersion(secret, expected_kind, .v1, now_nanos, peer_address, encoded);
 }
 
 /// Authenticate and validate a token for an expected originating QUIC version.
@@ -229,11 +229,11 @@ pub fn validateForVersion(
     secret: Secret,
     expected_kind: Kind,
     expected_originating_version: packet.Version,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
 ) Error!Validation {
-    if (now_millis < 0 or peer_address.len == 0 or peer_address.len > std.math.maxInt(u16)) {
+    if (now_nanos < 0 or peer_address.len == 0 or peer_address.len > std.math.maxInt(u16)) {
         return error.InvalidToken;
     }
     try validateTokenVersion(expected_originating_version);
@@ -251,11 +251,11 @@ pub fn validateForVersion(
 
     const issued_u64 = std.mem.readInt(u64, encoded[offset..][0..8], .big);
     if (issued_u64 > @as(u64, @intCast(std.math.maxInt(i64)))) return error.InvalidToken;
-    const issued_millis: i64 = @intCast(issued_u64);
+    const issued_nanos: i64 = @intCast(issued_u64);
     offset += 8;
 
-    const lifetime_millis = std.mem.readInt(u64, encoded[offset..][0..8], .big);
-    if (lifetime_millis == 0) return error.InvalidToken;
+    const lifetime_nanos = std.mem.readInt(u64, encoded[offset..][0..8], .big);
+    if (lifetime_nanos == 0) return error.InvalidToken;
     offset += 8;
 
     const nonce = encoded[offset..][0..nonce_len].*;
@@ -268,15 +268,15 @@ pub fn validateForVersion(
         return error.InvalidToken;
     }
 
-    if (now_millis < issued_millis) return error.TokenNotYetValid;
-    const expires_at = expiresAtMillis(issued_millis, lifetime_millis) orelse return error.InvalidToken;
-    if (now_millis > expires_at) return error.TokenExpired;
+    if (now_nanos < issued_nanos) return error.TokenNotYetValid;
+    const expires_at = expiresAtMillis(issued_nanos, lifetime_nanos) orelse return error.InvalidToken;
+    if (now_nanos > expires_at) return error.TokenExpired;
 
     return .{
         .kind = kind,
         .originating_version = originating_version,
-        .issued_millis = issued_millis,
-        .lifetime_millis = lifetime_millis,
+        .issued_nanos = issued_nanos,
+        .lifetime_nanos = lifetime_nanos,
         .nonce = nonce,
     };
 }
@@ -291,11 +291,11 @@ pub fn validateForVersion(
 pub fn validateAnySecret(
     secrets: []const Secret,
     expected_kind: Kind,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
 ) Error!Validation {
-    return validateAnySecretForVersion(secrets, expected_kind, .v1, now_millis, peer_address, encoded);
+    return validateAnySecretForVersion(secrets, expected_kind, .v1, now_nanos, peer_address, encoded);
 }
 
 /// Authenticate and validate a token for a QUIC version against rotated secrets.
@@ -303,7 +303,7 @@ pub fn validateAnySecretForVersion(
     secrets: []const Secret,
     expected_kind: Kind,
     expected_originating_version: packet.Version,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
 ) Error!Validation {
@@ -311,7 +311,7 @@ pub fn validateAnySecretForVersion(
 
     var authenticated_error: ?Error = null;
     for (secrets) |secret| {
-        if (validateForVersion(secret, expected_kind, expected_originating_version, now_millis, peer_address, encoded)) |validation| {
+        if (validateForVersion(secret, expected_kind, expected_originating_version, now_nanos, peer_address, encoded)) |validation| {
             return validation;
         } else |err| switch (err) {
             error.InvalidToken => {},
@@ -333,12 +333,12 @@ pub fn validateAnySecretForVersion(
 pub fn validateAnySecretAndRemember(
     secrets: []const Secret,
     expected_kind: Kind,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
     replay_filter: *ReplayFilter,
 ) Error!Validation {
-    return validateAnySecretAndRememberForVersion(secrets, expected_kind, .v1, now_millis, peer_address, encoded, replay_filter);
+    return validateAnySecretAndRememberForVersion(secrets, expected_kind, .v1, now_nanos, peer_address, encoded, replay_filter);
 }
 
 /// Validate a version-bound token against rotated secrets and remember it.
@@ -346,12 +346,12 @@ pub fn validateAnySecretAndRememberForVersion(
     secrets: []const Secret,
     expected_kind: Kind,
     expected_originating_version: packet.Version,
-    now_millis: i64,
+    now_nanos: i64,
     peer_address: []const u8,
     encoded: []const u8,
     replay_filter: *ReplayFilter,
 ) Error!Validation {
-    const validation = try validateAnySecretForVersion(secrets, expected_kind, expected_originating_version, now_millis, peer_address, encoded);
+    const validation = try validateAnySecretForVersion(secrets, expected_kind, expected_originating_version, now_nanos, peer_address, encoded);
     try replay_filter.rememberValidated(encoded);
     return validation;
 }
@@ -373,17 +373,17 @@ fn validateEnvelope(encoded: []const u8) Error!void {
     if (issued_u64 > @as(u64, @intCast(std.math.maxInt(i64)))) return error.InvalidToken;
 
     const lifetime_offset = issued_offset + 8;
-    const lifetime_millis = std.mem.readInt(u64, encoded[lifetime_offset..][0..8], .big);
-    if (lifetime_millis == 0) return error.InvalidToken;
+    const lifetime_nanos = std.mem.readInt(u64, encoded[lifetime_offset..][0..8], .big);
+    if (lifetime_nanos == 0) return error.InvalidToken;
 }
 
 fn validateContext(context: Context) Error!void {
-    if (context.issued_millis < 0 or context.lifetime_millis == 0) return error.InvalidToken;
+    if (context.issued_nanos < 0 or context.lifetime_nanos == 0) return error.InvalidToken;
     try validateTokenVersion(context.originating_version);
     if (context.peer_address.len == 0 or context.peer_address.len > std.math.maxInt(u16)) {
         return error.InvalidToken;
     }
-    _ = expiresAtMillis(context.issued_millis, context.lifetime_millis) orelse return error.InvalidToken;
+    _ = expiresAtMillis(context.issued_nanos, context.lifetime_nanos) orelse return error.InvalidToken;
 }
 
 fn validateTokenVersion(version: packet.Version) Error!void {
@@ -391,11 +391,11 @@ fn validateTokenVersion(version: packet.Version) Error!void {
     if (packet.isReservedVersion(version)) return error.InvalidToken;
 }
 
-fn expiresAtMillis(issued_millis: i64, lifetime_millis: u64) ?i64 {
-    if (issued_millis < 0) return null;
-    const max_lifetime: u64 = @intCast(std.math.maxInt(i64) - issued_millis);
-    if (lifetime_millis > max_lifetime) return null;
-    return issued_millis + @as(i64, @intCast(lifetime_millis));
+fn expiresAtMillis(issued_nanos: i64, lifetime_nanos: u64) ?i64 {
+    if (issued_nanos < 0) return null;
+    const max_lifetime: u64 = @intCast(std.math.maxInt(i64) - issued_nanos);
+    if (lifetime_nanos > max_lifetime) return null;
+    return issued_nanos + @as(i64, @intCast(lifetime_nanos));
 }
 
 fn tokenMac(secret: Secret, body: []const u8, peer_address: []const u8) [mac_len]u8 {
@@ -419,8 +419,8 @@ test "address validation token validates kind, lifetime, and address binding" {
 
     const encoded = try encode(std.testing.allocator, secret, .{
         .kind = .retry,
-        .issued_millis = 1_000,
-        .lifetime_millis = 5_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 5_000,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -430,8 +430,8 @@ test "address validation token validates kind, lifetime, and address binding" {
     const validation = try validate(secret, .retry, 1_100, peer_address, encoded);
     try std.testing.expectEqual(Kind.retry, validation.kind);
     try std.testing.expectEqual(packet.Version.v1, validation.originating_version);
-    try std.testing.expectEqual(@as(i64, 1_000), validation.issued_millis);
-    try std.testing.expectEqual(@as(u64, 5_000), validation.lifetime_millis);
+    try std.testing.expectEqual(@as(i64, 1_000), validation.issued_nanos);
+    try std.testing.expectEqual(@as(u64, 5_000), validation.lifetime_nanos);
     try std.testing.expectEqualSlices(u8, &nonce, &validation.nonce);
 
     try std.testing.expectError(error.InvalidToken, validate(secret, .new_token, 1_100, peer_address, encoded));
@@ -448,8 +448,8 @@ test "address validation token binds originating QUIC version" {
     const encoded = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
         .originating_version = .v2,
-        .issued_millis = 1_000,
-        .lifetime_millis = 5_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 5_000,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -479,16 +479,16 @@ test "address validation token binds originating QUIC version" {
     try std.testing.expectError(error.InvalidToken, encode(std.testing.allocator, secret, .{
         .kind = .new_token,
         .originating_version = @enumFromInt(0),
-        .issued_millis = 1_000,
-        .lifetime_millis = 5_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 5_000,
         .peer_address = peer_address,
         .nonce = nonce,
     }));
     try std.testing.expectError(error.InvalidToken, encode(std.testing.allocator, secret, .{
         .kind = .new_token,
         .originating_version = @enumFromInt(0x0a0a0a0a),
-        .issued_millis = 1_000,
-        .lifetime_millis = 5_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 5_000,
         .peer_address = peer_address,
         .nonce = nonce,
     }));
@@ -502,8 +502,8 @@ test "address validation token validates against rotated secrets" {
 
     const encoded = try encode(std.testing.allocator, old_secret, .{
         .kind = .new_token,
-        .issued_millis = 1_000,
-        .lifetime_millis = 5_000,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 5_000,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -512,7 +512,7 @@ test "address validation token validates against rotated secrets" {
     const rotated = [_]Secret{ current_secret, old_secret };
     const validation = try validateAnySecret(&rotated, .new_token, 1_100, peer_address, encoded);
     try std.testing.expectEqual(Kind.new_token, validation.kind);
-    try std.testing.expectEqual(@as(i64, 1_000), validation.issued_millis);
+    try std.testing.expectEqual(@as(i64, 1_000), validation.issued_nanos);
 
     const current_only = [_]Secret{current_secret};
     try std.testing.expectError(error.InvalidToken, validateAnySecret(&current_only, .new_token, 1_100, peer_address, encoded));
@@ -530,8 +530,8 @@ test "address validation token validates and records replay fingerprints" {
 
     const encoded = try encode(std.testing.allocator, secret, .{
         .kind = .retry,
-        .issued_millis = 200,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 200,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -553,8 +553,8 @@ test "address validation token rejects tampering and invalid inputs" {
 
     const encoded = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 10,
-        .lifetime_millis = 90,
+        .issued_nanos = 10,
+        .lifetime_nanos = 90,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -567,22 +567,22 @@ test "address validation token rejects tampering and invalid inputs" {
 
     try std.testing.expectError(error.InvalidToken, encode(std.testing.allocator, secret, .{
         .kind = .retry,
-        .issued_millis = -1,
-        .lifetime_millis = 10,
+        .issued_nanos = -1,
+        .lifetime_nanos = 10,
         .peer_address = peer_address,
         .nonce = nonce,
     }));
     try std.testing.expectError(error.InvalidToken, encode(std.testing.allocator, secret, .{
         .kind = .retry,
-        .issued_millis = 0,
-        .lifetime_millis = 0,
+        .issued_nanos = 0,
+        .lifetime_nanos = 0,
         .peer_address = peer_address,
         .nonce = nonce,
     }));
     try std.testing.expectError(error.InvalidToken, encode(std.testing.allocator, secret, .{
         .kind = .retry,
-        .issued_millis = 0,
-        .lifetime_millis = 10,
+        .issued_nanos = 0,
+        .lifetime_nanos = 10,
         .peer_address = "",
         .nonce = nonce,
     }));
@@ -595,8 +595,8 @@ test "address validation token reports allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, encode(failing_allocator.allocator(), secret, .{
         .kind = .retry,
-        .issued_millis = 0,
-        .lifetime_millis = 10,
+        .issued_nanos = 0,
+        .lifetime_nanos = 10,
         .peer_address = "192.0.2.10:4433",
         .nonce = nonce,
     }));
@@ -611,8 +611,8 @@ test "address validation replay filter rejects duplicate token fingerprints" {
 
     const encoded = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 100,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 100,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce,
     });
@@ -644,24 +644,24 @@ test "address validation replay filter evicts oldest fingerprint at capacity" {
 
     const token_a = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 1,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 1,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_a,
     });
     defer std.testing.allocator.free(token_a);
     const token_b = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 2,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 2,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_b,
     });
     defer std.testing.allocator.free(token_b);
     const token_c = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 3,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 3,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_c,
     });
@@ -690,16 +690,16 @@ test "address validation replay filter exports and restores fingerprint snapshot
 
     const token_a = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 1,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 1,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_a,
     });
     defer std.testing.allocator.free(token_a);
     const token_b = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 2,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 2,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_b,
     });
@@ -734,24 +734,24 @@ test "address validation replay filter restores newest unique snapshot fingerpri
 
     const token_a = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 1,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 1,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_a,
     });
     defer std.testing.allocator.free(token_a);
     const token_b = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 2,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 2,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_b,
     });
     defer std.testing.allocator.free(token_b);
     const token_c = try encode(std.testing.allocator, secret, .{
         .kind = .new_token,
-        .issued_millis = 3,
-        .lifetime_millis = 1_000,
+        .issued_nanos = 3,
+        .lifetime_nanos = 1_000,
         .peer_address = peer_address,
         .nonce = nonce_c,
     });

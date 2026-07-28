@@ -45,7 +45,7 @@ fn serverThread(ctx: *ServerContext) void {
                 have_client_addr = true;
             }
             _ = ctx.server.processProtectedShortDatagramWithInstalledKeys(
-                @intCast(nanoTime() / 1_000_000),
+                @intCast(nanoTime()),
                 client_dcid.len,
                 received.data,
             ) catch {};
@@ -65,7 +65,7 @@ fn serverThread(ctx: *ServerContext) void {
         if (have_client_addr) {
             while (true) {
                 const ack_dg = ctx.server.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime() / 1_000_000),
+                    @intCast(nanoTime()),
                     &client_dcid,
                 ) catch break orelse break;
                 defer ctx.server.allocator.free(ack_dg);
@@ -156,7 +156,7 @@ pub fn main() !void {
         // Send datagrams
         while (true) {
             const dg = client.pollProtectedShortDatagramWithInstalledKeys(
-                @intCast(nanoTime() / 1_000_000),
+                @intCast(nanoTime()),
                 &server_dcid,
             ) catch break orelse break;
             defer allocator.free(dg);
@@ -168,7 +168,7 @@ pub fn main() !void {
         while (true) {
             const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(
-                @intCast(nanoTime() / 1_000_000),
+                @intCast(nanoTime()),
                 server_dcid.len,
                 ack.data,
             ) catch {};
@@ -180,7 +180,7 @@ pub fn main() !void {
     while (bytes_received.load(.monotonic) < transfer_size and wait < 10_000_000) : (wait += 1) {
         while (true) {
             const dg = client.pollProtectedShortDatagramWithInstalledKeys(
-                @intCast(nanoTime() / 1_000_000),
+                @intCast(nanoTime()),
                 &server_dcid,
             ) catch break orelse break;
             defer allocator.free(dg);
@@ -190,7 +190,7 @@ pub fn main() !void {
         while (true) {
             const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(
-                @intCast(nanoTime() / 1_000_000),
+                @intCast(nanoTime()),
                 server_dcid.len,
                 ack.data,
             ) catch {};
@@ -235,24 +235,24 @@ pub fn main() !void {
         for (0..echo_iters) |iter| {
             const t0 = nanoTime();
             try client.sendOnStream(echo_stream, &echo_payload, false);
-            if (try client.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid)) |dg| {
+            if (try client.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_dcid)) |dg| {
                 defer allocator.free(dg);
                 echo_pn += 1;
                 try client_socket.send(io, &server_addr, dg);
             }
             // Server receives + echoes (inline, same thread for latency accuracy)
             const srv_r = server_socket.receiveTimeout(io, &echo_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(5) } }) catch continue;
-            _ = server.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, srv_r.data) catch continue;
+            _ = server.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, srv_r.data) catch continue;
             _ = server.recvOnStream(echo_stream, &echo_read) catch {};
             try server.sendOnStream(echo_stream, &echo_payload, false);
-            if (try server.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid)) |dg| {
+            if (try server.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &client_dcid)) |dg| {
                 defer allocator.free(dg);
                 echo_pn += 1;
                 try server_socket.send(io, &client_socket.address, dg);
             }
             // Client receives echo
             const cli_r = client_socket.receiveTimeout(io, &echo_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(5) } }) catch continue;
-            _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, cli_r.data) catch {};
+            _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, cli_r.data) catch {};
             _ = client.recvOnStream(echo_stream, &echo_read) catch {};
             latencies[iter] = nanoTime() - t0;
         }
@@ -322,7 +322,7 @@ pub fn main() !void {
                     while (true) {
                         const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                         if (!have) { c.peer = r.from; have = true; }
-                        _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, r.data) catch {};
+                        _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                         got = true;
                     }
                     if (!got) continue;
@@ -334,7 +334,7 @@ pub fn main() !void {
                         }
                     }
                     if (have) while (true) {
-                        const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid) catch break orelse break;
+                        const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &client_dcid) catch break orelse break;
                         defer c.srv.allocator.free(a);
                         c.sock.send(c.io_ref, &c.peer, a) catch break;
                     };
@@ -364,27 +364,27 @@ pub fn main() !void {
                 }
             }
             while (true) {
-                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_dcid) catch break orelse break;
                 defer allocator.free(dg);
                 ms_pn += 1;
                 ms_client_sock.send(io, &ms_addr, dg) catch break;
             }
             while (true) {
                 const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
-                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
             }
         }
         var ms_w: usize = 0;
         while (ms_recv_count.load(.monotonic) < ms_size and ms_w < 5_000_000) : (ms_w += 1) {
             while (true) {
-                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                const dg = ms_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_dcid) catch break orelse break;
                 defer allocator.free(dg);
                 ms_pn += 1;
                 ms_client_sock.send(io, &ms_addr, dg) catch break;
             }
             while (true) {
                 const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
-                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
             }
         }
         const ms_el = nanoTime() - ms_t0;
@@ -473,7 +473,7 @@ pub fn main() !void {
                             // Simulate packet loss: drop every Nth packet
                             c.drop_counter.* += 1;
                             if (c.drop_counter.* % (100 / c.drop_pct) == 0) continue; // drop
-                            _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), client_dcid.len, r.data) catch {};
+                            _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                             got = true;
                         }
                         if (!got) continue;
@@ -483,7 +483,7 @@ pub fn main() !void {
                             _ = c.cnt.fetchAdd(n, .monotonic);
                         }
                         if (have) while (true) {
-                            const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &client_dcid) catch break orelse break;
+                            const a = c.srv.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &client_dcid) catch break orelse break;
                             defer c.srv.allocator.free(a);
                             c.sock.send(c.io_r, &c.peer, a) catch break;
                         };
@@ -509,31 +509,31 @@ pub fn main() !void {
                     loss_queued += ch;
                 }
                 while (true) {
-                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_dcid) catch break orelse break;
                     defer allocator.free(dg);
                     loss_pn += 1;
                     loss_cli_sock.send(io, &loss_addr, dg) catch break;
                 }
                 while (true) {
                     const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
-                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
                 }
                 // Service loss detection timer (PTO retransmission for undetected losses)
-                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime() / 1_000_000)) catch {};
+                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime())) catch {};
             }
             var loss_w: usize = 0;
             while (loss_recv.load(.monotonic) < loss_transfer and loss_w < 5_000_000) : (loss_w += 1) {
                 while (true) {
-                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), &server_dcid) catch break orelse break;
+                    const dg = loss_cli.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_dcid) catch break orelse break;
                     defer allocator.free(dg);
                     loss_pn += 1;
                     loss_cli_sock.send(io, &loss_addr, dg) catch break;
                 }
                 while (true) {
                     const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
-                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime() / 1_000_000), server_dcid.len, a.data) catch {};
+                    _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
                 }
-                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime() / 1_000_000)) catch {};
+                _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime())) catch {};
             }
             const loss_el = nanoTime() - loss_t0;
             loss_done.store(true, .release);

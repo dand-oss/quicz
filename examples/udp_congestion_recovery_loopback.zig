@@ -164,12 +164,12 @@ fn sendClientPing(
     server_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
     server: *quicz.Connection,
-    now_millis: i64,
+    now_nanos: i64,
     receive_buf: []u8,
     keys: quicz.protection.Aes128PacketProtectionKeys,
 ) !usize {
     try client.sendPing();
-    const packet = (try client.pollProtectedShortDatagram(now_millis, &server_dcid, keys)) orelse return error.UnexpectedState;
+    const packet = (try client.pollProtectedShortDatagram(now_nanos, &server_dcid, keys)) orelse return error.UnexpectedState;
     defer allocator.free(packet);
 
     try client_socket.send(io, &server_socket.address, packet);
@@ -178,7 +178,7 @@ fn sendClientPing(
         51,
         server,
         received.path,
-        now_millis + 1,
+        now_nanos + 1,
         keys,
         received.data,
     );
@@ -194,7 +194,7 @@ fn sendServerAck(
     client_socket: *std.Io.net.Socket,
     client_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
-    now_millis: i64,
+    now_nanos: i64,
     server_packet_number: u64,
     ack: quicz.frame.AckFrame,
     receive_buf: []u8,
@@ -219,7 +219,7 @@ fn sendServerAck(
         41,
         client,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -235,7 +235,7 @@ fn sendServerAckEcn(
     client_socket: *std.Io.net.Socket,
     client_lifecycle: *quicz.EndpointConnectionLifecycle,
     client: *quicz.Connection,
-    now_millis: i64,
+    now_nanos: i64,
     server_packet_number: u64,
     ack_ecn: quicz.frame.AckEcnFrame,
     receive_buf: []u8,
@@ -260,7 +260,7 @@ fn sendServerAckEcn(
         41,
         client,
         received.path,
-        now_millis,
+        now_nanos,
         keys,
         received.data,
     );
@@ -308,8 +308,8 @@ fn runRecoveryPeriodPhase(allocator: std.mem.Allocator, io: std.Io) !RecoveryPer
 
     var packet_number: u64 = 0;
     while (packet_number < 8) : (packet_number += 1) {
-        const now_millis = @as(i64, @intCast(packet_number + 1)) * 10;
-        _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, now_millis, &server_receive_buf, secrets.client);
+        const now_nanos = @as(i64, @intCast(packet_number + 1)) * 10;
+        _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, now_nanos, &server_receive_buf, secrets.client);
     }
     try require(client.sentPacketCount(.application) == 8);
     try require(server.pendingAckLargest(.application) == 7);

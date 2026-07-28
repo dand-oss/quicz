@@ -186,7 +186,7 @@ pub fn main() !void {
     const early_pto_result = try client_lifecycle.serviceRecoveryTimerAndPollProtectedZeroRttDatagramWithInstalledKeys(
         client_handle,
         &client,
-        early_timer.timer.deadline_millis,
+        early_timer.timer.deadline_nanos,
         &server_dcid,
         &client_dcid,
     );
@@ -205,7 +205,7 @@ pub fn main() !void {
         server_handle,
         &server,
         early_pto_received.path,
-        early_timer.timer.deadline_millis + 1,
+        early_timer.timer.deadline_nanos + 1,
         early_pto_received.data,
     );
     try require(early_pto_route.connection_id == server_handle);
@@ -282,7 +282,7 @@ pub fn main() !void {
         client_local.port,
         server_local.port,
         early.len,
-        early_timer.timer.deadline_millis,
+        early_timer.timer.deadline_nanos,
         early_pto_probe.len,
         early_pto_route.connection_id,
         ack.len,

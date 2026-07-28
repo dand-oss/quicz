@@ -142,7 +142,7 @@ pub fn main() !void {
     const compatible_read_selected = (try compatible_server.selectPeerCompatibleVersion(&compatibilities)) orelse return error.TransportParameterExampleFailed;
     try require(compatible_read_selected == compatible_selected);
 
-    try require(client.effectiveIdleTimeoutMillis() == 200);
+    try require(client.effectiveIdleTimeout() == 200);
     try require(client.recovery_state.max_datagram_size == 1200);
     try require(client.congestionWindow(.application) == quicz.recovery.initialCongestionWindow(1200));
     try require(client.peerActiveMigrationDisabled());
@@ -193,7 +193,7 @@ pub fn main() !void {
             server_bytes.len,
             @intFromEnum(compatible_selected),
             compatible_peer.available_versions.len,
-            client.effectiveIdleTimeoutMillis().?,
+            client.effectiveIdleTimeout().?,
             client.recovery_state.max_datagram_size,
             client.congestionWindow(.application),
             stored_preferred.connectionId().len,
