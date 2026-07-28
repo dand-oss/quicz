@@ -15871,7 +15871,7 @@ test "connection ACK APIs reject ACK ranges that compute negative packet numbers
 
 test "ACK delay is ignored for Initial and Handshake RTT samples" {
     var initial_conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .initial_rtt_ns = 100000000,
     });
     defer initial_conn.deinit();
@@ -15917,7 +15917,7 @@ test "ACK delay is ignored for Initial and Handshake RTT samples" {
 
 test "RTT estimates are shared across packet number spaces" {
     var conn = try Connection.init(std.testing.allocator, .server, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
@@ -15982,7 +15982,7 @@ test "RTT sharing rolls back when datagram payload is rejected" {
 
 test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
@@ -16023,7 +16023,7 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
 
 test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
