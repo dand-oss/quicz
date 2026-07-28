@@ -373,12 +373,12 @@ const LossDetectionResult = struct {
         recovery_state: recovery.Recovery,
     ) bool {
         if (self.pc_candidate_count < 2 or !self.pc_contiguous_packet_numbers) return false;
-        const duration_ms = switch (space) {
+        const duration_ns = switch (space) {
             .initial, .handshake => recovery_state.persistentCongestionDurationNsWithoutMaxAckDelay(),
             .application => recovery_state.persistentCongestionDurationNs(),
         };
-        return elapsedMillis(self.pc_first_sent_time_millis, self.pc_last_sent_time_millis) >=
-            duration_ms;
+        return elapsedMillis(self.pc_first_sent_time_millis, self.pc_last_sent_time_millis) * 1_000_000 >=
+            duration_ns;
     }
 };
 
@@ -411,7 +411,7 @@ fn ptoDeadlineFor(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddMillis(sent_time, pto_ns / 1_000_000);
+    return saturatingAddMillis(sent_time, (pto_ns + 999_999) / 1_000_000);
 }
 
 fn ptoDeadlineFromStart(
@@ -426,7 +426,7 @@ fn ptoDeadlineFromStart(
         deadline_recovery_state.ptoNs()
     else
         deadline_recovery_state.ptoNsWithoutMaxAckDelay();
-    return saturatingAddMillis(start_millis, pto_ns / 1_000_000);
+    return saturatingAddMillis(start_millis, (pto_ns + 999_999) / 1_000_000);
 }
 
 fn saturatingAddU64(a: u64, b: u64) u64 {
@@ -2615,7 +2615,7 @@ pub const Connection = struct {
             .initial_max_streams_bidi = self.recv_max_streams_bidi,
             .initial_max_streams_uni = self.recv_max_streams_uni,
             .ack_delay_exponent = self.config.ack_delay_exponent,
-            .max_ack_delay = self.config.max_ack_delay_ns,
+            .max_ack_delay = self.config.max_ack_delay_ns / 1_000_000,
             .disable_active_migration = self.config.disable_active_migration,
             .active_connection_id_limit = self.config.active_connection_id_limit,
             .original_destination_connection_id = if (self.side == .server) self.originalDestinationConnectionId() else null,
@@ -3055,7 +3055,7 @@ pub const Connection = struct {
     }
 
     fn closeStateTimeoutMillis(self: Connection) u64 {
-        return saturatingMulU64(close_state_pto_multiplier, self.recovery_state.ptoNs() / 1_000_000);
+        return saturatingMulU64(close_state_pto_multiplier, (self.recovery_state.ptoNs() + 999_999) / 1_000_000);
     }
 
     fn closeStateDeadlineMillis(self: Connection, now_millis: i64) i64 {
@@ -3225,9 +3225,9 @@ pub const Connection = struct {
 
     fn ackDelayForRtt(self: Connection, space: PacketNumberSpace, ack_delay: u64) u64 {
         if (space == .initial or space == .handshake) return 0;
-        const scaled_ack_delay = self.scaledPeerAckDelay(ack_delay);
-        if (!self.handshake_confirmed) return scaled_ack_delay;
-        return @min(scaled_ack_delay, self.recovery_state.max_ack_delay_ns);
+        const scaled_ack_delay_ns = self.scaledPeerAckDelay(ack_delay) * 1000; // μs→ns
+        if (!self.handshake_confirmed) return scaled_ack_delay_ns;
+        return @min(scaled_ack_delay_ns, self.recovery_state.max_ack_delay_ns);
     }
 
     fn rttEstimateSnapshot(self: *Connection, space: PacketNumberSpace) RttEstimateSnapshot {
@@ -8945,18 +8945,8 @@ pub const Connection = struct {
         else
             null;
         if (latest_rtt_sample) |rtt_sample| {
+            _ = rtt_sample;
             self.rememberFirstRttSampleSentTime(largest_acked_packet.?.sent_time_millis);
-            if (self.config.enable_rtt_update) {
-                // RFC 9002 §5.3: ignore ack_delay for Initial/Handshake;
-                // cap by peer max_ack_delay after handshake confirmation.
-                var ack_delay_ms: u64 = ack.ack_delay >> @as(u6, @intCast(self.peer_ack_delay_exponent));
-                if (space == .initial or space == .handshake) {
-                    ack_delay_ms = 0;
-                } else if (self.handshakeConfirmed()) {
-                    ack_delay_ms = @min(ack_delay_ms, self.config.max_ack_delay_ns);
-                }
-                packet_space.recovery_state.updateRtt(rtt_sample * 1_000_000, ack_delay_ms * 1_000_000); // ms→ns
-            }
         }
         if (acked_bytes != 0) {
             if (packet_space.largest_acknowledged.*) |previous_largest| {
@@ -9004,7 +8994,7 @@ pub const Connection = struct {
             packet_space.recovery_state.onPacketAckedWithUtilization(
                 acked_bytes,
                 largest_acked_packet.?.sent_time_millis,
-                rtt_sample,
+                rtt_sample * 1_000_000, // ms→ns
                 self.ackDelayForRtt(space, ack.ack_delay),
                 congestion_window_utilized,
             );
@@ -9022,7 +9012,8 @@ pub const Connection = struct {
             self.restorePtoBackoffSnapshot(pto_backoff_before_ack);
         }
         if (persistent_congestion_established) {
-            packet_space.recovery_state.onPersistentCongestionWithRttSample(latest_rtt_sample);
+            const pc_rtt_sample_ns = if (latest_rtt_sample) |s| s * 1_000_000 else null; // ms→ns
+            packet_space.recovery_state.onPersistentCongestionWithRttSample(pc_rtt_sample_ns);
             if (latest_rtt_sample != null) {
                 self.syncRttEstimatesFromSpace(space);
             }
@@ -9093,7 +9084,7 @@ pub const Connection = struct {
         latest_rtt_sample_ms: ?u64,
         now_millis: i64,
     ) Error!LossDetectionResult {
-        const loss_delay_ns = recovery.timeThresholdLossDelayMs(
+        const loss_delay_ns = recovery.timeThresholdLossDelayNs(
             (latest_rtt_sample_ms orelse 0) * 1_000_000, // ms→ns
             packet_space.recovery_state.smoothed_rtt_ns,
         );
@@ -9120,7 +9111,7 @@ pub const Connection = struct {
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
             const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast(loss_delay_ns / 1_000_000));
+                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast((loss_delay_ns + 999_999) / 1_000_000));
                 next_loss_deadline = if (next_loss_deadline) |current|
                     @min(current, deadline)
                 else
@@ -9185,7 +9176,7 @@ pub const Connection = struct {
                 saturatingAddU64(sent_packet.packet_number, packet_threshold_loss_gap);
             const time_threshold_lost = sent_packet.sent_time_millis * 1_000_000 + @as(i64, @intCast(loss_delay_ns)) <= now_millis * 1_000_000;
             if (!packet_threshold_lost and !time_threshold_lost) {
-                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast(loss_delay_ns / 1_000_000));
+                const deadline = sent_packet.sent_time_millis + @as(i64, @intCast((loss_delay_ns + 999_999) / 1_000_000));
                 packet_space.loss_deadline_millis.* = if (packet_space.loss_deadline_millis.*) |current|
                     @min(current, deadline)
                 else
@@ -9444,7 +9435,7 @@ pub const Connection = struct {
     fn expirePathChallenges(self: *Connection, now_millis: i64) Error!void {
         if (self.outstanding_path_challenges.items.len == 0) return;
 
-        const retry_after_ms = self.recovery_state.ptoNs() / 1_000_000;
+        const retry_after_ms = (self.recovery_state.ptoNs() + 999_999) / 1_000_000;
         var retry_count: usize = 0;
         for (self.outstanding_path_challenges.items) |challenge| {
             if (elapsedMillis(challenge.sent_time_millis, now_millis) < retry_after_ms) continue;
@@ -14634,7 +14625,7 @@ test "driveCryptoBackendInSpace exchanges transport parameter bytes with backend
     try std.testing.expectEqual(@as(u64, 5), conn.peer_ack_delay_exponent);
     try std.testing.expectEqual(@as(u64, 88), conn.peer_max_idle_timeout_ms);
     try std.testing.expectEqual(@as(usize, 1400), conn.peer_max_udp_payload_size);
-    try std.testing.expectEqual(@as(u64, 33), conn.recovery_state.max_ack_delay_ns);
+    try std.testing.expectEqual(@as(u64, 33_000_000), conn.recovery_state.max_ack_delay_ns);
 }
 
 test "TlsBackend adapter drives C ABI callbacks through CryptoBackend" {
@@ -15805,7 +15796,7 @@ test "pollTx records sent packets for ACK-driven recovery" {
 }
 
 test "processDatagram ACK updates recovery and removes sent packets" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -15827,7 +15818,7 @@ test "processDatagram ACK updates recovery and removes sent packets" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.latest_rtt_ns);
 }
 
 test "connection ACK APIs reject ACK ranges that compute negative packet numbers" {
@@ -15992,7 +15983,7 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
     });
     try std.testing.expectEqual(@as(u64, 0), conn.ackDelayForRtt(.initial, 20));
     try std.testing.expectEqual(@as(u64, 0), conn.ackDelayForRtt(.handshake, 20));
-    try std.testing.expectEqual(@as(u64, 160), conn.ackDelayForRtt(.application, 20));
+    try std.testing.expectEqual(@as(u64, 160_000), conn.ackDelayForRtt(.application, 20));
 
     const first_packet_number = try conn.recordPacketSentInSpace(.application, 0, 100);
     try conn.receiveAckInSpace(.application, 100, .{
@@ -16012,13 +16003,13 @@ test "ACK delay is capped by peer max_ack_delay after handshake confirmation" {
 
     const third_packet_number = try conn.recordPacketSentInSpace(.application, 220, 100);
     try conn.confirmHandshake();
-    try std.testing.expectEqual(@as(u64, 10), conn.ackDelayForRtt(.application, 20));
+    try std.testing.expectEqual(@as(u64, 160_000), conn.ackDelayForRtt(.application, 20));
     try conn.receiveAckInSpace(.application, 340, .{
         .largest_acknowledged = third_packet_number,
         .ack_delay = 20,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(u64, 103), conn.smoothedRttMillis(.application));
+    try std.testing.expectEqual(@as(u64, 104), conn.smoothedRttMillis(.application));
 }
 
 test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
@@ -16039,7 +16030,7 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.min_rtt_ns);
     try std.testing.expectEqual(@as(u64, 50), conn.smoothedRttMillis(.application));
 
     const second_packet_number = try conn.recordPacketSentInSpace(.application, 100, 100);
@@ -16049,15 +16040,15 @@ test "Application ACK delay cannot reduce adjusted RTT below min RTT" {
         .first_ack_range = 0,
     });
 
-    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 100_000_000), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.min_rtt_ns);
     try std.testing.expectEqual(@as(u64, 56), conn.smoothedRttMillis(.application));
-    try std.testing.expectEqual(@as(u64, 31), conn.recovery_state.rttvar_ns);
+    try std.testing.expectEqual(@as(u64, 31_230_000), conn.recovery_state.rttvar_ns);
 }
 
 test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .initial_rtt_ns = 100000000,
     });
     defer conn.deinit();
@@ -16071,7 +16062,7 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 90_000_000), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
 
     const lower_ranges = [_]frame.AckRange{
@@ -16088,13 +16079,13 @@ test "ACK does not sample RTT when only lower ranges are newly acknowledged" {
     try std.testing.expectEqual(@as(usize, 1), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u8, 0), conn.recovery_state.pto_count);
-    try std.testing.expectEqual(@as(?u64, 90), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 90_000_000), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(u64, 90), conn.smoothedRttMillis(.application));
 }
 
 test "duplicate ACK does not trigger loss detection without newly acknowledged packets" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,});
+        .enable_rtt_update = true,});
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 300, 100);
@@ -16117,11 +16108,11 @@ test "duplicate ACK does not trigger loss detection without newly acknowledged p
     try std.testing.expectEqual(@as(usize, 100), conn.bytesInFlight(.application));
     try std.testing.expectEqual(@as(u64, 0), conn.sent_packets.items[0].packet_number);
     try std.testing.expectEqual(@as(?i64, 675), conn.lossDetectionDeadlineMillis(.application));
-    try std.testing.expectEqual(@as(?u64, 100), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 100_000_000), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK marks packet-threshold losses in the selected packet number space" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 10, 100);
@@ -16138,11 +16129,11 @@ test "ACK marks packet-threshold losses in the selected packet number space" {
 
     try std.testing.expectEqual(@as(usize, 2), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 200), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, 57), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 57_000_000), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK marks time-threshold losses in the selected packet number space" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
     _ = try conn.recordPacketSentInSpace(.application, 0, 100);
@@ -16157,7 +16148,7 @@ test "ACK marks time-threshold losses in the selected packet number space" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
-    try std.testing.expectEqual(@as(?u64, 400), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 400_000_000), conn.recovery_state.latest_rtt_ns);
 }
 
 test "ACK keeps earlier packet while time-threshold delay has not elapsed" {
@@ -23020,7 +23011,7 @@ test "EndpointConnectionLifecycle selects deadline across caller-owned connectio
     const idle_deadline = idle_conn.idleTimeoutDeadlineMillis() orelse return error.TestUnexpectedResult;
 
     var recovery_conn = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ns = 10_000,
+        .initial_rtt_ns = 10_000_000_000,
     });
     defer recovery_conn.deinit();
     try recovery_conn.confirmHandshake();
@@ -35259,12 +35250,12 @@ test "EndpointConnectionLifecycle cross due-deadline backend poll keeps explicit
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100_000_000 });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200_000_000 });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try slow.confirmHandshake();
@@ -35411,12 +35402,12 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();
 
-    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100 });
+    var fast = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 100_000_000 });
     defer fast.deinit();
     try fast.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try fast.confirmHandshake();
 
-    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200 });
+    var slow = try Connection.init(std.testing.allocator, .client, .{ .initial_rtt_ns = 200_000_000 });
     defer slow.deinit();
     try slow.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
     try slow.confirmHandshake();
@@ -37155,7 +37146,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndPollData
     });
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ns = 10_000,
+        .initial_rtt_ns = 10_000_000_000,
     });
     defer slow.deinit();
     try slow.confirmHandshake();
@@ -37258,7 +37249,7 @@ test "EndpointConnectionLifecycle processDueDeadlineAcrossConnectionsAndDrainDat
     });
 
     var slow = try Connection.init(std.testing.allocator, .client, .{
-        .initial_rtt_ns = 10_000,
+        .initial_rtt_ns = 10_000_000_000,
     });
     defer slow.deinit();
     try slow.confirmHandshake();
@@ -59569,7 +59560,7 @@ test "ACK-driven persistent congestion duration ignores PTO backoff" {
 
 test "ACK-driven persistent congestion refreshes min RTT from newest sample across spaces" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
-        .enable_rtt_update = false,
+        .enable_rtt_update = true,
         .max_datagram_size = 1200,
         .initial_rtt_ns = 100000000,
     });
@@ -59581,9 +59572,9 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
         .ack_delay = 0,
         .first_ack_range = 0,
     });
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 50), conn.initial_packet_space.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 50), conn.handshake_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.initial_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.handshake_packet_space.recovery_state.min_rtt_ns);
 
     _ = try conn.recordPacketSentInSpace(.application, 100, 100);
     _ = try conn.recordPacketSentInSpace(.application, 1000, 100);
@@ -59599,10 +59590,10 @@ test "ACK-driven persistent congestion refreshes min RTT from newest sample acro
     try std.testing.expectEqual(@as(usize, 0), conn.sentPacketCount(.application));
     try std.testing.expectEqual(@as(usize, 0), conn.bytesInFlight(.application));
     try std.testing.expectEqual(recovery.minimumCongestionWindow(1200), conn.congestionWindow(.application));
-    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.latest_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 500), conn.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 500), conn.initial_packet_space.recovery_state.min_rtt_ns);
-    try std.testing.expectEqual(@as(?u64, 500), conn.handshake_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500_000_000), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500_000_000), conn.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500_000_000), conn.initial_packet_space.recovery_state.min_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 500_000_000), conn.handshake_packet_space.recovery_state.min_rtt_ns);
 }
 
 test "ACK-driven losses do not establish persistent congestion before first RTT sample" {
@@ -66238,7 +66229,7 @@ test "packet number spaces isolate receive-side ACK generation" {
 }
 
 test "processDatagram ACK_ECN updates recovery without queuing ACK" {
-    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    var conn = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer conn.deinit();
 
     const stream_id = try conn.openStream();
@@ -66267,7 +66258,7 @@ test "processDatagram ACK_ECN updates recovery without queuing ACK" {
 
     try std.testing.expectEqual(@as(usize, 0), conn.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), conn.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), conn.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), conn.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?u64, null), conn.pending_ack_largest);
     try std.testing.expectEqual(EcnValidationState.unknown, conn.ecnValidationState(.application));
 }
@@ -66547,7 +66538,7 @@ test "processDatagram rejects ACK for packet number never sent" {
 }
 
 test "processDatagram queues ACK for ack-eliciting payloads" {
-    var client = try Connection.init(std.testing.allocator, .client, .{});
+    var client = try Connection.init(std.testing.allocator, .client, .{ .enable_rtt_update = true });
     defer client.deinit();
     var server = try Connection.init(std.testing.allocator, .server, .{});
     defer server.deinit();
@@ -66578,7 +66569,7 @@ test "processDatagram queues ACK for ack-eliciting payloads" {
     try client.processDatagram(60, ack_payload);
     try std.testing.expectEqual(@as(usize, 0), client.sent_packets.items.len);
     try std.testing.expectEqual(@as(usize, 0), client.recovery_state.bytes_in_flight);
-    try std.testing.expectEqual(@as(?u64, 50), client.recovery_state.latest_rtt_ns);
+    try std.testing.expectEqual(@as(?u64, 50_000_000), client.recovery_state.latest_rtt_ns);
     try std.testing.expectEqual(@as(?[]u8, null), try client.pollTx(70, &datagram));
 }
 
