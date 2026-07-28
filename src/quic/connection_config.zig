@@ -157,6 +157,12 @@ pub const Config = struct {
     max_datagram_frame_size: u64 = 0,
     /// Congestion control algorithm (default NewReno per RFC 9002).
     congestion_algorithm: CongestionAlgorithm = .new_reno,
+    /// PTO jitter percentage (0–50). Adds ±percentage random jitter to the
+    /// base Probe Timeout to prevent synchronized timeouts across many
+    /// concurrent connections. Default 0 (deterministic) matches upstream
+    /// QUIC stacks. Production servers with 100+ concurrent connections
+    /// should set 20–30.
+    pto_jitter_percentage: u8 = 0,
     /// Maximum active peer-issued connection IDs tracked by the connection skeleton.
     active_connection_id_limit: u64 = min_active_connection_id_limit,
     /// QUIC version advertised as this endpoint's chosen version.

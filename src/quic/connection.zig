@@ -900,6 +900,7 @@ pub const Connection = struct {
                 .initial_rtt_ns = config.initial_rtt_ns,
                 .max_ack_delay_ns = config.max_ack_delay_ns,
                 .congestion_algorithm = config.congestion_algorithm,
+                .pto_jitter_percentage = config.pto_jitter_percentage,
             }),
             .sent_packets = .empty,
             .largest_acknowledged = null,
