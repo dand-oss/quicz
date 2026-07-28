@@ -40,6 +40,18 @@ pub const Config = struct {
     pto_jitter_percentage: u8 = 0,
 };
 
+/// Congestion controller state machine (s2n-quic style).
+///
+/// - `slow_start`: cwnd grows by acked bytes (or HyStart++ increment).
+/// - `recovery`: cwnd was reduced; ALL congestion events blocked until
+///   an ACK confirms a packet sent after the cutback (PN-based exit).
+/// - `congestion_avoidance`: cwnd grows by CUBIC/NewReno formula.
+pub const CongestionState = enum {
+    slow_start,
+    recovery,
+    congestion_avoidance,
+};
+
 /// Minimal RFC 9002-inspired recovery state.
 ///
 /// This tracks RTT estimates, PTO backoff, bytes in flight, and a NewReno-like
@@ -58,6 +70,8 @@ pub const Recovery = struct {
     /// Bytes acknowledged while in congestion avoidance but not yet converted
     /// into a full max-datagram-sized congestion-window increase.
     congestion_avoidance_bytes_acked: usize = 0,
+    /// Explicit congestion state machine (s2n-quic style).
+    congestion_state: CongestionState = .slow_start,
     congestion_recovery_start_time_millis: ?i64 = null,
     /// Set when entering recovery; cleared after one packet is sent (fast retransmission).
     fast_retransmission_required: bool = false,
@@ -142,6 +156,15 @@ pub const Recovery = struct {
         } else {
             self.largest_acked_packet_number = pn;
         }
+        // s2n-quic style: recovery ends when ACK confirms a packet sent
+        // after the cutback. Transition to congestion avoidance.
+        if (self.congestion_state == .recovery) {
+            if (self.largest_sent_at_last_cutback) |cutback| {
+                if (self.largest_acked_packet_number.? > cutback) {
+                    self.congestion_state = .congestion_avoidance;
+                }
+            }
+        }
     }
 
     /// Packet-number-based recovery check (quic-go style).
@@ -222,7 +245,13 @@ pub const Recovery = struct {
             }
             return;
         }
-        if (self.inCongestionRecovery(sent_time_millis)) return;
+        // s2n-quic: no cwnd growth during recovery. Recovery ends when
+        // an ACK arrives for a packet sent after the recovery started.
+        if (self.congestion_state == .recovery) {
+            if (self.inCongestionRecovery(sent_time_millis)) return;
+            // Packet sent after recovery start → exit recovery.
+            self.congestion_state = .congestion_avoidance;
+        }
 
         if (self.inSlowStart()) {
             // HyStart++ may reduce growth rate during CSS phase
@@ -263,7 +292,9 @@ pub const Recovery = struct {
     /// Packet-number-based congestion event (quic-go style).
     /// Losses for packets sent before the last cutback are a single event (RFC 6582).
     pub fn onCongestionEventWithPacketNumber(self: *Recovery, sent_time_millis: i64, now_millis: i64, lost_packet_number: ?u64) void {
-        // quic-go: if packetNumber <= largestSentAtLastCutback, skip (single loss event)
+        // s2n-quic: once in recovery, block ALL congestion events.
+        if (self.congestion_state == .recovery) return;
+        // Fallback for connections without state tracking (tests).
         if (lost_packet_number) |pn| {
             if (self.largest_sent_at_last_cutback) |last_cut| {
                 if (pn <= last_cut) return;
@@ -271,13 +302,7 @@ pub const Recovery = struct {
         } else {
             if (self.inCongestionRecovery(sent_time_millis)) return;
         }
-        // Minimum time between congestion events: at least one PTO.
-        // Prevents rapid-fire cwnd reductions on very low RTT paths (loopback)
-        // where many losses are detected within microseconds.
-        if (self.congestion_recovery_start_time_millis) |prev_start| {
-            const pto_ms: i64 = @intCast((self.smoothed_rtt_ns + 4 * self.rttvar_ns + self.max_ack_delay_ns) / 1_000_000);
-            if (now_millis - prev_start < @max(pto_ms, 1)) return;
-        }
+        self.congestion_state = .recovery;
         self.congestion_recovery_start_time_millis = now_millis;
         self.fast_retransmission_required = true;
         self.largest_sent_at_last_cutback = self.largest_sent_packet_number;
@@ -418,6 +443,7 @@ pub const Recovery = struct {
     /// Apply the persistent congestion response by reducing cwnd to kMinimumWindow.
     pub fn onPersistentCongestion(self: *Recovery) void {
         self.congestion_window = minimumCongestionWindow(self.max_datagram_size);
+        self.congestion_state = .slow_start;
         self.congestion_avoidance_bytes_acked = 0;
         self.congestion_recovery_start_time_millis = null;
         self.fast_retransmission_required = false;
@@ -435,11 +461,14 @@ pub const Recovery = struct {
     /// True when the sender is in slow start (cwnd below both ssthresh and
     /// the HyStart++ threshold).
     pub fn inSlowStart(self: Recovery) bool {
-        if (self.congestion_window >= self.ssthresh) return false;
-        if (self.hystart.thresholdFound()) {
-            return @as(f32, @floatFromInt(self.congestion_window)) < self.hystart.threshold;
+        if (self.congestion_state == .slow_start) {
+            if (self.congestion_window >= self.ssthresh) return false;
+            if (self.hystart.thresholdFound()) {
+                return @as(f32, @floatFromInt(self.congestion_window)) < self.hystart.threshold;
+            }
+            return true;
         }
-        return true;
+        return false;
     }
 
     fn inCongestionRecovery(self: Recovery, sent_time_millis: i64) bool {
