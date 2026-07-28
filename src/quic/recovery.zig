@@ -33,6 +33,10 @@ pub const Config = struct {
     initial_rtt_ns: u64,
     max_ack_delay_ns: u64 = 25_000_000, // 25ms
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
+    /// PTO jitter percentage (0–50). Adds ±percentage random jitter to the
+    /// base PTO to prevent synchronized timeouts across connections.
+    /// Default 0 keeps deterministic behaviour for tests.
+    pto_jitter_percentage: u8 = 0,
 };
 
 /// Minimal RFC 9002-inspired recovery state.
@@ -64,6 +68,11 @@ pub const Recovery = struct {
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
     bbr: bbr_module.BbrState = .{},
+    /// PTO jitter percentage (0–50). 0 = deterministic (test default).
+    pto_jitter_percentage: u8 = 0,
+    /// PRNG for PTO jitter. Seeded from init; deterministic seed keeps
+    /// unit-test reproducibility when jitter is enabled explicitly.
+    prng: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0),
 
     /// Initialize recovery state with RFC 9002-style initial RTT and window.
     pub fn init(config: Config) Recovery {
@@ -76,6 +85,7 @@ pub const Recovery = struct {
             .rttvar_ns = initial_rtt / 2,
             .congestion_window = initialCongestionWindow(max_datagram_size),
             .congestion_algorithm = config.congestion_algorithm,
+            .pto_jitter_percentage = config.pto_jitter_percentage,
         };
     }
 
@@ -247,7 +257,7 @@ pub const Recovery = struct {
     }
 
     /// Current Probe Timeout in nanoseconds.
-    pub fn ptoNs(self: Recovery) u64 {
+    pub fn ptoNs(self: *Recovery) u64 {
         return self.backedOffPtoNs(true);
     }
 
@@ -282,7 +292,7 @@ pub const Recovery = struct {
     /// RFC 9002 sets `max_ack_delay` to zero for Initial and Handshake packet
     /// number spaces because those acknowledgments are not intentionally
     /// delayed.
-    pub fn ptoNsWithoutMaxAckDelay(self: Recovery) u64 {
+    pub fn ptoNsWithoutMaxAckDelay(self: *Recovery) u64 {
         return self.backedOffPtoNs(false);
     }
 
@@ -292,13 +302,42 @@ pub const Recovery = struct {
         return saturatingAddU64(saturatingAddU64(self.smoothed_rtt_ns, variance_delay), ack_delay);
     }
 
-    fn backedOffPtoNs(self: Recovery, include_max_ack_delay: bool) u64 {
-        var timeout = self.basePtoNs(include_max_ack_delay);
+    fn backedOffPtoNs(self: *Recovery, include_max_ack_delay: bool) u64 {
+        var timeout = self.basePtoWithJitterNs(include_max_ack_delay);
         var count = self.pto_count;
         while (count != 0) : (count -= 1) {
             timeout = saturatingMulU64(timeout, 2);
         }
         return timeout;
+    }
+
+    /// Base PTO with optional random jitter (RFC 9002 §A.8 recommendation).
+    ///
+    /// Jitter range is ±pto_jitter_percentage of the base PTO, matching the
+    /// approach used by production QUIC stacks to decorrelate timeout storms.
+    fn basePtoWithJitterNs(self: *Recovery, include_max_ack_delay: bool) u64 {
+        const base = self.basePtoNs(include_max_ack_delay);
+        const pct = self.pto_jitter_percentage;
+        if (pct == 0) return base;
+
+        const max_jitter = base * @as(u64, @min(pct, 50)) / 100;
+        if (max_jitter == 0) return base;
+
+        // Random value in [0, 2*max_jitter], then shift to [-max_jitter, +max_jitter].
+        const range = 2 * max_jitter;
+        const rand_val = self.prng.random().intRangeAtMost(u64, 0, range);
+        const rand_signed: i64 = @intCast(rand_val);
+        const max_signed: i64 = @intCast(max_jitter);
+        const jitter: i64 = rand_signed - max_signed;
+
+        const base_signed: i64 = @intCast(base);
+        const result: i64 = base_signed + jitter;
+        const gran_signed: i64 = @intCast(timer_granularity_ns);
+        const clamped: u64 = if (result < gran_signed)
+            timer_granularity_ns
+        else
+            @intCast(result);
+        return clamped;
     }
 
     /// Persistent congestion duration from RFC 9002 Section 7.6.1.
@@ -655,6 +694,45 @@ test "pto expiration count saturates before overflowing" {
     recovery.onPtoExpired();
     try std.testing.expectEqual(std.math.maxInt(u8), recovery.pto_count);
     try std.testing.expectEqual(std.math.maxInt(u64), recovery.ptoNsWithoutMaxAckDelay());
+}
+
+test "pto jitter stays within configured percentage bounds" {
+    var recovery = Recovery.init(.{
+        .max_datagram_size = 1200,
+        .initial_rtt_ns = 100_000_000, // 100ms
+        .pto_jitter_percentage = 25,
+    });
+    // base PTO = smoothed_rtt + 4*rttvar + max_ack_delay
+    //          = 100ms + 4*50ms + 25ms = 325ms
+    const base_pto: u64 = 325_000_000;
+    const max_jitter = base_pto * 25 / 100; // 81.25ms
+
+    var seen_above = false;
+    var seen_below = false;
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const pto = recovery.ptoNs();
+        // Must be within [base - max_jitter, base + max_jitter]
+        try std.testing.expect(pto >= base_pto - max_jitter);
+        try std.testing.expect(pto <= base_pto + max_jitter);
+        if (pto > base_pto) seen_above = true;
+        if (pto < base_pto) seen_below = true;
+    }
+    // With 200 samples and 25% jitter, both sides should appear
+    try std.testing.expect(seen_above);
+    try std.testing.expect(seen_below);
+}
+
+test "pto jitter zero percentage is deterministic" {
+    var recovery = Recovery.init(.{
+        .max_datagram_size = 1200,
+        .initial_rtt_ns = 100_000_000,
+        .pto_jitter_percentage = 0,
+    });
+    const pto1 = recovery.ptoNs();
+    const pto2 = recovery.ptoNs();
+    try std.testing.expectEqual(pto1, pto2);
+    try std.testing.expectEqual(@as(u64, 325_000_000), pto1);
 }
 
 test "congestion recovery period avoids repeated loss reduction and ACK growth" {

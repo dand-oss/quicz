@@ -3066,7 +3066,8 @@ pub const Connection = struct {
     }
 
     fn closeStateTimeoutMillis(self: Connection) u64 {
-        return saturatingMulU64(close_state_pto_multiplier, (self.recovery_state.ptoNs() + 999_999) / 1_000_000);
+        var rs = self.recovery_state;
+        return saturatingMulU64(close_state_pto_multiplier, (rs.ptoNs() + 999_999) / 1_000_000);
     }
 
     fn closeStateDeadlineMillis(self: Connection, now_millis: i64) i64 {
