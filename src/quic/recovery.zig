@@ -7,7 +7,7 @@ pub const ns_per_us = duration.ns_per_us;
 pub const ns_per_ms = duration.ns_per_ms;
 pub const ns_per_s = duration.ns_per_s;
 
-pub const timer_granularity_ns: u64 = 1_000_000; // kGranularity = 1ms (RFC 9002)
+pub const timer_granularity_ns: u64 = @intCast(duration.ns_per_ms); // kGranularity = 1ms (RFC 9002)
 
 
 pub const time_threshold_numerator: u64 = 9;

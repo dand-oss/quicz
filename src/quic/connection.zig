@@ -1,5 +1,6 @@
 const std = @import("std");
 const clock = @import("../time/clock.zig");
+const duration_mod = @import("../time/duration.zig");
 
 pub const packet = @import("packet.zig");
 pub const frame = @import("frame.zig");
@@ -800,7 +801,7 @@ pub const Connection = struct {
         if (config.ack_delay_exponent > 20) {
             return error.InvalidPacket;
         }
-        if (config.max_ack_delay_ns / 1_000_000 >= (@as(u64, 1) << 14)) {
+        if (duration_mod.nanosToMillis(@intCast(config.max_ack_delay_ns)) >= (@as(i64, 1) << 14)) {
             return error.InvalidPacket;
         }
         if (config.max_crypto_buffer_size > max_quic_varint) {
@@ -1373,7 +1374,7 @@ pub const Connection = struct {
             .handshake => self.handshake_packet_space.recovery_state.smoothed_rtt_ns,
             .application => self.recovery_state.smoothed_rtt_ns,
         };
-        return ns / 1_000_000; // ns→ms for backward-compatible API
+        return @intCast(duration_mod.nanosToMillis(@intCast(ns)));
     }
 
     /// Return the current time-threshold loss deadline for one packet number space.
@@ -2628,7 +2629,7 @@ pub const Connection = struct {
             .initial_max_streams_bidi = self.recv_max_streams_bidi,
             .initial_max_streams_uni = self.recv_max_streams_uni,
             .ack_delay_exponent = self.config.ack_delay_exponent,
-            .max_ack_delay = self.config.max_ack_delay_ns / 1_000_000,
+            .max_ack_delay = @intCast(duration_mod.nanosToMillis(@intCast(self.config.max_ack_delay_ns))),
             .disable_active_migration = self.config.disable_active_migration,
             .active_connection_id_limit = self.config.active_connection_id_limit,
             .original_destination_connection_id = if (self.side == .server) self.originalDestinationConnectionId() else null,
@@ -2745,7 +2746,7 @@ pub const Connection = struct {
         self.peer_version_information_available_versions = peer_available_versions;
         peer_available_versions = null;
         self.peer_active_connection_id_limit = params.active_connection_id_limit;
-        self.recovery_state.max_ack_delay_ns = params.max_ack_delay * 1_000_000; // ms→ns
+        self.recovery_state.max_ack_delay_ns = @intCast(duration_mod.millisToNanos(@intCast(params.max_ack_delay)));
         self.syncRecoveryMaxDatagramSize();
 
         for (self.send_streams.items) |*stream| {
@@ -4242,7 +4243,7 @@ pub const Connection = struct {
             (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0))
         {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
+            const srtt: u64 = @intCast(duration_mod.nanosToMillis(@intCast(self.recovery_state.smoothed_rtt_ns)));
             if (!self.tx_pacer.canSend(now_nanos, self.maxTxDatagramSize(), cwnd, srtt)) {
                 return null;
             }
@@ -4274,7 +4275,7 @@ pub const Connection = struct {
         self.commitBuiltProtectedShortPacket(built, now_nanos);
         if (built.ack_eliciting) {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt = self.recovery_state.smoothed_rtt_ns / 1_000_000; // ns→ms for pacer
+            const srtt: u64 = @intCast(duration_mod.nanosToMillis(@intCast(self.recovery_state.smoothed_rtt_ns)));
             self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
         return built.datagram;
@@ -11630,7 +11631,6 @@ fn expectFramePacketTypeRejected(
 }
 
 
-const duration_mod = @import("../time/duration.zig");
 const ms = duration_mod.ns_per_ms;
 const us = duration_mod.ns_per_us;
 test "Connection is the canonical public handle and QuicConnection remains an alias" {
