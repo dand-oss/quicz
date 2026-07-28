@@ -986,82 +986,12 @@ pub const EndpointConnectionLifecycle = struct {
     /// endpoint lifecycle owns the route mutation used by the follow-up Initial.
     /// Unified accepted Initial processing with options-struct interface.
     /// Replaces 8 processAcceptedProtectedInitial variants.
-    pub fn processAcceptedProtectedInitialUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = path;
-        return self.processAcceptedProtectedInitialDatagram(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified across-connections feed with options-struct interface.
     /// Replaces 5+ feedDatagramWithInstalledKeysAcrossConnections variants.
-    pub fn feedDatagramAcrossConnectionsUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(
-            allocator,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     /// Unified Handshake poll with options-struct interface.
     /// Replaces 4+ pollProtectedHandshakeDatagramWithInstalledKeys variants.
-    pub fn pollProtectedHandshakeDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        opts: lifecycle_opts.DrainOptions,
-    ) Error!?[]u8 {
-        _ = opts;
-        return self.pollProtectedHandshakeDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            now_nanos,
-        );
-    }
-
     /// unified short poll with options-struct interface.
     /// Replaces 4+ pollProtectedShortDatagramWithInstalledKeys variants.
-    pub fn pollProtectedShortDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid: []const u8,
-        opts: lifecycle_opts.DrainOptions,
-    ) Error!?[]u8 {
-        _ = opts;
-        return self.pollProtectedShortDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            now_nanos,
-            dcid,
-        );
-    }
-
     pub fn switchInitialDestinationConnectionIdAfterRetry(
         self: *EndpointConnectionLifecycle,
         original_destination_connection_id: []const u8,
@@ -1082,115 +1012,10 @@ pub const EndpointConnectionLifecycle = struct {
     /// replacement and retained reset-token state used by the socket event
     /// loop after validation succeeds.
     /// Unified feed with crypto backend drive — replaces 20+ AndDriveCryptoBackend variants.
-    pub fn feedDatagramWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     /// Unified routed Handshake with crypto backend — replaces 10+ variants.
-    pub fn processRoutedHandshakeWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = path;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified routed short with crypto backend — replaces 10+ variants.
-    pub fn processRoutedShortWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified due deadline with crypto backend — replaces 10+ variants.
-    pub fn processDueDeadlineWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending work with crypto backend — replaces 10+ variants.
-    pub fn processPendingWorkWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     pub fn commitPreferredAddressMigration(
         self: *EndpointConnectionLifecycle,
         current_destination_connection_id: []const u8,
@@ -1216,82 +1041,12 @@ pub const EndpointConnectionLifecycle = struct {
     /// the resulting endpoint route and retained reset-token state.
     /// Unified drain across connections with options-struct interface.
     /// Replaces 5+ drainDatagramsAcrossConnectionsWithInstalledKeyOptions variants.
-    pub fn drainDatagramsAcrossConnectionsUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.DrainOptions,
-    ) Error!usize {
-        _ = opts;
-        _ = allocator;
-        _ = now_nanos;
-        _ = space;
-        _ = out;
-        _ = self;
-        return 0; // Placeholder: actual implementation delegates to existing drain
-    }
-
     /// Unified due deadline with installed key options.
     /// Replaces 5+ processDueDeadlineWithInstalledKeyOptions variants.
-    pub fn processDueDeadlineWithInstalledKeyOptionsUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = options;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending work with installed key options.
     /// Replaces 5+ processPendingWorkWithInstalledKeyOptions variants.
-    pub fn processPendingWorkWithInstalledKeyOptionsUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = options;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified feed across connections with pending work and crypto backend.
     /// Replaces 10+ feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackend variants.
-    pub fn feedAcrossConnectionsWithPendingWorkAndCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(
-            allocator,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     pub fn registerReplacementConnectionId(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -1320,112 +1075,14 @@ pub const EndpointConnectionLifecycle = struct {
     /// split connection/router state.
     /// Unified routed long datagram processing.
     /// Replaces 4+ processRoutedProtectedLongDatagramInSpace variants.
-    pub fn processRoutedLongDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = path;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = self;
-        return error.InvalidPacket; // Placeholder
-    }
-
     /// Unified routed Handshake datagram processing.
     /// Replaces 4+ processRoutedProtectedHandshakeDatagram variants.
-    pub fn processRoutedHandshakeDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified close with route path.
     /// Replaces 4+ closeWithRoutePath/closeAndDrainDatagrams variants.
-    pub fn closeWithRoutePathUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        error_code: u64,
-        frame_type: u64,
-        reason_phrase: []const u8,
-        now_nanos: i64,
-        opts: lifecycle_opts.DrainOptions,
-    ) Error!void {
-        _ = opts;
-        _ = now_nanos;
-        _ = frame_type;
-        _ = reason_phrase;
-        _ = error_code;
-        _ = connection;
-        _ = connection_id;
-        _ = self;
-    }
-
     /// Unified process with next deadline selection.
     /// Replaces 5+ AndSelectNextDeadline variants.
-    pub fn processWithNextDeadlineUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!?EndpointConnectionDeadline {
-        _ = opts;
-        _ = connection;
-        _ = connection_id;
-        _ = now_nanos;
-        return self.nextDeadline(allocator);
-    }
-
     /// Unified feed with pending work and next deadline.
     /// Replaces 5+ AndProcessPendingWorkAndSelectNextDeadline variants.
-    pub fn feedWithPendingWorkAndDeadlineUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = allocator;
-        return self.feedDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     pub fn issueConnectionIdRoute(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -1478,134 +1135,16 @@ pub const EndpointConnectionLifecycle = struct {
     /// protected datagram delivery, and timer/route retirement.
     /// Unified feed with compatible version handling.
     /// Replaces 10+ WithCompatibleVersion variants.
-    pub fn feedWithCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     /// Unified feed across connections with compatible version.
     /// Replaces 10+ AcrossConnectionsAndWithCompatibleVersion variants.
-    pub fn feedAcrossConnectionsWithCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(
-            allocator,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     /// Unified Handshake with crypto backend and compatible version.
     /// Replaces 10+ HandshakeAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn handshakeWithCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified short with crypto backend and compatible version.
     /// Replaces 10+ ShortAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn shortWithCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified due deadline with crypto backend and compatible version.
     /// Replaces 10+ DueDeadlineAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn dueDeadlineWithCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending work across connections with crypto backend.
     /// Replaces 10+ PendingWorkAcrossConnectionsAndDriveCryptoBackend variants.
-    pub fn pendingWorkAcrossConnectionsWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     pub fn updateRoutePath(
         self: *EndpointConnectionLifecycle,
         destination_connection_id: []const u8,
@@ -1623,158 +1162,20 @@ pub const EndpointConnectionLifecycle = struct {
     /// bit only after that route update succeeds.
     /// Unified feed with pending work and crypto backend in space.
     /// Replaces 10+ AndProcessPendingWorkAndDriveCryptoBackendInSpace variants.
-    pub fn feedWithPendingWorkAndCryptoBackendInSpaceUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work and crypto backend in space.
     /// Replaces 10+ AcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendInSpace variants.
-    pub fn feedAcrossWithPendingWorkAndCryptoBackendInSpaceUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work and crypto backend across spaces.
     /// Replaces 10+ AcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpaces variants.
-    pub fn feedAcrossWithPendingWorkAndCryptoBackendAcrossSpacesUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified due deadline across connections with crypto backend.
     /// Replaces 5+ DueDeadlineAcrossConnectionsAndDriveCryptoBackend variants.
-    pub fn dueDeadlineAcrossConnectionsWithCryptoBackendUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified pending work across connections with crypto backend and compatible version.
     /// Replaces 10+ PendingWorkAcrossConnectionsAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn pendingWorkAcrossWithCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified feed with pending work, crypto backend, and compatible version.
     /// Replaces 10+ AndProcessPendingWorkAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn feedWithPendingWorkCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend, and compatible version.
     /// Replaces 10+ AcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendWithCompatibleVersion variants.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend across spaces, and compatible version.
     /// Replaces 10+ AcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersion variants.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAcrossSpacesAndCompatibleVersionUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     pub fn updateRoutePathAndResetSpinBit(
         self: *EndpointConnectionLifecycle,
         destination_connection_id: []const u8,
@@ -1795,170 +1196,24 @@ pub const EndpointConnectionLifecycle = struct {
     /// accepted route is now a new network path.
     /// Unified feed with OrClose and drain.
     /// Replaces feedDatagramWithInstalledKeysOrCloseAndDrainDatagrams and similar.
-    pub fn feedOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with OrClose and poll.
     /// Replaces feedDatagramWithInstalledKeysOrCloseAndPollDatagram and similar.
-    pub fn feedOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified Handshake with OrClose and drain.
     /// Replaces processProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams.
-    pub fn handshakeOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Handshake with OrClose and poll.
     /// Replaces processProtectedHandshakeDatagramWithInstalledKeysOrCloseAndPollDatagram.
-    pub fn handshakeOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified short with OrClose and drain.
     /// Replaces processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagrams.
-    pub fn shortOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid_len: usize,
-        datagram: []const u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = out;
-        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, dcid_len, datagram);
-    }
-
     /// Unified short with OrClose and poll.
     /// Replaces processProtectedShortDatagramWithInstalledKeysOrCloseAndPollDatagram.
-    pub fn shortOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid_len: usize,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        return self.processProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, dcid_len, datagram);
-    }
-
     /// Unified routed short with OrClose and drain.
     /// Replaces processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagrams.
-    pub fn routedShortOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified routed short with OrClose and poll.
     /// Replaces processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndPollDatagram.
-    pub fn routedShortOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified Initial with OrClose and drain.
     /// Replaces processAcceptedProtectedInitialWithCryptoBackendOrCloseAndDrainDatagrams.
-    pub fn initialOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Initial with OrClose and poll.
     /// Replaces processAcceptedProtectedInitialWithCryptoBackendOrCloseAndPollDatagram.
-    pub fn initialOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     pub fn updateRoutePathFromValidatedDatagramAndResetSpinBit(
         self: *EndpointConnectionLifecycle,
         destination_connection_id: []const u8,
@@ -1972,195 +1227,15 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Return the committed UDP tuple for a registered destination connection ID.
     /// Unified Handshake with crypto backend, OrClose, and drain.
-    pub fn handshakeCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Handshake with crypto backend, OrClose, and poll.
-    pub fn handshakeCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified short with crypto backend, OrClose, and drain.
-    pub fn shortCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified short with crypto backend, OrClose, and poll.
-    pub fn shortCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified due deadline with crypto backend, OrClose, and drain.
-    pub fn dueDeadlineCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified due deadline with crypto backend, OrClose, and poll.
-    pub fn dueDeadlineCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending work with crypto backend, OrClose, and drain.
-    pub fn pendingWorkCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending work with crypto backend, OrClose, and poll.
-    pub fn pendingWorkCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified feed with crypto backend in space, OrClose, and drain.
-    pub fn feedCryptoBackendInSpaceOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with crypto backend in space, OrClose, and poll.
-    pub fn feedCryptoBackendInSpaceOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     pub fn currentRoutePath(
         self: *const EndpointConnectionLifecycle,
         destination_connection_id: []const u8,
@@ -2170,173 +1245,15 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Route one received datagram using the owned endpoint routing table.
     /// Unified feed across connections with OrClose and drain.
-    pub fn feedAcrossOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with OrClose and poll.
-    pub fn feedAcrossOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with compatible version, OrClose, and drain.
-    pub fn feedAcrossCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with compatible version, OrClose, and poll.
-    pub fn feedAcrossCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend, compatible version, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend, compatible version, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, OrClose, and drain.
-    pub fn feedWithPendingWorkOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, OrClose, and poll.
-    pub fn feedWithPendingWorkOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     pub fn routeDatagram(
         self: *const EndpointConnectionLifecycle,
         path: endpoint.Udp4Tuple,
@@ -2356,189 +1273,15 @@ pub const EndpointConnectionLifecycle = struct {
     /// `processAcceptedProtectedInitialDatagram()` because routes are installed
     /// only after authentication succeeds.
     /// Unified feed across connections with pending work, OrClose, and drain.
-    pub fn feedAcrossWithPendingWorkOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, OrClose, and poll.
-    pub fn feedAcrossWithPendingWorkOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend, OrClose, and drain.
-    pub fn feedAcrossWithPendingWorkCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend, OrClose, and poll.
-    pub fn feedAcrossWithPendingWorkCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend across spaces, OrClose, and drain.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAcrossSpacesOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend across spaces, OrClose, and poll.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAcrossSpacesOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend in space, compatible version, OrClose, and drain.
-    pub fn feedWithPendingWorkCryptoBackendInSpaceCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend in space, compatible version, OrClose, and poll.
-    pub fn feedWithPendingWorkCryptoBackendInSpaceCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend in space, compatible version, OrClose, and drain.
-    pub fn feedAcrossWithPendingWorkCryptoBackendInSpaceCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend in space, compatible version, OrClose, and poll.
-    pub fn feedAcrossWithPendingWorkCryptoBackendInSpaceCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     pub fn processRoutedProtectedInitialDatagram(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -2578,199 +1321,15 @@ pub const EndpointConnectionLifecycle = struct {
     /// success behavior, but authenticated plaintext frame errors queue a
     /// transport CONNECTION_CLOSE before returning `InvalidPacket`.
     /// Unified feed across connections with pending work, crypto backend across spaces, compatible version, OrClose, and drain.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
-    pub fn feedAcrossWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, OrClose, and drain.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, OrClose, and poll.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and drain.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified due deadline across connections with crypto backend, OrClose, and drain.
-    pub fn dueDeadlineAcrossCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified due deadline across connections with crypto backend, OrClose, and poll.
-    pub fn dueDeadlineAcrossCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified pending work across connections with crypto backend, OrClose, and drain.
-    pub fn pendingWorkAcrossCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified pending work across connections with crypto backend, OrClose, and poll.
-    pub fn pendingWorkAcrossCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     pub fn processRoutedProtectedInitialDatagramOrClose(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -2812,191 +1371,15 @@ pub const EndpointConnectionLifecycle = struct {
     /// its own boundary. The caller supplies the Original DCID so Initial keys
     /// remain tied to the client-selected first-flight destination CID.
     /// Unified pending work across connections with crypto backend, compatible version, OrClose, and drain.
-    pub fn pendingWorkAcrossCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified pending work across connections with crypto backend, compatible version, OrClose, and poll.
-    pub fn pendingWorkAcrossCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified due deadline across connections with crypto backend, compatible version, OrClose, and drain.
-    pub fn dueDeadlineAcrossCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified due deadline across connections with crypto backend, compatible version, OrClose, and poll.
-    pub fn dueDeadlineAcrossCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        now_nanos: i64,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = allocator;
-        _ = now_nanos;
-        _ = self;
-        return .{};
-    }
-
     /// Unified Handshake with crypto backend, compatible version, OrClose, and drain.
-    pub fn handshakeCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Handshake with crypto backend, compatible version, OrClose, and poll.
-    pub fn handshakeCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified short with crypto backend, compatible version, OrClose, and drain.
-    pub fn shortCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified short with crypto backend, compatible version, OrClose, and poll.
-    pub fn shortCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified Initial with crypto backend, compatible version, OrClose, and drain.
-    pub fn initialCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Initial with crypto backend, compatible version, OrClose, and poll.
-    pub fn initialCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     pub fn processRoutedProtectedLongDatagramWithInstalledHandshakeKeys(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -3041,217 +1424,15 @@ pub const EndpointConnectionLifecycle = struct {
     /// authenticates the protected Initial packet. Only an authenticated
     /// packet consumes the one-time token and unblocks anti-amplification.
     /// Unified routed Handshake with crypto backend, compatible version, OrClose, and drain.
-    pub fn routedHandshakeCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified routed Handshake with crypto backend, compatible version, OrClose, and poll.
-    pub fn routedHandshakeCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(connection_id, connection, path, now_nanos, datagram);
-    }
-
     /// Unified routed long with crypto backend, OrClose, and drain.
-    pub fn routedLongCryptoBackendOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = path;
-        _ = self;
-        return error.InvalidPacket;
-    }
-
     /// Unified routed long with crypto backend, OrClose, and poll.
-    pub fn routedLongCryptoBackendOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = path;
-        _ = self;
-        return error.InvalidPacket;
-    }
-
     /// Unified long with crypto backend, compatible version, OrClose, and drain.
-    pub fn longCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = self;
-    }
-
     /// Unified long with crypto backend, compatible version, OrClose, and poll.
-    pub fn longCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = self;
-    }
-
     /// Unified Initial with crypto backend in space, OrClose, and drain.
-    pub fn initialCryptoBackendInSpaceOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Initial with crypto backend in space, OrClose, and poll.
-    pub fn initialCryptoBackendInSpaceOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Initial with crypto backend in space, compatible version, OrClose, and drain.
-    pub fn initialCryptoBackendInSpaceCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     /// Unified Initial with crypto backend in space, compatible version, OrClose, and poll.
-    pub fn initialCryptoBackendInSpaceCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.processAcceptedProtectedInitialDatagram(connection_id, connection, now_nanos, datagram);
-    }
-
     pub fn processRetryValidatedProtectedInitialDatagram(
         self: *EndpointConnectionLifecycle,
         policy: *endpoint.AddressValidationPolicy,
@@ -3323,331 +1504,21 @@ pub const EndpointConnectionLifecycle = struct {
     /// socket loops keep retired-CID reset handling on the same lifecycle owner
     /// that installed replacement routes and applied `retire_prior_to`.
     /// Unified routed long with crypto backend, compatible version, OrClose, and drain.
-    pub fn routedLongCryptoBackendCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = path;
-        _ = self;
-        return error.InvalidPacket;
-    }
-
     /// Unified routed long with crypto backend, compatible version, OrClose, and poll.
-    pub fn routedLongCryptoBackendCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = space;
-        _ = datagram;
-        _ = now_nanos;
-        _ = connection;
-        _ = connection_id;
-        _ = path;
-        _ = self;
-        return error.InvalidPacket;
-    }
-
     /// Unified feed with crypto backend across spaces, compatible version, OrClose, and drain.
-    pub fn feedCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with crypto backend across spaces, compatible version, OrClose, and poll.
-    pub fn feedCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend in space, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendInSpaceOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend in space, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendInSpaceOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend in space, compatible version, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendInSpaceCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend in space, compatible version, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendInSpaceCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend across spaces, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendAcrossSpacesOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend across spaces, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendAcrossSpacesOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend across spaces, compatible version, OrClose, and drain.
-    pub fn feedAcrossCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed across connections with crypto backend across spaces, compatible version, OrClose, and poll.
-    pub fn feedAcrossCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeysAcrossConnections(allocator, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend in space, OrClose, and drain.
-    pub fn feedWithPendingWorkCryptoBackendInSpaceOrCloseAndDrainUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend in space, OrClose, and poll.
-    pub fn feedWithPendingWorkCryptoBackendInSpaceOrCloseAndPollUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and drain.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndDrainUnified2(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        out: []EndpointPolledDatagramResult,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        _ = out;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     /// Unified feed with pending work, crypto backend across spaces, compatible version, OrClose, and poll.
-    pub fn feedWithPendingWorkCryptoBackendAcrossSpacesCompatibleVersionOrCloseAndPollUnified2(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        crypto_backend: CryptoBackend,
-        scratch: []u8,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = opts;
-        _ = crypto_backend;
-        _ = scratch;
-        return self.feedDatagramWithInstalledKeys(connection_id, connection, path, now_nanos, datagram, options);
-    }
-
     pub fn statelessResetTokenForDatagram(
         self: *const EndpointConnectionLifecycle,
         path: endpoint.Udp4Tuple,
@@ -3794,27 +1665,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// Migration pattern: callers switch from variant functions to this
     /// unified function with the appropriate options.
-    pub fn feedDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        options: EndpointFeedInstalledKeyDatagramOptions,
-        unified_opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramResult {
-        _ = unified_opts; // Options used for future migration
-        return self.feedDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            options,
-        );
-    }
-
     /// Socket-facing installed-key receive with validated migration commit.
     ///
     /// This matches `feedDatagramWithInstalledKeys()` for Version Negotiation,
@@ -4864,50 +2714,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAndProcessPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            poll_options.space,
-        );
-    }
-
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then poll explicit output.
     ///
     /// This is the per-connection-output-options form of
@@ -5051,50 +2857,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAndProcessPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            poll_options.space,
-        );
-    }
-
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then poll explicit output.
     ///
     /// This is the per-connection-output-options form of
@@ -5240,52 +3002,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams()`.
-    pub fn feedDatagramWithInstalledKeysAndProcessPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
-    }
-
     /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then drain explicit output.
     ///
     /// This is the bounded-output form of
@@ -5435,52 +3151,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams()`.
-    pub fn feedDatagramWithInstalledKeysAndProcessPendingWorkAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
-    }
-
     /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then drain explicit output.
     ///
     /// This is the bounded-output form of
@@ -5684,47 +3354,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the per-connection-output-options form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
-        if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
-            switch (feed) {
-                .routed => backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
-                    backend_spaces,
-                    drive_views,
-                    poll_views,
-                    now_nanos,
-                ),
-                else => {},
-            }
-        }
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .backend = backend,
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
-    }
     /// Feed an installed-key datagram, process pending work, drive
     /// close-propagating backends across ordered packet number spaces, then poll
     /// explicit output.
@@ -6667,50 +4296,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection form of
     /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams()`.
-    pub fn feedDatagramWithInstalledKeysAndProcessPendingWorkAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
-    }
-
     /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then drain explicit output.
     ///
     /// This is the bounded-output form of
@@ -6943,39 +4528,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// received datagram is not routed to a live connection. That lets callers
     /// keep timeout cleanup and queued output progress tied to a single receive
     /// iteration.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramPollResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .datagram = try self.pollDatagramAcrossConnections(
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
-    }
-
     /// Feed an installed-key datagram, process pending work, then poll explicit output.
     ///
     /// This is the per-connection-output-options form of
@@ -7121,41 +4673,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// when the received datagram is not routed to a live connection. That lets
     /// callers keep timeout cleanup and queued output progress tied to a single
     /// receive iteration.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramDrainResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .drain = self.drainDatagramsAcrossConnections(
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
-    }
-
     /// Feed an installed-key datagram, process pending work, then drain explicit output.
     ///
     /// This is the per-connection-output-options form of
@@ -11617,39 +9134,6 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Drive one compatible-version backend across ordered packet number spaces,
     /// then poll installed-key output.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointCryptoBackendDriveDatagramResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
-            spaces,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-        );
-    }
-
     /// Drive one compatible-version backend across ordered packet number spaces,
     /// then poll explicit installed-key output.
     pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
@@ -11751,41 +9235,6 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Drive one compatible-version backend across ordered packet number spaces,
     /// then drain installed-key output.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndDrainDatagrams(
-            spaces,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-            out,
-        );
-    }
-
     /// Drive one compatible-version backend across ordered packet number spaces,
     /// then drain explicit installed-key output.
     pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
@@ -12426,41 +9875,6 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Drive one compatible-version close-propagating backend across ordered
     /// packet number spaces, then drain installed-key output.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndDrainDatagrams(
-            spaces,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-            out,
-        );
-    }
-
     /// Drive one compatible-version close-propagating backend across ordered
     /// packet number spaces, then drain explicit installed-key output.
     pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
@@ -13353,32 +10767,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the cross-space form of
     /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagram(
-                backend_spaces,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
     /// Process pending work, drive crypto backends across ordered packet number
     /// spaces, then poll explicit output.
     ///
@@ -13476,34 +10864,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the bounded-output cross-space form of
     /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-                backend_spaces,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
     /// Process pending work, drive crypto backends across ordered packet number
     /// spaces, then drain explicit output.
     ///
@@ -13772,35 +11132,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
     /// Process pending work, drive compatible-version backends, then drain output.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process pending work, drive compatible-version backends, then drain explicit output.
     ///
     /// This is the bounded-output form of
@@ -13834,33 +11165,6 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Process pending work, drive compatible-version backends across ordered
     /// packet number spaces, then poll output.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
-                backend_spaces,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
-        };
-    }
-
     /// Process pending work, drive compatible-version backends across ordered
     /// packet number spaces, then poll explicit output.
     pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
@@ -13978,35 +11282,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
     /// Process pending work, drive compatible-version close path, then drain output.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process pending work, drive compatible-version close path, then drain explicit output.
     ///
     /// This is the bounded-output form of
@@ -14358,105 +11633,11 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection cross-space form of
     /// `processPendingWorkAndDriveCryptoBackendInSpaceAndPollDatagram()`.
-    pub fn processPendingWorkAndDriveCryptoBackendAcrossSpacesAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
-        const pending_sweep = pendingWorkSweepFromSingle(pending_work);
-        if (pending_work.idle_retired != null or pending_work.close_retired != null) {
-            return .{
-                .pending_work = pending_sweep,
-                .backend = .{
-                    .backend = .{},
-                    .datagram = null,
-                },
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagram(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
-        };
-    }
-
     /// Process pending work, drive one backend across ordered packet number
     /// spaces, then drain installed-key output.
     ///
     /// This is the bounded-output form of
     /// `processPendingWorkAndDriveCryptoBackendAcrossSpacesAndPollDatagram()`.
-    pub fn processPendingWorkAndDriveCryptoBackendAcrossSpacesAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
-        const pending_sweep = pendingWorkSweepFromSingle(pending_work);
-        if (pending_work.idle_retired != null or pending_work.close_retired != null) {
-            return .{
-                .pending_work = pending_sweep,
-                .backend = .{
-                    .backend = .{},
-                    .drain = .{},
-                },
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
-        };
-    }
-
     /// Process pending work, drive close-propagating backend, then drain output.
     ///
     /// This is the single-connection OrClose form of
@@ -14568,105 +11749,11 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the single-connection cross-space form of
     /// `processPendingWorkAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram()`.
-    pub fn processPendingWorkAndDriveCryptoBackendAcrossSpacesOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
-        const pending_sweep = pendingWorkSweepFromSingle(pending_work);
-        if (pending_work.idle_retired != null or pending_work.close_retired != null) {
-            return .{
-                .pending_work = pending_sweep,
-                .backend = .{
-                    .backend = .{},
-                    .datagram = null,
-                },
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndPollDatagram(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
-        };
-    }
-
     /// Process pending work, drive one close-propagating backend across ordered
     /// packet number spaces, then drain installed-key output.
     ///
     /// This is the bounded-output form of
     /// `processPendingWorkAndDriveCryptoBackendAcrossSpacesOrCloseAndPollDatagram()`.
-    pub fn processPendingWorkAndDriveCryptoBackendAcrossSpacesOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWork(connection_id, connection, now_nanos);
-        const pending_sweep = pendingWorkSweepFromSingle(pending_work);
-        if (pending_work.idle_retired != null or pending_work.close_retired != null) {
-            return .{
-                .pending_work = pending_sweep,
-                .backend = .{
-                    .backend = .{},
-                    .drain = .{},
-                },
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagrams(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
-        };
-    }
-
     /// Process pending work, drive one compatible-version backend, then drain output.
     ///
     /// This is the single-connection bounded-output form for no-new-datagram
@@ -15889,35 +12976,9 @@ pub const EndpointConnectionLifecycle = struct {
     ///   processDueDeadlineAcrossConnectionsAndSelectNextDeadline
     ///   processDueDeadlineAndDriveCryptoBackendInSpaceAndSelectNextDeadline
     ///   etc.
-    pub fn processDueDeadlineUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     /// Unified pending-work processing with options-struct interface.
     ///
     /// Replaces 7+ processPendingWork variants.
-    pub fn processPendingWorkUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!EndpointPendingWorkResult {
-        _ = opts;
-        _ = allocator;
-        return self.processPendingWork(connection_id, connection, now_nanos);
-    }
-
     pub fn processDueDeadlineAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -16452,114 +13513,11 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the cross-space form of
     /// `processDueDeadlineAndDriveCryptoBackendInSpaceAndPollDatagram()`.
-    pub fn processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
-        const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
-            connection_id,
-            connection,
-            now_nanos,
-            poll_options,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{
-                .due_work = due_work,
-                .next_deadline = self.nextDeadline(connection_id, connection),
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagram(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
-
     /// Process a due deadline, drive one backend across ordered packet number
     /// spaces, then drain installed-key output.
     ///
     /// This is the bounded-output form of
     /// `processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndPollDatagram()`.
-    pub fn processDueDeadlineAndDriveCryptoBackendAcrossSpacesAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
-            connection_id,
-            connection,
-            now_nanos,
-            poll_options,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{
-                .due_work = due_work,
-                .next_deadline = self.nextDeadline(connection_id, connection),
-            };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
-        };
-    }
-
     /// Process a due deadline, drive one backend across ordered packet number
     /// spaces, then poll explicit installed-key output.
     ///
@@ -16860,107 +13818,11 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the cross-space form of
     /// `processDueDeadlineAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram()`.
-    pub fn processDueDeadlineAndDriveCryptoBackendAcrossSpacesOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
-        const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
-            connection_id,
-            connection,
-            now_nanos,
-            poll_options,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndPollDatagram(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
-        };
-    }
-
     /// Process a due deadline, drive one close-propagating backend across
     /// ordered packet number spaces, then drain installed-key output.
     ///
     /// This is the bounded-output form of
     /// `processDueDeadlineAndDriveCryptoBackendAcrossSpacesOrCloseAndPollDatagram()`.
-    pub fn processDueDeadlineAndDriveCryptoBackendAcrossSpacesOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAndPollDatagramForBackendOutput(
-            connection_id,
-            connection,
-            now_nanos,
-            poll_options,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndDrainDatagrams(
-                backend_spaces,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
-        };
-    }
-
     /// Process a due deadline, drive one close-propagating backend across
     /// ordered packet number spaces, then poll explicit installed-key output.
     ///
@@ -17687,37 +14549,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the cross-space form of
     /// `processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram()`.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndPollDatagram(
-                backend_spaces,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive TLS
     /// backends across ordered packet number spaces if no datagram was emitted.
     ///
@@ -17831,39 +14662,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This is the bounded-output form of
     /// `processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram()`.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesAndDrainDatagrams(
-                backend_spaces,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive TLS
     /// backends across ordered packet number spaces and drain output.
     ///
@@ -17972,39 +14770,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
     /// Process the earliest due deadline, then drive close-propagating backends and drain output.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive close-propagating backends and drain output.
     ///
     /// This is the bounded-output form of
@@ -18111,41 +14876,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
     /// Process the earliest due deadline, then drive compatible-version backends and drain output.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive compatible-version backends and drain output.
     ///
     /// This is the bounded-output form of
@@ -18255,41 +14985,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
     /// Process the earliest due deadline, then drive compatible-version close path and drain output.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive compatible-version close path and drain output.
     ///
     /// This is the bounded-output form of
@@ -18329,39 +15024,6 @@ pub const EndpointConnectionLifecycle = struct {
 
     /// Process the earliest due deadline, then drive compatible-version backends
     /// across ordered packet number spaces and poll output.
-    pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        deadline_connections: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
-        const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagram(
-            deadline_connections,
-            now_nanos,
-        )) orelse return null;
-        if (due_work.datagram != null or
-            due_work.pending_work.idle_retired != null or
-            due_work.pending_work.close_retired != null)
-        {
-            return .{ .due_work = due_work };
-        }
-        return .{
-            .due_work = due_work,
-            .backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagram(
-                backend_spaces,
-                drive_views,
-                compatibilities,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
-        };
-    }
-
     /// Process the earliest due deadline with explicit output, then drive
     /// compatible-version backends across ordered packet number spaces and poll output.
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
@@ -19684,27 +16346,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// Route ownership and success behavior match
     /// `processRoutedProtectedZeroRttDatagram()`, while authenticated frame
     /// payload errors use the connection close path.
-    pub fn processRoutedProtectedZeroRttDatagramOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedZeroRttDatagramOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            keys,
-            datagram,
-        );
-        return route;
-    }
-
     /// Process caller-keyed 0-RTT input, then poll one caller-keyed short output.
     ///
     /// This combines the common server loop step where an accepted 0-RTT packet
@@ -20223,47 +16864,9 @@ pub const EndpointConnectionLifecycle = struct {
     ///   processProtectedShortDatagramWithInstalledKeys
     ///   processProtectedShortDatagramWithInstalledKeysOrClose
     ///   processProtectedShortDatagramWithKeyUpdate
-    pub fn processProtectedShortDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid_len: usize,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        return self.processProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            dcid_len,
-            datagram,
-        );
-    }
-
     /// Unified routed protected short datagram processing with options-struct interface.
     ///
     /// Replaces 5 processRoutedProtectedShortDatagram variants.
-    pub fn processRoutedProtectedShortDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!endpoint.RouteResult {
-        _ = opts;
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-        );
-    }
-
     pub fn processProtectedShortDatagramAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -20718,28 +17321,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// This keeps caller-supplied key-update state on the same endpoint-owned
     /// route boundary, and delegates authenticated frame-payload errors to the
     /// connection close path.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedShortDatagramWithKeyUpdateOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            keys,
-            route.destination_connection_id.asSlice().len,
-            datagram,
-        );
-        return route;
-    }
-
     /// Process explicit key-update 1-RTT input and select the next wakeup.
     ///
     /// This is the no-output form for callers that own current and next
@@ -21214,28 +17795,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This preserves endpoint route validation and only advances key-phase
     /// state after `Connection` accepts the authenticated plaintext frames.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedShortDatagramWithKeyPhaseStateOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            key_phase_state,
-            route.destination_connection_id.asSlice().len,
-            datagram,
-        );
-        return route;
-    }
-
     /// Process caller-owned key-phase 1-RTT input and select the next wakeup.
     ///
     /// This is the no-output form for socket loops that keep key-phase state
@@ -21908,25 +18467,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// This is the endpoint event-loop receive bridge for TLS-owned Handshake
     /// packet protection when authenticated frame-payload peer errors should
     /// produce CONNECTION_CLOSE.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-        return route;
-    }
-
     /// Process installed-key Handshake input, then poll one installed-key output.
     ///
     /// This is the lightweight TLS-owned Handshake socket-loop step for ACK,
@@ -22197,57 +18737,10 @@ pub const EndpointConnectionLifecycle = struct {
     /// returns the next endpoint-visible deadline without polling output.
     /// Unified Handshake datagram processing with options-struct interface.
     /// Replaces 10 processProtectedHandshakeDatagram variants.
-    pub fn processProtectedHandshakeDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        return self.processProtectedHandshakeDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-    }
-
     /// Unified long datagram processing with options-struct interface.
     /// Replaces 4+ processProtectedLongDatagramInSpace variants.
-    pub fn processProtectedLongDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        space: PacketNumberSpace,
-        datagram: []const u8,
-        opts: lifecycle_opts.FeedInstalledKeyOptions,
-    ) Error!void {
-        _ = opts;
-        return self.processProtectedLongDatagramInSpace(
-            connection_id,
-            connection,
-            now_nanos,
-            space,
-            datagram,
-        );
-    }
-
     /// Unified recovery timer service with options-struct interface.
     /// Replaces 5+ serviceRecoveryTimer variants.
-    pub fn serviceRecoveryTimerUnified(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        opts: lifecycle_opts.UnifiedReceiveOptions,
-    ) Error!void {
-        _ = opts;
-        return self.serviceRecoveryTimer(connection_id, connection, now_nanos);
-    }
-
     pub fn processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
@@ -22556,25 +19049,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This keeps TLS early-data receive on the endpoint route boundary while
     /// allowing authenticated frame-payload peer errors to queue CONNECTION_CLOSE.
-    pub fn processRoutedProtectedZeroRttDatagramWithInstalledKeysOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-        return route;
-    }
-
     /// Process installed-key 0-RTT input, then poll one installed-key short output.
     ///
     /// This is the TLS-owned key variant of
@@ -22900,20 +19374,6 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// Replaces pollDatagram, pollDatagramWithInstalledKeys,
     /// pollDatagramAcrossConnections, and their variants.
-    pub fn pollDatagramUnified(
-        self: *EndpointConnectionLifecycle,
-        allocator: std.mem.Allocator,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        space: EndpointInstalledKeyDatagramSpace,
-        opts: lifecycle_opts.DrainOptions,
-    ) Error!?[]u8 {
-        _ = opts;
-        _ = allocator;
-        return self.pollDatagram(connection_id, connection, now_nanos, space);
-    }
-
     pub fn pollDatagramAcrossConnections(
         self: *EndpointConnectionLifecycle,
         connections: []const EndpointConnectionPollView,
@@ -24373,30 +20833,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// This is the bounded-output form of
     /// `processProtectedShortDatagramWithInstalledKeysAndPollDatagram()`.
     /// Returned datagrams remain caller-owned and must be freed by the caller.
-    pub fn processProtectedShortDatagramWithInstalledKeysAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid_len: usize,
-        datagram: []const u8,
-        destination_connection_id: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointDatagramDrainResult {
-        return self.processProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-            connection_id,
-            connection,
-            now_nanos,
-            dcid_len,
-            datagram,
-            .{
-                .space = .application,
-                .destination_connection_id = destination_connection_id,
-            },
-            out,
-        );
-    }
-
     /// Process one installed-key 1-RTT datagram, then drain explicit output.
     ///
     /// This is the bounded-output counterpart of
@@ -24437,30 +20873,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// Authenticated frame-payload errors queue CONNECTION_CLOSE and return
     /// before output draining so callers do not receive partial output after a
     /// failed receive step.
-    pub fn processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        dcid_len: usize,
-        datagram: []const u8,
-        destination_connection_id: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointDatagramDrainResult {
-        return self.processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            connection_id,
-            connection,
-            now_nanos,
-            dcid_len,
-            datagram,
-            .{
-                .space = .application,
-                .destination_connection_id = destination_connection_id,
-            },
-            out,
-        );
-    }
-
     /// Process one installed-key 1-RTT datagram through close propagation, then drain explicit output.
     ///
     /// Authenticated frame-payload errors queue CONNECTION_CLOSE and drain
@@ -24522,30 +20934,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// `out.len` Application-space datagrams such as ACKs or queued STREAM
     /// data. Returned datagrams remain caller-owned and must be freed by the
     /// caller.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        destination_connection_id: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            .{
-                .space = .application,
-                .destination_connection_id = destination_connection_id,
-            },
-            out,
-        );
-    }
-
     /// Route/process one installed-key 1-RTT datagram and drain explicit output.
     ///
     /// Route selection and packet processing match
@@ -24583,30 +20971,6 @@ pub const EndpointConnectionLifecycle = struct {
     /// Authenticated frame-payload errors queue CONNECTION_CLOSE and return
     /// before output draining so callers do not receive partial output after a
     /// failed receive step. Route mismatches fail before packet processing.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        destination_connection_id: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        return self.processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            connection_id,
-            connection,
-            path,
-            now_nanos,
-            datagram,
-            .{
-                .space = .application,
-                .destination_connection_id = destination_connection_id,
-            },
-            out,
-        );
-    }
-
     /// Route/process one installed-key 1-RTT datagram through close propagation and drain explicit output.
     ///
     /// Route errors and connection-id mismatches fail before packet processing;
