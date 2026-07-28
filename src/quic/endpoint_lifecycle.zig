@@ -7676,6 +7676,216 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
+    /// Unified crypto backend drive + poll output step.
+    ///
+    /// Replaces all driveCryptoBackend*AndPollDatagram{WithInstalledKeyOptions,}
+    /// variants (normal and OrClose, InSpace and AcrossSpaces, WithCompatibleVersion).
+    pub fn driveCryptoBackendStepWithPoll(
+        self: *EndpointConnectionLifecycle,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        now_nanos: i64,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+    ) Error!EndpointCryptoBackendDriveDatagramResult {
+        var sweep = EndpointCryptoBackendDriveSweepResult{};
+        for (drive_views) |view| {
+            const progress = self.driveCryptoBackendStepInner(
+                view.connection_id, view.connection, spaces,
+                view.backend, view.scratch, opts, compatibilities,
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                if (opts.close_on_error and spaces.len == 1 and
+                    err == error.InvalidPacket and
+                    view.connection.connectionState() == .closing)
+                {
+                    return .{
+                        .backend = sweep,
+                        .datagram = try self.pollDatagramForBackendClose(
+                            view.connection_id, poll_views, now_nanos, poll_space,
+                        ),
+                        .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
+                    };
+                }
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+            accumulateCryptoBackendProgress(&sweep, progress);
+        }
+        const retained_before = countRetainedHandshakeSpaces(poll_views);
+        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
+            poll_views, now_nanos, poll_space,
+        );
+        markHandshakeSpaceDiscardedIfCountDrops(
+            &sweep.progress, retained_before, countRetainedHandshakeSpaces(poll_views),
+        );
+        return .{
+            .backend = sweep,
+            .datagram = datagram,
+            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
+        };
+    }
+
+    /// Unified crypto backend drive + drain output step.
+    ///
+    /// Replaces all driveCryptoBackend*AndDrainDatagrams{WithInstalledKeyOptions,}
+    /// variants (normal and OrClose, InSpace and AcrossSpaces, WithCompatibleVersion).
+    pub fn driveCryptoBackendStepWithDrain(
+        self: *EndpointConnectionLifecycle,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        now_nanos: i64,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+        out: []EndpointPolledDatagramResult,
+    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
+        var sweep = EndpointCryptoBackendDriveSweepResult{};
+        for (drive_views) |view| {
+            const progress = self.driveCryptoBackendStepInner(
+                view.connection_id, view.connection, spaces,
+                view.backend, view.scratch, opts, compatibilities,
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                if (opts.close_on_error and spaces.len == 1 and
+                    err == error.InvalidPacket and
+                    view.connection.connectionState() == .closing)
+                {
+                    return .{
+                        .backend = sweep,
+                        .drain = try self.drainDatagramsForBackendClose(
+                            view.connection_id, poll_views, now_nanos, poll_space, out,
+                        ),
+                        .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
+                    };
+                }
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+            accumulateCryptoBackendProgress(&sweep, progress);
+        }
+        const retained_before = countRetainedHandshakeSpaces(poll_views);
+        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
+            poll_views, now_nanos, poll_space, out,
+        );
+        markHandshakeSpaceDiscardedIfCountDrops(
+            &sweep.progress, retained_before, countRetainedHandshakeSpaces(poll_views),
+        );
+        return .{
+            .backend = sweep,
+            .drain = drain,
+            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
+        };
+    }
+
+    /// Unified crypto backend drive + installed-key poll output step.
+    ///
+    /// Replaces all driveCryptoBackend*AndPollDatagramWithInstalledKeyOptions
+    /// variants (normal and OrClose, InSpace and AcrossSpaces, WithCompatibleVersion).
+    pub fn driveCryptoBackendStepWithInstalledKeyPoll(
+        self: *EndpointConnectionLifecycle,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+        now_nanos: i64,
+    ) Error!EndpointCryptoBackendDriveDatagramResult {
+        var sweep = EndpointCryptoBackendDriveSweepResult{};
+        for (drive_views) |view| {
+            const progress = self.driveCryptoBackendStepInner(
+                view.connection_id, view.connection, spaces,
+                view.backend, view.scratch, opts, compatibilities,
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                if (opts.close_on_error and spaces.len == 1 and
+                    err == error.InvalidPacket and
+                    view.connection.connectionState() == .closing)
+                {
+                    return .{
+                        .backend = sweep,
+                        .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
+                            view.connection_id, poll_views, now_nanos,
+                        ),
+                        .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
+                    };
+                }
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+            accumulateCryptoBackendProgress(&sweep, progress);
+        }
+        const retained_before = countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
+        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
+            poll_views, now_nanos,
+        );
+        markHandshakeSpaceDiscardedIfCountDrops(
+            &sweep.progress, retained_before,
+            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
+        );
+        return .{
+            .backend = sweep,
+            .datagram = datagram,
+            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
+        };
+    }
+
+    /// Unified crypto backend drive + installed-key drain output step.
+    ///
+    /// Replaces all driveCryptoBackend*AndDrainDatagramsWithInstalledKeyOptions
+    /// variants (normal and OrClose, InSpace and AcrossSpaces, WithCompatibleVersion).
+    pub fn driveCryptoBackendStepWithInstalledKeyDrain(
+        self: *EndpointConnectionLifecycle,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+        now_nanos: i64,
+        out: []EndpointPolledDatagramResult,
+    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
+        var sweep = EndpointCryptoBackendDriveSweepResult{};
+        for (drive_views) |view| {
+            const progress = self.driveCryptoBackendStepInner(
+                view.connection_id, view.connection, spaces,
+                view.backend, view.scratch, opts, compatibilities,
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                if (opts.close_on_error and spaces.len == 1 and
+                    err == error.InvalidPacket and
+                    view.connection.connectionState() == .closing)
+                {
+                    return .{
+                        .backend = sweep,
+                        .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
+                            view.connection_id, poll_views, now_nanos, out,
+                        ),
+                        .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
+                    };
+                }
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
+            accumulateCryptoBackendProgress(&sweep, progress);
+        }
+        const retained_before = countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
+        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
+            poll_views, now_nanos, out,
+        );
+        markHandshakeSpaceDiscardedIfCountDrops(
+            &sweep.progress, retained_before,
+            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
+        );
+        return .{
+            .backend = sweep,
+            .drain = drain,
+            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
+        };
+    }
+
     /// Drive crypto backends, then select the next endpoint-visible deadline.
     ///
     /// This is the no-output backend-drive step for socket loops. Backend
@@ -7768,26 +7978,7 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-            space,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space);
     }
 
     /// Drive crypto backends across ordered packet number spaces, then poll output.
@@ -7804,26 +7995,7 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithPoll(spaces, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space);
     }
 
     /// Drive crypto backends across ordered packet number spaces, then drain output.
@@ -7841,27 +8013,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(spaces, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive crypto backends across ordered packet number spaces, then poll
@@ -7877,26 +8030,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(spaces, drive_views, .{}, &.{}, poll_views, now_nanos);
+    
     }
 
     /// Drive crypto backends across ordered packet number spaces, then drain
@@ -7912,27 +8047,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(spaces, drive_views, .{}, &.{}, poll_views, now_nanos, out);
+    
     }
 
     /// Drive close-propagating crypto backends across ordered packet number
@@ -7947,26 +8063,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(spaces, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos);
+    
     }
 
     /// Drive close-propagating crypto backends across ordered packet number
@@ -7987,27 +8085,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(spaces, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, out);
+    
     }
 
     /// Drive close-propagating crypto backends across ordered packet number
@@ -8025,27 +8104,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesOrCloseAndArmConnections(
-            spaces,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(spaces, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive crypto backends, then poll installed-key output with explicit options.
@@ -8059,26 +8119,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-            space,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos);
+    
     }
 
     /// Drive one backend, then poll one installed-key datagram.
@@ -8161,27 +8203,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-            space,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive crypto backends, then drain installed-key output with explicit options.
@@ -8196,27 +8219,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsInSpaceAndArmConnections(
-            space,
-            drive_views,
-        );
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one backend, then drain installed-key output.
@@ -8367,45 +8371,7 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .datagram = try self.pollDatagramForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        poll_space,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space);
     }
 
     /// Drive close-propagating crypto backends, then poll explicit output.
@@ -8420,44 +8386,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos);
+    
     }
 
     /// Drive one close-propagating backend, then poll one installed-key datagram.
@@ -8537,47 +8467,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .drain = try self.drainDatagramsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        poll_space,
-                        out,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive close-propagating backends, then drain explicit output.
@@ -8592,46 +8483,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        out,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one close-propagating backend, then drain installed-key output.
@@ -8889,27 +8742,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
-            spaces,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(spaces, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos);
+    
     }
 
     /// Drive one compatible-version backend across ordered packet number spaces,
@@ -8955,28 +8789,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionAndArmConnections(
-            spaces,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(spaces, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one compatible-version backend across ordered packet number spaces,
@@ -9068,27 +8882,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos, poll_space);
+    
     }
 
     /// Drive compatible-version backends, then poll explicit installed-key output.
@@ -9104,27 +8899,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(&.{space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos);
+    
     }
 
     /// Drive one compatible-version backend, then poll one installed-key datagram.
@@ -9205,28 +8981,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive compatible-version backends, then drain explicit installed-key output.
@@ -9242,28 +8998,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = try self.driveCryptoBackendsInSpaceWithCompatibleVersionAndArmConnections(
-            space,
-            drive_views,
-            compatibilities,
-        );
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(&.{space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one compatible-version backend, then drain installed-key output.
@@ -9499,47 +9235,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                spaces,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        out,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(spaces, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one compatible-version close-propagating backend across ordered
@@ -9630,46 +9327,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         poll_space: EndpointInstalledKeyDatagramSpace,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .datagram = try self.pollDatagramForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        poll_space,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_poll = countRetainedHandshakeSpaces(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos, poll_space);
+    
     }
 
     /// Drive compatible-version close path, then poll explicit installed-key output.
@@ -9685,45 +9344,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
         now_nanos: i64,
     ) Error!EndpointCryptoBackendDriveDatagramResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_poll =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_poll,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .datagram = datagram,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyPoll(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos);
+    
     }
 
     /// Drive one compatible-version close path, then poll one installed-key datagram.
@@ -9808,48 +9430,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_space: EndpointInstalledKeyDatagramSpace,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .drain = try self.drainDatagramsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        poll_space,
-                        out,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_drain = countRetainedHandshakeSpaces(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            poll_space,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpaces(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos, poll_space, out);
+    
     }
 
     /// Drive compatible-version close path, then drain explicit installed-key output.
@@ -9865,47 +9447,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         out: []EndpointPolledDatagramResult,
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        var backend = EndpointCryptoBackendDriveSweepResult{};
-        for (drive_views) |view| {
-            const progress = self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
-                space,
-                view.backend,
-                view.scratch,
-                compatibilities,
-            ) catch |err| {
-                if (err != error.InvalidPacket or view.connection.connectionState() != .closing) return err;
-                return .{
-                    .backend = backend,
-                    .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
-                        view.connection_id,
-                        poll_views,
-                        now_nanos,
-                        out,
-                    ),
-                    .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-                };
-            };
-            accumulateCryptoBackendProgress(&backend, progress);
-        }
-        const retained_handshake_spaces_before_drain =
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
-        const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views,
-            now_nanos,
-            out,
-        );
-        markHandshakeSpaceDiscardedIfCountDrops(
-            &backend.progress,
-            retained_handshake_spaces_before_drain,
-            countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
-        );
-        return .{
-            .backend = backend,
-            .drain = drain,
-            .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
-        };
+        return self.driveCryptoBackendStepWithInstalledKeyDrain(&.{space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos, out);
+    
     }
 
     /// Drive one compatible-version close path, then drain installed-key output.
