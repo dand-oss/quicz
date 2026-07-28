@@ -451,13 +451,13 @@ pub fn main() !void {
                 cnt: *std.atomic.Value(usize),
                 peer: std.Io.net.IpAddress,
                 drop_pct: usize,
-                drop_counter: *usize,
+                rng_state: *u64,
             };
-            var drop_ctr: usize = 0;
+            var rng_state: u64 = 0xDEADBEEF;
             var loss_ctx = LossCtx{
                 .sock = &loss_srv_sock, .io_r = io, .srv = &loss_srv,
                 .flag = &loss_done, .cnt = &loss_recv, .peer = loss_addr,
-                .drop_pct = lr.pct, .drop_counter = &drop_ctr,
+                .drop_pct = lr.pct, .rng_state = &rng_state,
             };
 
             const loss_fn = struct {
@@ -470,9 +470,9 @@ pub fn main() !void {
                         while (true) {
                             const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
                             if (!have) { c.peer = r.from; have = true; }
-                            // Simulate packet loss: drop every Nth packet
-                            c.drop_counter.* += 1;
-                            if (c.drop_counter.* % (100 / c.drop_pct) == 0) continue; // drop
+                            // Simulate random packet loss (xorshift PRNG)
+                            c.rng_state.* ^= c.rng_state.* << 13; c.rng_state.* ^= c.rng_state.* >> 7; c.rng_state.* ^= c.rng_state.* << 17;
+                            if (c.rng_state.* % 100 < c.drop_pct) continue; // random drop
                             _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                             got = true;
                         }
