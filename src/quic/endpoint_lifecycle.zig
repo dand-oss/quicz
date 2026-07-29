@@ -1969,6 +1969,151 @@ pub const EndpointConnectionLifecycle = struct {
     // Unified feedDatagram + pending work + crypto backend drive step
     // -----------------------------------------------------------------------
 
+    /// Unified feed + crypto backend drive + deadline selection (no pending work).
+    pub fn feedStepWithCryptoDeadline(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        deadline_connections: []const EndpointConnectionView,
+    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveNextDeadlineResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        var backend: ?EndpointCryptoBackendDriveNextDeadlineResult = null;
+        switch (feed) {
+            .routed => backend = try self.driveCryptoBackendStep(
+                spaces, drive_views,
+                .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline },
+                compatibilities, deadline_connections,
+            ),
+            else => {},
+        }
+        return .{ .feed = feed, .backend = backend };
+    }
+
+    /// Unified feed + crypto backend drive + poll output (no pending work).
+    pub fn feedStepWithCryptoPoll(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
+        switch (feed) {
+            .routed => backend = try self.driveCryptoBackendStepWithPoll(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, poll_space,
+            ),
+            else => {},
+        }
+        return .{ .feed = feed, .backend = backend, .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections) };
+    }
+
+    /// Unified feed + crypto backend drive + drain output (no pending work).
+    pub fn feedStepWithCryptoDrain(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionPollView,
+        poll_space: EndpointInstalledKeyDatagramSpace,
+        out: []EndpointPolledDatagramResult,
+    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramDrainResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
+        switch (feed) {
+            .routed => backend = try self.driveCryptoBackendStepWithDrain(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, poll_space, out,
+            ),
+            else => {},
+        }
+        return .{ .feed = feed, .backend = backend, .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections) };
+    }
+
+    /// Unified feed + crypto backend drive + installed-key poll (no pending work).
+    pub fn feedStepWithCryptoInstalledKeyPoll(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
+        switch (feed) {
+            .routed => backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos,
+            ),
+            else => {},
+        }
+        return .{ .feed = feed, .backend = backend, .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections) };
+    }
+
+    /// Unified feed + crypto backend drive + installed-key drain (no pending work).
+    pub fn feedStepWithCryptoInstalledKeyDrain(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+        out: []EndpointPolledDatagramResult,
+    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramDrainResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
+        switch (feed) {
+            .routed => backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, out,
+            ),
+            else => {},
+        }
+        return .{ .feed = feed, .backend = backend, .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections) };
+    }
+
     /// Unified feed + pending-work + crypto backend drive + deadline selection.
     ///
     /// Replaces all feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWork
