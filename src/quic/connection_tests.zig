@@ -27008,15 +27008,13 @@ test "EndpointConnectionLifecycle single backend drive polls separate explicit o
         },
     }};
 
-    const result = try lifecycle.driveCryptoBackendInSpaceAndPollDatagramWithInstalledKeyOptions(
-        131,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        10,
-    );
+    const _w101_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 131,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &_w101_drive_views, .{}, &.{}, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     const polled = result.datagram orelse return error.TestUnexpectedResult;
@@ -27120,16 +27118,13 @@ test "EndpointConnectionLifecycle single backend drive drains separate explicit 
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        133,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        10,
-        &out,
-    );
+    const _w104_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 133,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &_w104_drive_views, .{}, &.{}, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     try std.testing.expectEqual(@as(usize, 2), result.drain.datagrams_written);
@@ -27186,77 +27181,58 @@ test "EndpointConnectionLifecycle single backend explicit output variants typech
     const versions = [_]VersionCompatibility{};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const close_poll = try lifecycle.driveCryptoBackendInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        10,
-    );
+    const _w105_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const close_poll = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &_w105_drive_views, .{ .close_on_error = true }, &.{}, &poll_views, 10);
     try std.testing.expectEqual(@as(?EndpointPolledDatagramResult, null), close_poll.datagram);
 
-    const close_drain = try lifecycle.driveCryptoBackendInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        10,
-        &out,
-    );
+    const _w107_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const close_drain = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &_w107_drive_views, .{ .close_on_error = true }, &.{}, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 0), close_drain.drain.datagrams_written);
 
-    const compatible_poll = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &versions,
-        &poll_views,
-        10,
-    );
+    const _w112_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_poll = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &_w112_drive_views, .{ .compatible_version = true }, &versions, &poll_views, 10);
     try std.testing.expectEqual(@as(?EndpointPolledDatagramResult, null), compatible_poll.datagram);
 
-    const compatible_drain = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &versions,
-        &poll_views,
-        10,
-        &out,
-    );
+    const _w115_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_drain = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &_w115_drive_views, .{ .compatible_version = true }, &versions, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 0), compatible_drain.drain.datagrams_written);
 
-    const compatible_close_poll = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &versions,
-        &poll_views,
-        10,
-    );
+    const _w118_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_close_poll = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &_w118_drive_views, .{ .close_on_error = true, .compatible_version = true }, &versions, &poll_views, 10);
     try std.testing.expectEqual(@as(?EndpointPolledDatagramResult, null), compatible_close_poll.datagram);
 
-    const compatible_close_drain = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        136,
-        &backend_connection,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &versions,
-        &poll_views,
-        10,
-        &out,
-    );
+    const _w120_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 136,
+            .connection = &backend_connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_close_drain = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &_w120_drive_views, .{ .close_on_error = true, .compatible_version = true }, &versions, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 0), compatible_close_drain.drain.datagrams_written);
     try std.testing.expectEqual(@as(usize, 6), backend.pulls);
 }
@@ -27317,20 +27293,31 @@ test "EndpointConnectionLifecycle single backend drive drains bounded output" {
     var backend = OutputBackend{ .outbound = &outbound };
     var scratch: [128]u8 = undefined;
     var first_out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.driveCryptoBackendInSpaceAndDrainDatagrams(
-        110,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        10,
-        .{
+    const _w102_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 110,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w102_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 110,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-        &first_out,
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w102_drive_views, .{}, &.{}, &_w102_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space, &first_out);
     defer for (first_out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -27596,20 +27583,31 @@ test "EndpointConnectionLifecycle treats discarded installed-key backend Handsha
     var scratch: [128]u8 = undefined;
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendInSpaceAndDrainDatagrams(
-        117,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        10,
-        .{
+    const _w103_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 117,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w103_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 117,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-        &out,
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w103_drive_views, .{}, &.{}, &_w103_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space, &out);
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -27669,22 +27667,33 @@ test "EndpointConnectionLifecycle single close backend drive stops before drain"
     var backend = BadBackend{};
     var scratch: [64]u8 = undefined;
     var out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(
-        error.InvalidPacket,
-        lifecycle.driveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-            111,
-            &server,
-            .handshake,
-            backend.backend(),
-            &scratch,
-            10,
-            .{
+    const _w106_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 111,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w106_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 111,
+            .connection = &server,
+            .destination_connection_id = .{
                 .space = .handshake,
                 .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x62 },
                 .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf2 },
-            },
-            &out,
-        ),
+            }.destination_connection_id,
+            .source_connection_id = .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x62 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf2 },
+            }.source_connection_id,
+        }};
+    try std.testing.expectError(
+        error.InvalidPacket,
+        lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w106_drive_views, .{ .close_on_error = true }, &.{}, &_w106_poll_views, 10, .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x62 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf2 },
+            }.space, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -27848,21 +27857,31 @@ test "EndpointConnectionLifecycle single compatible backend drive drains after p
     };
     var scratch: [256]u8 = undefined;
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        112,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        10,
-        .{
+    const _w113_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 112,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w113_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 112,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-        &out,
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w113_drive_views, .{ .compatible_version = true }, &compatibilities, &_w113_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space, &out);
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -27974,20 +27993,31 @@ test "EndpointConnectionLifecycle single compatible backend drive polls after pe
         .outbound = "single compatible backend poll output",
     };
     var scratch: [256]u8 = undefined;
-    const result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        116,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        10,
-        .{
+    const _w110_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 116,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w110_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 116,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithPoll(&.{.handshake}, &_w110_drive_views, .{ .compatible_version = true }, &compatibilities, &_w110_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(peer_params_out.getWritten().len, result.backend.progress.peer_transport_parameters_bytes);
     try std.testing.expect(result.backend.progress.peer_transport_parameters_applied);
@@ -28104,20 +28134,31 @@ test "EndpointConnectionLifecycle treats discarded compatible backend Handshake 
         .outbound = "compatible server finished",
     };
     var scratch: [256]u8 = undefined;
-    const result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        118,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        10,
-        .{
+    const _w111_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 118,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w111_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 118,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithPoll(&.{.handshake}, &_w111_drive_views, .{ .compatible_version = true }, &compatibilities, &_w111_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space);
     defer if (result.datagram) |datagram| std.testing.allocator.free(datagram.datagram);
 
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
@@ -28227,21 +28268,31 @@ test "EndpointConnectionLifecycle treats discarded compatible backend Handshake 
     };
     var scratch: [256]u8 = undefined;
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        119,
-        &server,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        10,
-        .{
+    const _w114_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 119,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w114_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 119,
+            .connection = &server,
+            .destination_connection_id = .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-        &out,
-    );
+        }.destination_connection_id,
+            .source_connection_id = .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.source_connection_id,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w114_drive_views, .{ .compatible_version = true }, &compatibilities, &_w114_poll_views, 10, .{
+            .space = .handshake,
+            .destination_connection_id = &client_dcid,
+            .source_connection_id = &server_dcid,
+        }.space, &out);
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -28320,23 +28371,33 @@ test "EndpointConnectionLifecycle single compatible close backend drive stops be
     var backend = BadBackend{ .peer_transport_parameters = peer_params_out.getWritten() };
     var scratch: [256]u8 = undefined;
     var out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(
-        error.InvalidPacket,
-        lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-            113,
-            &server,
-            .handshake,
-            backend.backend(),
-            &scratch,
-            &[_]VersionCompatibility{},
-            10,
-            .{
+    const _w119_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 113,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w119_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 113,
+            .connection = &server,
+            .destination_connection_id = .{
                 .space = .handshake,
                 .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x64 },
                 .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf4 },
-            },
-            &out,
-        ),
+            }.destination_connection_id,
+            .source_connection_id = .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x64 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf4 },
+            }.source_connection_id,
+        }};
+    try std.testing.expectError(
+        error.InvalidPacket,
+        lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &_w119_drive_views, .{ .close_on_error = true, .compatible_version = true }, &[_]VersionCompatibility{}, &_w119_poll_views, 10, .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x64 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf4 },
+            }.space, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -28406,22 +28467,33 @@ test "EndpointConnectionLifecycle single compatible close backend drive stops be
 
     var backend = BadBackend{ .peer_transport_parameters = peer_params_out.getWritten() };
     var scratch: [256]u8 = undefined;
-    try std.testing.expectError(
-        error.InvalidPacket,
-        lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-            117,
-            &server,
-            .handshake,
-            backend.backend(),
-            &scratch,
-            &[_]VersionCompatibility{},
-            10,
-            .{
+    const _w117_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 117,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w117_poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = 117,
+            .connection = &server,
+            .destination_connection_id = .{
                 .space = .handshake,
                 .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x68 },
                 .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf8 },
-            },
-        ),
+            }.destination_connection_id,
+            .source_connection_id = .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x68 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf8 },
+            }.source_connection_id,
+        }};
+    try std.testing.expectError(
+        error.InvalidPacket,
+        lifecycle.driveCryptoBackendStepWithPoll(&.{.handshake}, &_w117_drive_views, .{ .close_on_error = true, .compatible_version = true }, &[_]VersionCompatibility{}, &_w117_poll_views, 10, .{
+                .space = .handshake,
+                .destination_connection_id = &[_]u8{ 0x31, 0x41, 0x51, 0x68 },
+                .source_connection_id = &[_]u8{ 0xc1, 0xd1, 0xe1, 0xf8 },
+            }.space),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -29233,16 +29305,13 @@ test "EndpointConnectionLifecycle cross-space compatible backend polls explicit 
         },
     }};
 
-    const result = try lifecycle.driveCryptoBackendAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        171,
-        &server,
-        &spaces,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        &poll_views,
-        10,
-    );
+    const _w108_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 171,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&spaces, &_w108_drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -29359,17 +29428,13 @@ test "EndpointConnectionLifecycle cross-space compatible backend drains explicit
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendAcrossSpacesWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        173,
-        &server,
-        &spaces,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        &poll_views,
-        10,
-        &out,
-    );
+    const _w109_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 173,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&spaces, &_w109_drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -29456,19 +29521,15 @@ test "EndpointConnectionLifecycle cross-space compatible close backend stops bef
     var scratch: [256]u8 = undefined;
     const spaces = [_]PacketNumberSpace{ .initial, .handshake };
     var out: [1]EndpointPolledDatagramResult = undefined;
+    const _w116_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 176,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-            176,
-            &server,
-            &spaces,
-            backend.backend(),
-            &scratch,
-            &[_]VersionCompatibility{},
-            &[_]EndpointConnectionInstalledKeyPollView{},
-            10,
-            &out,
-        ),
+        lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&spaces, &_w116_drive_views, .{ .close_on_error = true, .compatible_version = true }, &[_]VersionCompatibility{}, &[_]EndpointConnectionInstalledKeyPollView{}, 10, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
