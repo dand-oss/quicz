@@ -12999,19 +12999,20 @@ test "EndpointConnectionLifecycle feed pending-work step reports reset close dea
     var out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
     const versions = [_]packet.Version{.v1};
-    const result = try lifecycle.feedDatagramWithInstalledKeysAndProcessPendingWorkAndSelectNextDeadline(
-        99,
-        &conn,
-        path,
-        11,
-        reset_out.getWritten(),
-        .{
+    const _w402_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 99,
+            .connection = &conn,
+        }};
+    const _w402_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 99,
+            .connection = &conn,
+        }};
+    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndSelectNextDeadline(&_w402_receive_connections, &_w402_deadline_connections, path, 11, reset_out.getWritten(), .{
             .space = .application,
             .out = &out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-    );
+        },);
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result.feed);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
@@ -13052,19 +13053,20 @@ test "EndpointConnectionLifecycle feed pending-work step retires due close" {
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
     const versions = [_]packet.Version{.v1};
     const datagram = [_]u8{ 0x40, 0x77, 0x78, 0x79, 0x7a };
-    const result = try lifecycle.feedDatagramWithInstalledKeysAndProcessPendingWorkAndSelectNextDeadline(
-        100,
-        &conn,
-        path,
-        close_deadline,
-        &datagram,
-        .{
+    const _w403_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 100,
+            .connection = &conn,
+        }};
+    const _w403_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 100,
+            .connection = &conn,
+        }};
+    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndSelectNextDeadline(&_w403_receive_connections, &_w403_deadline_connections, path, close_deadline, &datagram, .{
             .space = .application,
             .out = &out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-    );
+        },);
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result.feed);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
@@ -13938,19 +13940,20 @@ test "EndpointConnectionLifecycle installed-key feed selects next deadline" {
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second_datagram);
 
-    const single = try server_lifecycle.feedDatagramWithInstalledKeysAndSelectNextDeadline(
-        112,
-        &server,
-        server_path,
-        13,
-        second_datagram,
-        .{
+    const _w401_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 112,
+            .connection = &server,
+        }};
+    const _w401_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 112,
+            .connection = &server,
+        }};
+    const single = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndSelectNextDeadline(&_w401_receive_connections, &_w401_deadline_connections, server_path, 13, second_datagram, .{
             .space = .application,
             .out = &out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-    );
+        },);
     switch (single.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 112), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -16755,16 +16758,11 @@ test "EndpointConnectionLifecycle feeds installed-key datagrams with explicit ou
     defer std.testing.allocator.free(fourth_ping);
 
     var single_drain_out: [1]EndpointPolledDatagramResult = undefined;
-    const fourth = try server_lifecycle.feedDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-        177,
-        &server,
-        server_path,
-        20,
-        fourth_ping,
-        feed_options,
-        &poll_views,
-        &single_drain_out,
-    );
+    const _w405_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 177,
+            .connection = &server,
+        }};
+    const fourth = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDrainDatagramsWithInstalledKeyOptions(&_w405_receive_connections, server_path, 20, fourth_ping, feed_options, &poll_views, &single_drain_out,);
     switch (fourth.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 177), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -17320,24 +17318,22 @@ test "EndpointConnectionLifecycle single feed backend drain keeps explicit insta
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
     const versions = [_]packet.Version{.v1};
 
-    const result = try server_lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        327,
-        &server,
-        server_path,
-        11,
-        client_datagram,
-        .{
+    const _w406_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 327,
+            .connection = &server,
+        }};
+    const _w406_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 327,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(&_w406_receive_connections, server_path, 11, client_datagram, .{
             .space = .handshake,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        &drained,
-    );
+        }, .handshake, &_w406_drive_views, &poll_views, &drained,);
     switch (result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 327), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -17432,19 +17428,17 @@ test "EndpointConnectionLifecycle single feed explicit backend variants do not d
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, close_poll.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramResult, null), close_poll.backend);
 
-    const close_drain = try lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        330,
-        &connection,
-        path,
-        11,
-        &ignored_datagram,
-        feed_options,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &poll_views,
-        &drained,
-    );
+    const _w407_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+        }};
+    const _w407_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const close_drain = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(&_w407_receive_connections, path, 11, &ignored_datagram, feed_options, .handshake, &_w407_drive_views, &poll_views, &drained,);
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, close_drain.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramDrainResult, null), close_drain.backend);
 
@@ -17464,20 +17458,17 @@ test "EndpointConnectionLifecycle single feed explicit backend variants do not d
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, compatible_poll.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramResult, null), compatible_poll.backend);
 
-    const compatible_drain = try lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        330,
-        &connection,
-        path,
-        13,
-        &ignored_datagram,
-        feed_options,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        &poll_views,
-        &drained,
-    );
+    const _w410_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+        }};
+    const _w410_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_drain = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(&_w410_receive_connections, path, 13, &ignored_datagram, feed_options, .handshake, &_w410_drive_views, &compatibilities, &poll_views, &drained,);
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, compatible_drain.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramDrainResult, null), compatible_drain.backend);
 
@@ -17497,20 +17488,17 @@ test "EndpointConnectionLifecycle single feed explicit backend variants do not d
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, compatible_close_poll.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramResult, null), compatible_close_poll.backend);
 
-    const compatible_close_drain = try lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        330,
-        &connection,
-        path,
-        15,
-        &ignored_datagram,
-        feed_options,
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        &poll_views,
-        &drained,
-    );
+    const _w411_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+        }};
+    const _w411_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 330,
+            .connection = &connection,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const compatible_close_drain = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(&_w411_receive_connections, path, 15, &ignored_datagram, feed_options, .handshake, &_w411_drive_views, &compatibilities, &poll_views, &drained,);
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, compatible_close_drain.feed);
     try std.testing.expectEqual(@as(?EndpointCryptoBackendDriveDatagramDrainResult, null), compatible_close_drain.backend);
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
@@ -19903,18 +19891,21 @@ test "EndpointConnectionLifecycle compatible feed backend deadline step applies 
         .outbound = "server compatible single deadline",
     };
     var single_scratch: [256]u8 = undefined;
-    const single = try server_lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        174,
-        &server,
-        server_path,
-        15,
-        second_datagram,
-        feed_options,
-        .handshake,
-        single_backend.backend(),
-        &single_scratch,
-        &compatibilities,
-    );
+    const _w408_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 174,
+            .connection = &server,
+        }};
+    const _w408_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 174,
+            .connection = &server,
+            .backend = single_backend.backend(),
+            .scratch = &single_scratch,
+        }};
+    const _w408_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 174,
+            .connection = &server,
+        }};
+    const single = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(&_w408_receive_connections, server_path, 15, second_datagram, feed_options, .handshake, &_w408_drive_views, &compatibilities, &_w408_deadline_connections,);
     switch (single.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 174), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -20452,23 +20443,26 @@ test "EndpointConnectionLifecycle compatible feed close backend deadline returns
     var feed_out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
 
-    const result = try server_lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        176,
-        &server,
-        server_path,
-        11,
-        client_datagram,
-        .{
+    const _w409_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 176,
+            .connection = &server,
+        }};
+    const _w409_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 176,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w409_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 176,
+            .connection = &server,
+        }};
+    const result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(&_w409_receive_connections, server_path, 11, client_datagram, .{
             .space = .handshake,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &server_versions,
-        },
-        .handshake,
-        backend.backend(),
-        &scratch,
-        &[_]VersionCompatibility{},
-    );
+        }, .handshake, &_w409_drive_views, &[_]VersionCompatibility{}, &_w409_deadline_connections,);
     switch (result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 176), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -21382,22 +21376,26 @@ test "EndpointConnectionLifecycle feed close backend deadline step returns curre
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
     const versions = [_]packet.Version{.v1};
 
-    const result = try server_lifecycle.feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
-        188,
-        &server,
-        server_path,
-        11,
-        client_datagram,
-        .{
+    const _w404_receive_connections = [_]EndpointConnectionReceiveView{.{
+            .connection_id = 188,
+            .connection = &server,
+        }};
+    const _w404_drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = 188,
+            .connection = &server,
+            .backend = backend.backend(),
+            .scratch = &scratch,
+        }};
+    const _w404_deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = 188,
+            .connection = &server,
+        }};
+    const result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(&_w404_receive_connections, server_path, 11, client_datagram, .{
             .space = .handshake,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-        .handshake,
-        backend.backend(),
-        &scratch,
-    );
+        }, .handshake, &_w404_drive_views, &_w404_deadline_connections,);
     switch (result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 188), route.connection_id),
         else => return error.TestUnexpectedResult,
