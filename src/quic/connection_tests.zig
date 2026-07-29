@@ -6793,14 +6793,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
         },
     }};
 
-    const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        &deadline_connections,
-        recovery_timer.deadline_nanos,
-        &spaces,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-    )) orelse return error.TestUnexpectedResult;
+    const due = (try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyPoll(&deadline_connections, recovery_timer.deadline_nanos, &spaces, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 183), due.due_work.deadline.connection_id);
     try std.testing.expectEqual(@as(?[]u8, null), due.due_work.datagram);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -23348,14 +23341,7 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     }};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        recovery_timer.deadline_nanos,
-        .application,
-        &drive_views,
-        &poll_views,
-        &out,
-    )) orelse return error.TestUnexpectedResult;
+    const due = (try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, recovery_timer.deadline_nanos, &.{.application}, &drive_views, .{}, &.{}, &poll_views, &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 204), due.due_work.deadline.connection_id);
     try std.testing.expectEqual(@as(?[]u8, null), due.due_work.datagram);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
@@ -23471,14 +23457,7 @@ test "EndpointConnectionLifecycle cross due-deadline cross-space backend drain k
     }};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        recovery_timer.deadline_nanos,
-        &backend_spaces,
-        &drive_views,
-        &poll_views,
-        &out,
-    )) orelse return error.TestUnexpectedResult;
+    const due = (try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, recovery_timer.deadline_nanos, &backend_spaces, &drive_views, .{}, &.{}, &poll_views, &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 316), due.due_work.deadline.connection_id);
     try std.testing.expectEqual(@as(?[]u8, null), due.due_work.datagram);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -23763,25 +23742,11 @@ test "EndpointConnectionLifecycle cross due-deadline backend drain keeps explici
     }};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        fast_timer.deadline_nanos - 1,
-        .application,
-        &drive_views,
-        &[_]EndpointConnectionInstalledKeyPollView{},
-        &out,
-    );
+    const before_deadline = try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, fast_timer.deadline_nanos - 1, &.{.application}, &drive_views, .{}, &.{}, &[_]EndpointConnectionInstalledKeyPollView{}, &out);
     try std.testing.expect(before_deadline == null);
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
-    const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        fast_timer.deadline_nanos,
-        .application,
-        &drive_views,
-        &[_]EndpointConnectionInstalledKeyPollView{},
-        &out,
-    )) orelse return error.TestUnexpectedResult;
+    const due = (try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, fast_timer.deadline_nanos, &.{.application}, &drive_views, .{}, &.{}, &[_]EndpointConnectionInstalledKeyPollView{}, &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 77), due.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.due_work.deadline.kind);
     const serviced = due.due_work.pending_work.recovery_serviced orelse return error.TestUnexpectedResult;
@@ -23994,25 +23959,11 @@ test "EndpointConnectionLifecycle cross due-deadline close backend drain keeps e
     }};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const before_deadline = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        timer.deadline_nanos - 1,
-        .application,
-        &drive_views,
-        &[_]EndpointConnectionInstalledKeyPollView{},
-        &out,
-    );
+    const before_deadline = try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos - 1, &.{.application}, &drive_views, .{ .close_on_error = true }, &.{}, &[_]EndpointConnectionInstalledKeyPollView{}, &out);
     try std.testing.expect(before_deadline == null);
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
-    const due = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &deadline_connections,
-        timer.deadline_nanos,
-        .application,
-        &drive_views,
-        &[_]EndpointConnectionInstalledKeyPollView{},
-        &out,
-    )) orelse return error.TestUnexpectedResult;
+    const due = (try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos, &.{.application}, &drive_views, .{ .close_on_error = true }, &.{}, &[_]EndpointConnectionInstalledKeyPollView{}, &out)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 82), due.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.due_work.deadline.kind);
     const serviced = due.due_work.pending_work.recovery_serviced orelse return error.TestUnexpectedResult;
@@ -24129,48 +24080,16 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
     if (drain_output) {
         var out: [1]EndpointPolledDatagramResult = undefined;
         const before_deadline = if (close_path)
-            try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-                &deadline_connections,
-                timer.deadline_nanos - 1,
-                .application,
-                &drive_views,
-                &compatibilities,
-                &[_]EndpointConnectionInstalledKeyPollView{},
-                &out,
-            )
+            try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos - 1, &.{.application}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &[_]EndpointConnectionInstalledKeyPollView{}, &out)
         else
-            try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-                &deadline_connections,
-                timer.deadline_nanos - 1,
-                .application,
-                &drive_views,
-                &compatibilities,
-                &[_]EndpointConnectionInstalledKeyPollView{},
-                &out,
-            );
+            try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos - 1, &.{.application}, &drive_views, .{ .compatible_version = true }, &compatibilities, &[_]EndpointConnectionInstalledKeyPollView{}, &out);
         try std.testing.expect(before_deadline == null);
         try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
         const due = (if (close_path)
-            try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-                &deadline_connections,
-                timer.deadline_nanos,
-                .application,
-                &drive_views,
-                &compatibilities,
-                &[_]EndpointConnectionInstalledKeyPollView{},
-                &out,
-            )
+            try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos, &.{.application}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &[_]EndpointConnectionInstalledKeyPollView{}, &out)
         else
-            try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-                &deadline_connections,
-                timer.deadline_nanos,
-                .application,
-                &drive_views,
-                &compatibilities,
-                &[_]EndpointConnectionInstalledKeyPollView{},
-                &out,
-            )) orelse return error.TestUnexpectedResult;
+            try lifecycle.processDueDeadlineWithPollStepWithCryptoInstalledKeyDrain(&deadline_connections, timer.deadline_nanos, &.{.application}, &drive_views, .{ .compatible_version = true }, &compatibilities, &[_]EndpointConnectionInstalledKeyPollView{}, &out)) orelse return error.TestUnexpectedResult;
         try std.testing.expectEqual(connection_id, due.due_work.deadline.connection_id);
         try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, due.due_work.deadline.kind);
         const serviced = due.due_work.pending_work.recovery_serviced orelse return error.TestUnexpectedResult;
