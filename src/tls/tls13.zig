@@ -306,6 +306,10 @@ pub const TlsConfig = struct {
     /// certificate chain. This is intentionally separate from `ca_bundle`,
     /// which is used by clients to validate servers.
     client_ca_bundle: ?*const Certificate.Bundle = null,
+    /// DER-encoded X.501 Name values for the `certificate_authorities`
+    /// CertificateRequest extension. They are selection hints for the client;
+    /// actual trust enforcement always uses `client_ca_bundle`.
+    client_ca_subjects: []const []const u8 = &.{},
     /// Client certificate chain and signing key used after a server sends a
     /// CertificateRequest. They are ignored for a normal one-way handshake.
     client_cert_chain_der: []const []const u8 = &.{},
@@ -2077,6 +2081,7 @@ const ExtType = enum(u16) {
     alpn = 0x0010,
     pre_shared_key = 0x0029,
     psk_key_exchange_modes = 0x002D,
+    certificate_authorities = 0x002F,
     early_data = 0x002A,
     supported_versions = 0x002B,
     key_share = 0x0033,
@@ -3429,6 +3434,7 @@ pub const Tls13Handshake = struct {
         const extensions_end = msg.len;
         var have_signature_algorithms = false;
         var selected_signature_algorithm = false;
+        var have_certificate_authorities = false;
         while (pos < extensions_end) {
             if (pos + 4 > extensions_end) return error.DecodeError;
             const extension_type = readU16(msg[pos..]);
@@ -3437,15 +3443,30 @@ pub const Tls13Handshake = struct {
             if (extension_len > extensions_end - pos) return error.DecodeError;
             const extension = msg[pos .. pos + extension_len];
             pos += extension_len;
-            if (extension_type != @intFromEnum(ExtType.signature_algorithms)) continue;
-            if (have_signature_algorithms or extension.len < 4) return error.DecodeError;
-            const algorithms_len = readU16(extension[0..]);
-            if (algorithms_len == 0 or algorithms_len + 2 != extension.len or algorithms_len % 2 != 0) return error.DecodeError;
-            have_signature_algorithms = true;
-            const client_scheme = signatureSchemeForPrivateKeyAlgorithm(self.config.client_private_key_algorithm);
-            var algorithm_pos: usize = 2;
-            while (algorithm_pos < extension.len) : (algorithm_pos += 2) {
-                if (readU16(extension[algorithm_pos..]) == client_scheme) selected_signature_algorithm = true;
+            if (extension_type == @intFromEnum(ExtType.signature_algorithms)) {
+                if (have_signature_algorithms or extension.len < 4) return error.DecodeError;
+                const algorithms_len = readU16(extension[0..]);
+                if (algorithms_len == 0 or algorithms_len + 2 != extension.len or algorithms_len % 2 != 0) return error.DecodeError;
+                have_signature_algorithms = true;
+                const client_scheme = signatureSchemeForPrivateKeyAlgorithm(self.config.client_private_key_algorithm);
+                var algorithm_pos: usize = 2;
+                while (algorithm_pos < extension.len) : (algorithm_pos += 2) {
+                    if (readU16(extension[algorithm_pos..]) == client_scheme) selected_signature_algorithm = true;
+                }
+                continue;
+            }
+            if (extension_type != @intFromEnum(ExtType.certificate_authorities)) continue;
+            if (have_certificate_authorities or extension.len < 2) return error.DecodeError;
+            const authorities_len = readU16(extension[0..]);
+            if (authorities_len + 2 != extension.len) return error.DecodeError;
+            have_certificate_authorities = true;
+            var authority_pos: usize = 2;
+            while (authority_pos < extension.len) {
+                if (extension.len - authority_pos < 2) return error.DecodeError;
+                const subject_len = readU16(extension[authority_pos..]);
+                authority_pos += 2;
+                if (subject_len == 0 or subject_len > extension.len - authority_pos) return error.DecodeError;
+                authority_pos += subject_len;
             }
         }
         if (!have_signature_algorithms or !selected_signature_algorithm) return error.UnsupportedSignatureAlgorithm;
@@ -4342,10 +4363,18 @@ pub const Tls13Handshake = struct {
     fn serverBuildCertificateRequest(self: *Tls13Handshake) HandshakeError!Action {
         try validateRequiredClientAuth(self.config);
         const buf = &self.out_buf;
-        // Empty request context, then one mandatory signature_algorithms
-        // extension. Both currently supported client signing schemes are
-        // advertised; the client selects the one matching its certificate.
-        const body_len: usize = 1 + 2 + 4 + 2 + 4;
+        // Empty request context, a mandatory signature_algorithms extension,
+        // and optional CA-subject selection hints matching rustls's default
+        // WebPkiClientVerifier behavior.
+        var client_ca_subjects_len: usize = 2;
+        for (self.config.client_ca_subjects) |subject| {
+            if (subject.len == 0 or subject.len > std.math.maxInt(u16)) return error.BadCertificate;
+            client_ca_subjects_len = std.math.add(usize, client_ca_subjects_len, 2 + subject.len) catch return error.BadCertificate;
+            if (client_ca_subjects_len > std.math.maxInt(u16)) return error.BadCertificate;
+        }
+        const ca_extension_len: usize = if (self.config.client_ca_subjects.len == 0) 0 else 4 + client_ca_subjects_len;
+        const extensions_len: usize = 4 + 6 + ca_extension_len;
+        const body_len: usize = 1 + 2 + extensions_len;
         if (4 + body_len > buf.len) return error.DecodeError;
         buf[0] = @intFromEnum(HandshakeType.certificate_request);
         buf[1] = 0;
@@ -4354,7 +4383,7 @@ pub const Tls13Handshake = struct {
         var pos: usize = 4;
         buf[pos] = 0;
         pos += 1;
-        writeU16(buf[pos..], 10);
+        writeU16(buf[pos..], @intCast(extensions_len));
         pos += 2;
         pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 6);
         writeU16(buf[pos..], 4);
@@ -4363,6 +4392,17 @@ pub const Tls13Handshake = struct {
         pos += 2;
         writeU16(buf[pos..], sig_ed25519);
         pos += 2;
+        if (self.config.client_ca_subjects.len > 0) {
+            pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.certificate_authorities), client_ca_subjects_len);
+            writeU16(buf[pos..], @intCast(client_ca_subjects_len - 2));
+            pos += 2;
+            for (self.config.client_ca_subjects) |subject| {
+                writeU16(buf[pos..], @intCast(subject.len));
+                pos += 2;
+                @memcpy(buf[pos..][0..subject.len], subject);
+                pos += subject.len;
+            }
+        }
         self.transcript.update(buf[0..pos]);
         self.state = .server_send_certificate;
         return .{ .send_data = .{ .level = .handshake, .data = buf[0..pos] } };
@@ -8546,6 +8586,53 @@ test "Tls13Handshake mutual TLS loopback validates and proves client certificate
     try std.testing.expect(server.isComplete());
     try std.testing.expectEqualSlices(u8, &client.key_schedule.client_app_traffic_secret, &server.key_schedule.client_app_traffic_secret);
     try std.testing.expectEqualSlices(u8, &client.key_schedule.server_app_traffic_secret, &server.key_schedule.server_app_traffic_secret);
+}
+
+test "Tls13Handshake CertificateRequest includes configured client CA subjects" {
+    var client_ca_bundle = Certificate.Bundle.empty;
+    defer client_ca_bundle.deinit(std.testing.allocator);
+    const subjects = [_][]const u8{
+        &.{ 0x30, 0x03, 0x31, 0x01, 0x00 },
+        &.{ 0x30, 0x03, 0x31, 0x01, 0x01 },
+    };
+    var server = Tls13Handshake.initServer(.{
+        .require_client_auth = true,
+        .client_ca_bundle = &client_ca_bundle,
+        .client_ca_subjects = &subjects,
+        .now_sec = 1_800_000_000,
+    }, &.{});
+    server.state = .server_send_certificate_request;
+    const request = switch (try server.step()) {
+        .send_data => |send_data| send_data.data,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(u8, @intFromEnum(HandshakeType.certificate_request)), request[0]);
+    try std.testing.expectEqual(@as(u8, 0), request[4]);
+    const extensions_end = 7 + readU16(request[5..]);
+    try std.testing.expectEqual(request.len, extensions_end);
+
+    var pos: usize = 7;
+    var found_authorities = false;
+    while (pos < extensions_end) {
+        const extension_type = readU16(request[pos..]);
+        const extension_len = readU16(request[pos + 2 ..]);
+        pos += 4;
+        const extension = request[pos .. pos + extension_len];
+        pos += extension_len;
+        if (extension_type != @intFromEnum(ExtType.certificate_authorities)) continue;
+        found_authorities = true;
+        try std.testing.expectEqual(@as(usize, subjects[0].len + subjects[1].len + 6), extension.len);
+        var authority_pos: usize = 2;
+        for (subjects) |subject| {
+            const subject_len = readU16(extension[authority_pos..]);
+            authority_pos += 2;
+            try std.testing.expectEqual(subject.len, subject_len);
+            try std.testing.expectEqualSlices(u8, subject, extension[authority_pos .. authority_pos + subject_len]);
+            authority_pos += subject_len;
+        }
+        try std.testing.expectEqual(extension.len, authority_pos);
+    }
+    try std.testing.expect(found_authorities);
 }
 
 test "client authentication EKU accepts client or absent usage and rejects server-only usage" {
