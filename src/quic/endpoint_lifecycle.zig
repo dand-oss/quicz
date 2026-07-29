@@ -15628,29 +15628,6 @@ pub const EndpointConnectionLifecycle = struct {
         return route;
     }
 
-    /// Route and process one installed-key protected 1-RTT datagram with close propagation.
-    ///
-    /// Socket loops can use this after the connection owns 1-RTT keys and wants
-    /// authenticated frame-payload peer errors to produce CONNECTION_CLOSE.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!endpoint.RouteResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        try self.processProtectedShortDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            route.destination_connection_id.asSlice().len,
-            datagram,
-        );
-        return route;
-    }
 
     /// Route and process one installed-key protected 1-RTT datagram, commit a
     /// validated path migration, and propagate close on frame errors.
