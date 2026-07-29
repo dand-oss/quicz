@@ -29078,15 +29078,7 @@ test "EndpointConnectionLifecycle compatible-version backend drive drains after 
     }};
     var out: [1]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &[_]EndpointConnectionPollView{},
-        10,
-        .handshake,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &[_]EndpointConnectionPollView{}, 10, .handshake, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(u64, 2468), server.peer_max_data);
@@ -29189,13 +29181,7 @@ test "EndpointConnectionLifecycle compatible backend drive polls explicit instal
         },
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        10,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(u64, 8642), server.peer_max_data);
@@ -29335,14 +29321,7 @@ test "EndpointConnectionLifecycle compatible backend drive drains explicit insta
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        10,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views, 10, &out, );
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(u64, 9753), server.peer_max_data);
@@ -29437,15 +29416,7 @@ test "EndpointConnectionLifecycle compatible-version close backend drive stops b
 
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-            .handshake,
-            &drive_views,
-            &[_]VersionCompatibility{},
-            &[_]EndpointConnectionPollView{},
-            10,
-            .handshake,
-            &out,
-        ),
+        lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &[_]VersionCompatibility{}, &[_]EndpointConnectionPollView{}, 10, .handshake, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -29882,13 +29853,7 @@ test "EndpointConnectionLifecycle compatible close backend drive polls explicit 
         },
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        10,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(u64, 12_864), server.peer_max_data);
@@ -30028,14 +29993,7 @@ test "EndpointConnectionLifecycle compatible close backend drive drains explicit
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        10,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &poll_views, 10, &out, );
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(u64, 13_975), server.peer_max_data);
