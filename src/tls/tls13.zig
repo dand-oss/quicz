@@ -2143,6 +2143,113 @@ fn validateRequiredClientAuth(config: TlsConfig) HandshakeError!void {
     if (config.client_ca_bundle == null or config.now_sec == null) return error.BadCertificate;
 }
 
+const DerElement = struct {
+    tag: u8,
+    content: []const u8,
+};
+
+/// Read one definite-length DER element and advance `index` past it.
+///
+/// TLS certificates are DER, so indefinite lengths and non-canonical long
+/// forms are rejected instead of being accepted as BER.
+fn nextDerElement(input: []const u8, index: *usize) HandshakeError!DerElement {
+    if (index.* >= input.len) return error.BadCertificate;
+    const tag = input[index.*];
+    index.* += 1;
+    if (index.* >= input.len) return error.BadCertificate;
+
+    const first_len = input[index.*];
+    index.* += 1;
+    var content_len: usize = 0;
+    if (first_len < 0x80) {
+        content_len = first_len;
+    } else {
+        const length_octets = @as(usize, first_len & 0x7f);
+        if (length_octets == 0 or length_octets > @sizeOf(usize) or index.* + length_octets > input.len) {
+            return error.BadCertificate;
+        }
+        if (length_octets > 1 and input[index.*] == 0) return error.BadCertificate;
+        for (input[index.*..][0..length_octets]) |byte| {
+            content_len = std.math.mul(usize, content_len, 256) catch return error.BadCertificate;
+            content_len = std.math.add(usize, content_len, @as(usize, byte)) catch return error.BadCertificate;
+        }
+        if (content_len < 128) return error.BadCertificate;
+        index.* += length_octets;
+    }
+    const content_end = std.math.add(usize, index.*, content_len) catch return error.BadCertificate;
+    if (content_end > input.len) return error.BadCertificate;
+    const content = input[index.*..content_end];
+    index.* = content_end;
+    return .{ .tag = tag, .content = content };
+}
+
+/// Enforce the RFC 5280 extended-key-usage constraint corresponding to
+/// rustls/webpki's `KeyUsage::client_auth()`: a certificate without EKU is
+/// unrestricted, while a certificate that declares EKU must include either
+/// id-kp-clientAuth or anyExtendedKeyUsage.
+fn requireClientAuthenticationEku(cert_der: []const u8) HandshakeError!void {
+    const eku_extension_oid = [_]u8{ 0x55, 0x1d, 0x25 }; // 2.5.29.37
+    const client_auth_oid = [_]u8{ 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02 }; // 1.3.6.1.5.5.7.3.2
+    const any_extended_key_usage_oid = [_]u8{ 0x55, 0x1d, 0x25, 0x00 }; // 2.5.29.37.0
+
+    var certificate_index: usize = 0;
+    const certificate = try nextDerElement(cert_der, &certificate_index);
+    if (certificate.tag != 0x30 or certificate_index != cert_der.len) return error.BadCertificate;
+
+    var certificate_body_index: usize = 0;
+    const tbs_certificate = try nextDerElement(certificate.content, &certificate_body_index);
+    if (tbs_certificate.tag != 0x30) return error.BadCertificate;
+
+    var tbs_index: usize = 0;
+    if (tbs_index < tbs_certificate.content.len and tbs_certificate.content[tbs_index] == 0xa0) {
+        _ = try nextDerElement(tbs_certificate.content, &tbs_index); // version
+    }
+    // serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo.
+    inline for (0..6) |_| _ = try nextDerElement(tbs_certificate.content, &tbs_index);
+
+    while (tbs_index < tbs_certificate.content.len) {
+        const optional_field = try nextDerElement(tbs_certificate.content, &tbs_index);
+        switch (optional_field.tag) {
+            0x81, 0x82 => {}, // issuerUniqueID / subjectUniqueID
+            0xa3 => {
+                var outer_extensions_index: usize = 0;
+                const extensions = try nextDerElement(optional_field.content, &outer_extensions_index);
+                if (extensions.tag != 0x30 or outer_extensions_index != optional_field.content.len) return error.BadCertificate;
+
+                var extensions_index: usize = 0;
+                while (extensions_index < extensions.content.len) {
+                    const extension = try nextDerElement(extensions.content, &extensions_index);
+                    if (extension.tag != 0x30) return error.BadCertificate;
+                    var extension_index: usize = 0;
+                    const extension_oid = try nextDerElement(extension.content, &extension_index);
+                    if (extension_oid.tag != 0x06) return error.BadCertificate;
+                    const maybe_critical = try nextDerElement(extension.content, &extension_index);
+                    const extension_value = if (maybe_critical.tag == 0x01) blk: {
+                        if (maybe_critical.content.len != 1) return error.BadCertificate;
+                        break :blk try nextDerElement(extension.content, &extension_index);
+                    } else maybe_critical;
+                    if (extension_value.tag != 0x04 or extension_index != extension.content.len) return error.BadCertificate;
+                    if (!std.mem.eql(u8, extension_oid.content, &eku_extension_oid)) continue;
+
+                    var eku_index: usize = 0;
+                    const key_purposes = try nextDerElement(extension_value.content, &eku_index);
+                    if (key_purposes.tag != 0x30 or eku_index != extension_value.content.len) return error.BadCertificate;
+                    var key_purpose_index: usize = 0;
+                    while (key_purpose_index < key_purposes.content.len) {
+                        const key_purpose = try nextDerElement(key_purposes.content, &key_purpose_index);
+                        if (key_purpose.tag != 0x06) return error.BadCertificate;
+                        if (std.mem.eql(u8, key_purpose.content, &client_auth_oid) or
+                            std.mem.eql(u8, key_purpose.content, &any_extended_key_usage_oid)) return;
+                    }
+                    return error.BadCertificate;
+                }
+                return;
+            },
+            else => return error.BadCertificate,
+        }
+    }
+}
+
 fn validateServerCertificateChain(cert_chain_der: []const []const u8, output_limit: usize) HandshakeError!void {
     if (cert_chain_der.len == 0 or output_limit < 8) return error.BadCertificate;
     var encoded_len: usize = 8;
@@ -4450,6 +4557,7 @@ pub const Tls13Handshake = struct {
         const bundle = self.config.client_ca_bundle orelse return error.BadCertificate;
         const now = self.config.now_sec orelse return error.BadCertificate;
         var subject = (Certificate{ .buffer = leaf_der, .index = 0 }).parse() catch return error.BadCertificate;
+        try requireClientAuthenticationEku(leaf_der);
         var pos = chain_pos;
         while (pos < chain_end) {
             const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
@@ -8318,28 +8426,49 @@ test "Tls13Handshake client↔server loopback completes with matching secrets" {
 }
 
 test "Tls13Handshake mutual TLS loopback validates and proves client certificate ownership" {
-    const pem = @embedFile("../quic/testdata/quicz-echo-ca.pem");
     const begin_marker = "-----BEGIN CERTIFICATE-----";
     const end_marker = "-----END CERTIFICATE-----";
-    const begin = std.mem.indexOf(u8, pem, begin_marker) orelse return error.TestUnexpectedResult;
-    const encoded_start = begin + begin_marker.len;
-    const encoded_end = std.mem.indexOfPos(u8, pem, encoded_start, end_marker) orelse return error.TestUnexpectedResult;
-    const encoded = std.mem.trim(u8, pem[encoded_start..encoded_end], " \t\r\n");
-    var cert_der_storage: [512]u8 = undefined;
-    const der_len = try std.base64.standard.decoderWithIgnore("\r\n").decode(&cert_der_storage, encoded);
-    const cert_der = cert_der_storage[0..der_len];
+    const server_pem = @embedFile("../quic/testdata/quicz-echo-ca.pem");
+    const client_ca_pem = @embedFile("../quic/testdata/quicz-client-ca.pem");
+    const client_pem = @embedFile("../quic/testdata/quicz-client-auth.pem");
+    const decodePem = struct {
+        fn certificate(pem: []const u8, storage: []u8) ![]const u8 {
+            const begin = std.mem.indexOf(u8, pem, begin_marker) orelse return error.TestUnexpectedResult;
+            const encoded_start = begin + begin_marker.len;
+            const encoded_end = std.mem.indexOfPos(u8, pem, encoded_start, end_marker) orelse return error.TestUnexpectedResult;
+            const encoded = std.mem.trim(u8, pem[encoded_start..encoded_end], " \t\r\n");
+            const der_len = try std.base64.standard.decoderWithIgnore("\r\n").decode(storage, encoded);
+            return storage[0..der_len];
+        }
+    }.certificate;
+    var server_cert_der_storage: [512]u8 = undefined;
+    const server_cert_der = try decodePem(server_pem, &server_cert_der_storage);
+    var client_ca_der_storage: [512]u8 = undefined;
+    const client_ca_der = try decodePem(client_ca_pem, &client_ca_der_storage);
+    var client_cert_der_storage: [512]u8 = undefined;
+    const client_cert_der = try decodePem(client_pem, &client_cert_der_storage);
 
     const now_sec: i64 = 1_800_000_000;
-    var trust_bundle = Certificate.Bundle.empty;
-    defer trust_bundle.deinit(std.testing.allocator);
-    try trust_bundle.bytes.appendSlice(std.testing.allocator, cert_der);
-    try trust_bundle.parseCert(std.testing.allocator, 0, now_sec);
+    var server_trust_bundle = Certificate.Bundle.empty;
+    defer server_trust_bundle.deinit(std.testing.allocator);
+    try server_trust_bundle.bytes.appendSlice(std.testing.allocator, server_cert_der);
+    try server_trust_bundle.parseCert(std.testing.allocator, 0, now_sec);
+    var client_trust_bundle = Certificate.Bundle.empty;
+    defer client_trust_bundle.deinit(std.testing.allocator);
+    try client_trust_bundle.bytes.appendSlice(std.testing.allocator, client_ca_der);
+    try client_trust_bundle.parseCert(std.testing.allocator, 0, now_sec);
 
     const private_key = [_]u8{
         0x5b, 0xbf, 0x4f, 0x5a, 0x48, 0x42, 0x9f, 0x00,
         0x5a, 0x57, 0x09, 0xc3, 0xb4, 0xc1, 0x3a, 0x64,
         0x2e, 0xb1, 0x61, 0xf5, 0x0b, 0xde, 0x64, 0x4b,
         0x3a, 0x38, 0xa6, 0x8f, 0xfa, 0x48, 0xda, 0x51,
+    };
+    const client_private_key = [_]u8{
+        0xe8, 0x95, 0xe4, 0x62, 0x53, 0x3f, 0x09, 0x00,
+        0x6c, 0x15, 0x69, 0x10, 0x7c, 0xad, 0x36, 0xc9,
+        0x8d, 0x69, 0xc0, 0xfe, 0x84, 0xc8, 0x0f, 0xd2,
+        0x93, 0xc3, 0xb0, 0xff, 0x7b, 0xc0, 0x2b, 0x32,
     };
     const alpn = [_][]const u8{"hq-interop"};
     const client_tp = [_]u8{ 0x01, 0x02, 0x03 };
@@ -8348,16 +8477,16 @@ test "Tls13Handshake mutual TLS loopback validates and proves client certificate
         .alpn = &alpn,
         .server_name = "localhost",
         .now_sec = now_sec,
-        .ca_bundle = &trust_bundle,
-        .client_cert_chain_der = &.{cert_der},
-        .client_private_key_bytes = &private_key,
+        .ca_bundle = &server_trust_bundle,
+        .client_cert_chain_der = &.{ client_cert_der, client_ca_der },
+        .client_private_key_bytes = &client_private_key,
     }, &client_tp);
     var server = Tls13Handshake.initServer(.{
         .alpn = &alpn,
-        .cert_chain_der = &.{cert_der},
+        .cert_chain_der = &.{server_cert_der},
         .private_key_bytes = &private_key,
         .require_client_auth = true,
-        .client_ca_bundle = &trust_bundle,
+        .client_ca_bundle = &client_trust_bundle,
         .now_sec = now_sec,
     }, &server_tp);
 
@@ -8417,6 +8546,33 @@ test "Tls13Handshake mutual TLS loopback validates and proves client certificate
     try std.testing.expect(server.isComplete());
     try std.testing.expectEqualSlices(u8, &client.key_schedule.client_app_traffic_secret, &server.key_schedule.client_app_traffic_secret);
     try std.testing.expectEqualSlices(u8, &client.key_schedule.server_app_traffic_secret, &server.key_schedule.server_app_traffic_secret);
+}
+
+test "client authentication EKU accepts client or absent usage and rejects server-only usage" {
+    const begin_marker = "-----BEGIN CERTIFICATE-----";
+    const end_marker = "-----END CERTIFICATE-----";
+    const decodePem = struct {
+        fn certificate(pem: []const u8, storage: []u8) ![]const u8 {
+            const begin = std.mem.indexOf(u8, pem, begin_marker) orelse return error.TestUnexpectedResult;
+            const encoded_start = begin + begin_marker.len;
+            const encoded_end = std.mem.indexOfPos(u8, pem, encoded_start, end_marker) orelse return error.TestUnexpectedResult;
+            const encoded = std.mem.trim(u8, pem[encoded_start..encoded_end], " \t\r\n");
+            const der_len = try std.base64.standard.decoderWithIgnore("\r\n").decode(storage, encoded);
+            return storage[0..der_len];
+        }
+    }.certificate;
+
+    var client_cert_der_storage: [512]u8 = undefined;
+    const client_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-client-auth.pem"), &client_cert_der_storage);
+    try requireClientAuthenticationEku(client_cert_der);
+
+    var no_eku_cert_der_storage: [512]u8 = undefined;
+    const no_eku_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-client-ca.pem"), &no_eku_cert_der_storage);
+    try requireClientAuthenticationEku(no_eku_cert_der);
+
+    var server_cert_der_storage: [512]u8 = undefined;
+    const server_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-echo-ca.pem"), &server_cert_der_storage);
+    try std.testing.expectError(error.BadCertificate, requireClientAuthenticationEku(server_cert_der));
 }
 
 test "Tls13Handshake server rejects client Finished with wrong verify_data" {
