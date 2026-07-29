@@ -2217,8 +2217,8 @@ const CertificateExtensions = struct {
 };
 
 /// Extract the RFC 5280 extensions that constrain whether a certificate can
-/// act as a TLS leaf or issuing CA. Unknown extensions stay outside this
-/// narrow parser; the caller only uses the returned DER extension values.
+/// act as a TLS leaf or issuing CA. Non-critical extensions outside this
+/// narrow parser are ignored; critical extensions must be understood.
 fn certificateExtensions(cert_der: []const u8) HandshakeError!CertificateExtensions {
     const eku_extension_oid = [_]u8{ 0x55, 0x1d, 0x25 }; // 2.5.29.37
     const basic_constraints_extension_oid = [_]u8{ 0x55, 0x1d, 0x13 }; // 2.5.29.19
@@ -2260,8 +2260,12 @@ fn certificateExtensions(cert_der: []const u8) HandshakeError!CertificateExtensi
                     const extension_oid = try nextDerElement(extension.content, &extension_index);
                     if (extension_oid.tag != 0x06) return error.BadCertificate;
                     const maybe_critical = try nextDerElement(extension.content, &extension_index);
+                    const critical = maybe_critical.tag == 0x01 and blk: {
+                        if (maybe_critical.content.len != 1 or
+                            (maybe_critical.content[0] != 0x00 and maybe_critical.content[0] != 0xff)) return error.BadCertificate;
+                        break :blk maybe_critical.content[0] == 0xff;
+                    };
                     const extension_value = if (maybe_critical.tag == 0x01) blk: {
-                        if (maybe_critical.content.len != 1) return error.BadCertificate;
                         break :blk try nextDerElement(extension.content, &extension_index);
                     } else maybe_critical;
                     if (extension_value.tag != 0x04 or extension_index != extension.content.len) return error.BadCertificate;
@@ -2274,6 +2278,8 @@ fn certificateExtensions(cert_der: []const u8) HandshakeError!CertificateExtensi
                     } else if (std.mem.eql(u8, extension_oid.content, &key_usage_extension_oid)) {
                         if (result.key_usage != null) return error.BadCertificate;
                         result.key_usage = extension_value.content;
+                    } else if (critical) {
+                        return error.BadCertificate;
                     }
                 }
             },
@@ -8908,6 +8914,32 @@ test "certificate authority validation requires an explicit CA basic constraint"
     var certificate_with_negative_path_length = certificate_with_zero_path_length;
     certificate_with_negative_path_length[40] = 0xff;
     try std.testing.expectError(error.BadCertificate, certificateAuthorityPathLength(&certificate_with_negative_path_length));
+}
+
+test "certificate extensions reject unknown critical extensions" {
+    const certificate_with_unknown_extension = [_]u8{
+        0x30, 0x25, 0x30, 0x1e,
+        0x02, 0x01, 0x01, // serialNumber
+        0x30, 0x00, // signature
+        0x30, 0x00, // issuer
+        0x30, 0x00, // validity
+        0x30, 0x00, // subject
+        0x30, 0x00, // subjectPublicKeyInfo
+        0xa3, 0x0f,
+        0x30, 0x0d,
+        0x30, 0x0b,
+        0x06, 0x02, 0x2a, 0x03, // 1.2.3
+        0x01, 0x01, 0xff, // critical
+        0x04, 0x02, 0x30,
+        0x00,
+        0x30, 0x00, // signatureAlgorithm
+        0x03, 0x01, 0x00, // signatureValue
+    };
+    try std.testing.expectError(error.BadCertificate, certificateExtensions(&certificate_with_unknown_extension));
+
+    var certificate_with_noncritical_extension = certificate_with_unknown_extension;
+    certificate_with_noncritical_extension[29] = 0x00;
+    _ = try certificateExtensions(&certificate_with_noncritical_extension);
 }
 
 test "Tls13Handshake server rejects client Finished with wrong verify_data" {
