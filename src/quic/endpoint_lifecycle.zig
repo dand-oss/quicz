@@ -1262,6 +1262,18 @@ pub const EndpointConnectionLifecycle = struct {
         return self.router.routeDatagram(path, datagram);
     }
 
+    /// Route a datagram and verify it routes to the expected connection.
+    pub fn routeAndVerifyDatagram(
+        self: *const EndpointConnectionLifecycle,
+        connection_id: u64,
+        path: endpoint.Udp4Tuple,
+        datagram: []const u8,
+    ) (endpoint.RouteError || error{InvalidPacket})!endpoint.RouteResult {
+        const route = try self.router.routeDatagram(path, datagram);
+        if (route.connection_id != connection_id) return error.InvalidPacket;
+        return route;
+    }
+
     /// Route and process one protected Initial datagram on an existing route.
     ///
     /// This is the lifecycle-owned receive bridge for protected Initial
@@ -9569,43 +9581,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route caller-keyed Initial/Handshake input, then drain long-header output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    pub fn processRoutedProtectedLongDatagramInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        scid: []const u8,
-        initial_token: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedLongDatagramInSpaceAndDrainDatagrams(
-                connection_id,
-                connection,
-                space,
-                now_nanos,
-                receive_keys,
-                datagram,
-                dcid,
-                scid,
-                initial_token,
-                send_keys,
-                out,
-            ),
-        };
-    }
     /// Process caller-keyed long-header input, drive backend, and drain output.
     ///
     /// This is the single-connection socket-loop step for Initial or Handshake
@@ -10306,72 +10281,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route caller-keyed 0-RTT input, then poll one caller-keyed short output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the endpoint processes the 0-RTT datagram and polls at most
-    /// one Application-space short-header datagram for the selected connection.
-    pub fn processRoutedProtectedZeroRttDatagramAndPollShortDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedZeroRttDatagramAndPollShortDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                datagram,
-                dcid,
-                send_keys,
-            ),
-        };
-    }
-
-    /// Route caller-keyed 0-RTT input, then drain caller-keyed short output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the endpoint processes the 0-RTT datagram and drains at most
-    /// `out.len` Application-space short-header datagrams for the selected
-    /// connection.
-    pub fn processRoutedProtectedZeroRttDatagramAndDrainShortDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedZeroRttDatagramAndDrainShortDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                datagram,
-                dcid,
-                send_keys,
-                out,
-            ),
-        };
-    }
 
     /// Route caller-keyed 0-RTT input through close propagation, then poll output.
     ///
@@ -10689,34 +10598,7 @@ pub const EndpointConnectionLifecycle = struct {
         );
         return self.nextDeadline(connection_id, connection);
     }
-    /// Route caller-keyed 1-RTT input and select the next wakeup.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the routed destination CID length is used to open the short
-    /// packet, and output remains queued for a later caller-keyed poll/drain.
-    pub fn processRoutedProtectedShortDatagramAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .next_deadline = try self.processProtectedShortDatagramAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-            ),
-        };
-    }
+
     /// Process caller-keyed 1-RTT input, then poll one caller-keyed output.
     ///
     /// This is the one-output socket-loop step for received 1-RTT short
@@ -10793,39 +10675,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-    /// Route caller-keyed 1-RTT input, then poll one caller-keyed output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the routed destination CID length is used to open the short
-    /// packet, then the selected connection is polled for one Application-space
-    /// response such as an ACK.
-    pub fn processRoutedProtectedShortDatagramAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-            ),
-        };
-    }
 
 
     /// Process caller-keyed 1-RTT input, then drain caller-keyed output.
@@ -10922,40 +10771,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route caller-keyed 1-RTT input, then drain caller-keyed output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, at most `out.len` Application-space datagrams are emitted
-    /// for the selected connection.
-    pub fn processRoutedProtectedShortDatagramAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                out,
-            ),
-        };
-    }
 
 
     /// Poll one explicit-key-phase protected 1-RTT datagram and refresh timers.
@@ -11085,34 +10900,7 @@ pub const EndpointConnectionLifecycle = struct {
         );
         return self.nextDeadline(connection_id, connection);
     }
-    /// Route explicit key-update 1-RTT input and select the next wakeup.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the routed destination CID length is used to open the short
-    /// packet and output remains queued for a later explicit-phase poll/drain.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .next_deadline = try self.processProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-            ),
-        };
-    }
+
     /// Process explicit key-update 1-RTT input, then poll one explicit-phase output.
     ///
     /// This is the one-output socket-loop step for callers that own current
@@ -11193,41 +10981,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-    /// Route explicit key-update 1-RTT input, then poll one explicit-phase output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the routed destination CID length is used to open the short
-    /// packet, then the selected connection is polled for one response such as
-    /// an ACK.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        send_key_phase: bool,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramWithKeyUpdateAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                send_key_phase,
-            ),
-        };
-    }
 
 
     /// Process explicit key-update 1-RTT input, then drain explicit-phase output.
@@ -11328,42 +11081,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route explicit key-update 1-RTT input, then drain explicit-phase output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, at most `out.len` Application-space datagrams are emitted
-    /// for the selected connection.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        send_key_phase: bool,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithKeyUpdateAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                send_key_phase,
-                out,
-            ),
-        };
-    }
 
 
     /// Poll one caller-owned key-phase protected 1-RTT datagram and refresh timers.
@@ -11490,34 +11207,7 @@ pub const EndpointConnectionLifecycle = struct {
         );
         return self.nextDeadline(connection_id, connection);
     }
-    /// Route caller-owned key-phase 1-RTT input and select the next wakeup.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or key-phase state advancement. Successful receive preserves any ACK or
-    /// data output for a later poll/drain step.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .next_deadline = try self.processProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_key_phase_state,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-            ),
-        };
-    }
+
     /// Process caller-owned key-phase 1-RTT input, then poll one stateful output.
     ///
     /// The receive state advances only after authenticated packet processing
@@ -11594,37 +11284,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-    /// Route caller-owned key-phase 1-RTT input, then poll one stateful output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or key-phase state advancement.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_key_phase_state: *const protection.Aes128KeyPhaseState,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramWithKeyPhaseStateAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_key_phase_state,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_key_phase_state,
-            ),
-        };
-    }
 
 
     /// Process caller-owned key-phase 1-RTT input, then drain stateful output.
@@ -11721,39 +11380,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route caller-owned key-phase 1-RTT input, then drain stateful output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or key-phase state advancement.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_key_phase_state: *const protection.Aes128KeyPhaseState,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_key_phase_state,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_key_phase_state,
-                out,
-            ),
-        };
-    }
 
 
     /// Poll one installed-key protected Handshake datagram and refresh timers.
@@ -12237,36 +11863,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route installed-key Handshake input, then drain installed-key output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-        scid: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-                scid,
-                out,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
 
 
     /// Process installed-key Handshake input, drive backend, and select a wakeup.
@@ -12385,40 +11981,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key Handshake input, drive backend, and poll one output.
-    ///
-    /// This is the routed socket-loop form of
-    /// `processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram()`.
-    /// The endpoint lifecycle owns route validation before the caller-owned
-    /// connection processes the installed-key Handshake datagram and backend
-    /// progress. Connection/backend/socket storage and the optional output
-    /// datagram remain caller-owned.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                backend,
-                scratch,
-                poll_options,
-            ),
-        };
-    }
 
 
     /// Poll one installed-key protected 0-RTT datagram and refresh timers.
@@ -12653,63 +12215,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Route installed-key 0-RTT input, then poll one installed-key short output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the endpoint processes accepted early data and polls at most
-    /// one installed-key Application-space short-header datagram.
-    pub fn processRoutedProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-            ),
-        };
-    }
-
-    /// Route installed-key 0-RTT input, then drain installed-key short output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the endpoint processes accepted early data and drains at
-    /// most `out.len` installed-key Application-space short-header datagrams.
-    pub fn processRoutedProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-                out,
-            ),
-        };
-    }
 
     /// Route installed-key 0-RTT input through close propagation, then poll output.
     ///
@@ -13082,33 +12587,7 @@ pub const EndpointConnectionLifecycle = struct {
         );
         return self.nextDeadline(connection_id, connection);
     }
-    /// Route/process one installed-key 1-RTT datagram and select the next wakeup.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// On success, the routed destination CID length is used to open the short
-    /// packet and endpoint-visible deadline selection is returned without
-    /// polling installed-key output.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .next_deadline = try self.processProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-            ),
-        };
-    }
+
     /// Process installed-key 1-RTT input, drive a backend, and select a wakeup.
     ///
     /// This is the direct no-output receive-to-backend step for socket loops
@@ -13268,143 +12747,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key 1-RTT input, drive a backend, and select a wakeup.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, output remains queued for a later
-    /// installed-key output step.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through close propagation and backend drive.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or backend
-    /// peer-parameter errors queue CONNECTION_CLOSE and stop before ordinary
-    /// deadline selection.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through compatible-version backend drive.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, peer Version Information is handled
-    /// by the compatible-version backend path before wakeup selection.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through compatible-version close propagation.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or peer Version
-    /// Information errors queue CONNECTION_CLOSE and stop before ordinary
-    /// deadline selection.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveNextDeadlineResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
-        };
-    }
 
     /// Process installed-key 1-RTT input, drive a backend, and poll output.
     ///
@@ -13618,159 +12960,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key 1-RTT input, drive a backend, and poll output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, the selected connection is driven and
-    /// polled for at most one installed-key datagram.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                poll_now_nanos,
-                poll_options,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through close propagation, drive a backend, and poll output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or backend
-    /// peer-parameter errors queue CONNECTION_CLOSE and stop before ordinary
-    /// installed-key output polling.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                poll_now_nanos,
-                poll_options,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input, drive a compatible-version backend, and poll output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, peer Version Information is handled
-    /// before the selected connection is polled for one installed-key datagram.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-                poll_now_nanos,
-                poll_options,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through compatible-version close propagation and poll output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or peer Version
-    /// Information errors queue CONNECTION_CLOSE and stop before ordinary
-    /// installed-key output polling.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-                poll_now_nanos,
-                poll_options,
-            ),
-        };
-    }
 
     /// Process installed-key 1-RTT input, drive a backend, and drain output.
     ///
@@ -13978,167 +13167,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key 1-RTT input, drive a backend, and drain output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, backend progress is applied before
-    /// bounded installed-key output draining.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        drain_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                drain_now_nanos,
-                poll_options,
-                out,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through close propagation, drive a backend, and drain output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or backend
-    /// peer-parameter errors queue CONNECTION_CLOSE and stop before ordinary
-    /// bounded installed-key output draining.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        drain_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                drain_now_nanos,
-                poll_options,
-                out,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input, drive a compatible-version backend, and drain output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. On success, peer Version Information is handled
-    /// before bounded installed-key output draining.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        drain_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-                drain_now_nanos,
-                poll_options,
-                out,
-            ),
-        };
-    }
-
-    /// Route installed-key 1-RTT input through compatible-version close propagation and drain output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing
-    /// or backend callbacks. Authenticated frame errors or peer Version
-    /// Information errors queue CONNECTION_CLOSE and stop before ordinary
-    /// bounded installed-key output draining.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        drain_now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-                drain_now_nanos,
-                poll_options,
-                out,
-            ),
-        };
-    }
 
     /// Process one installed-key 1-RTT datagram, then poll installed-key output.
     ///
@@ -14208,36 +13236,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-    /// Route/process one installed-key 1-RTT datagram and poll installed-key output.
-    ///
-    /// This is the one-output socket-loop step for a received 1-RTT short
-    /// packet after the connection owns packet-protection keys. The helper
-    /// validates endpoint routing before packet processing, then polls at most
-    /// one Application-space datagram such as an ACK or queued STREAM frame.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramWithInstalledKeysAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                poll_options,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
 
     /// Route/process one installed-key 1-RTT datagram with close propagation, then poll output.
     ///
@@ -14366,45 +13364,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Route/process one installed-key 1-RTT datagram and drain installed-key output.
-    ///
-    /// This is the bounded-output socket-loop step for a received 1-RTT short
-    /// packet after the connection owns packet-protection keys. The helper
-    /// validates endpoint routing before packet processing, then drains at most
-    /// `out.len` Application-space datagrams such as ACKs or queued STREAM
-    /// data. Returned datagrams remain caller-owned and must be freed by the
-    /// caller.
-    /// Route/process one installed-key 1-RTT datagram and drain explicit output.
-    ///
-    /// Route selection and packet processing match
-    /// `processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagrams()`,
-    /// while output packetization uses the full caller-provided options.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                poll_options,
-                out,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
 
 
     /// Retire all routes and any armed recovery timer for one connection handle.

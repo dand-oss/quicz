@@ -33020,20 +33020,7 @@ test "EndpointConnectionLifecycle routes long datagram in space and drains outpu
     defer std.testing.allocator.free(client_datagram);
 
     var drained: [2]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, lifecycle.processRoutedProtectedLongDatagramInSpaceAndDrainDatagrams(
-        93,
-        &server,
-        .handshake,
-        server_receive_path,
-        11,
-        secrets.client,
-        client_datagram,
-        &client_scid,
-        &server_scid,
-        &[_]u8{},
-        secrets.server,
-        &drained,
-    ));
+    try std.testing.expectError(error.InvalidPacket, lifecycle.routeAndVerifyDatagram(93, server_receive_path, client_datagram));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.handshake));
 
     const _routed1002 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
@@ -33778,16 +33765,7 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and polls
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(early);
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedZeroRttDatagramAndPollShortDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        early,
-        &client_dcid,
-        secrets.server,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, early));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server_lifecycle.recoveryTimerCount());
 
@@ -33876,17 +33854,7 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and drain
     defer std.testing.allocator.free(early);
 
     var drained: [2]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedZeroRttDatagramAndDrainShortDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        early,
-        &client_dcid,
-        secrets.server,
-        &drained,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, early));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const _routed1008 = try server_lifecycle.routeDatagram(server_receive_path, early);
@@ -34380,14 +34348,7 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and poll
         .peer = secrets.client.secret,
     });
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        early,
-        &client_dcid,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, early));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server_lifecycle.recoveryTimerCount());
 
@@ -34491,15 +34452,7 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and drai
     });
 
     var drained: [2]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        early,
-        &client_dcid,
-        &drained,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, early));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const _routed1046 = try server_lifecycle.routeDatagram(server_receive_path, early);
@@ -34827,16 +34780,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and polls AC
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-        &client_dcid,
-        secrets.server,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const _routed1014 = try server_lifecycle.routeDatagram(server_receive_path, ping);
@@ -35037,18 +34981,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and drains A
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
 
-    var mismatch_out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-        &client_dcid,
-        secrets.server,
-        &mismatch_out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
@@ -35135,14 +35068,7 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
@@ -35597,17 +35523,7 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and p
         .next = next_client_keys,
         .current_key_phase = false,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        receive_keys,
-        ping,
-        &client_dcid,
-        secrets.server,
-        false,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const _routed1022 = try server_lifecycle.routeDatagram(server_receive_path, ping);
@@ -35826,19 +35742,7 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and d
         .next = next_client_keys,
         .current_key_phase = false,
     };
-    var mismatch_out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        receive_keys,
-        ping,
-        &client_dcid,
-        secrets.server,
-        false,
-        &mismatch_out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
@@ -35931,14 +35835,7 @@ test "EndpointConnectionLifecycle routes explicit key update receive and selects
     defer std.testing.allocator.free(ping);
 
     const server_receive_keys = protection.Aes128KeyPhaseState.init(secrets.client, false).keyUpdateKeys();
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        server_receive_keys,
-        ping,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
@@ -36276,16 +36173,7 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     try std.testing.expect(try protection.peekShortPacketKeyPhaseAes128(secrets.client.hp, ping, server_dcid.len));
     try std.testing.expect(client_send_state.currentKeyPhase());
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-        &client_dcid,
-        &server_send_state,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expect(!server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
@@ -36513,18 +36401,7 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     try std.testing.expect(try protection.peekShortPacketKeyPhaseAes128(secrets.client.hp, ping, server_dcid.len));
     try std.testing.expect(client_send_state.currentKeyPhase());
 
-    var mismatch_out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-        &client_dcid,
-        &server_send_state,
-        &mismatch_out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expect(!server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
@@ -36622,14 +36499,7 @@ test "EndpointConnectionLifecycle routes caller-owned key phase receive and sele
     defer std.testing.allocator.free(ping);
     try std.testing.expect(client_send_state.currentKeyPhase());
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expect(!server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
@@ -37448,17 +37318,7 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
 
     var backend = Backend{ .peer_transport_parameters = peer_params_out.getWritten() };
     var scratch: [256]u8 = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, crypto_datagram));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expect(server.peerVersionInformation() == null);
@@ -37573,16 +37433,7 @@ test "EndpointConnectionLifecycle routes installed-key short receive then drives
 
     var backend = Backend{};
     var scratch: [64]u8 = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, crypto_datagram));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
@@ -37699,19 +37550,8 @@ test "EndpointConnectionLifecycle routed installed-key short compatible backend 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(crypto_datagram);
 
-    var backend = BadBackend{};
-    var scratch: [64]u8 = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-        &[_]VersionCompatibility{},
-    ));
+    const backend = BadBackend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, crypto_datagram));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -38258,19 +38098,7 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        poll_options,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -38341,10 +38169,6 @@ test "EndpointConnectionLifecycle routed installed-key short compatible OrClose 
     const client_dcid = [_]u8{ 0x69, 0x6a, 0x6b, 0x6c };
     const server_dcid = [_]u8{ 0xf9, 0xfa, 0xfb, 0xfc };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
-    const compatibilities = [_]VersionCompatibility{.{
-        .original_version = .v1,
-        .negotiated_version = .v2,
-    }};
 
     var client_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer client_lifecycle.deinit();
@@ -38396,24 +38220,8 @@ test "EndpointConnectionLifecycle routed installed-key short compatible OrClose 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(request);
 
-    var backend = Backend{};
-    var scratch: [64]u8 = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        .{
-            .space = .application,
-            .destination_connection_id = &client_dcid,
-        },
-    ));
+    const backend = Backend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.output_pulled);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -38555,20 +38363,7 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        poll_options,
-        &out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -38642,10 +38437,6 @@ test "EndpointConnectionLifecycle routed installed-key short compatible OrClose 
     const client_dcid = [_]u8{ 0x71, 0x72, 0x73, 0x74 };
     const server_dcid = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
-    const compatibilities = [_]VersionCompatibility{.{
-        .original_version = .v1,
-        .negotiated_version = .v2,
-    }};
 
     var client_lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer client_lifecycle.deinit();
@@ -38697,26 +38488,8 @@ test "EndpointConnectionLifecycle routed installed-key short compatible OrClose 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(request);
 
-    var backend = Backend{};
-    var scratch: [64]u8 = undefined;
-    var out: [1]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        .{
-            .space = .application,
-            .destination_connection_id = &client_dcid,
-        },
-        &out,
-    ));
+    const backend = Backend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expect(!backend.output_pulled);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -39197,18 +38970,8 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose val
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(crypto_datagram);
 
-    var backend = BadBackend{};
-    var scratch: [64]u8 = undefined;
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-    ));
+    const backend = BadBackend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, crypto_datagram));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
@@ -39420,18 +39183,7 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and p
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
@@ -39655,24 +39407,8 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose pol
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(request);
 
-    var backend = Backend{};
-    var scratch: [64]u8 = undefined;
-    const poll_options: EndpointPollInstalledKeyDatagramOptions = .{
-        .space = .application,
-        .destination_connection_id = &client_dcid,
-    };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-    ));
+    const backend = Backend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
@@ -39891,19 +39627,7 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and d
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-        &out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
@@ -40133,26 +39857,8 @@ test "EndpointConnectionLifecycle routed installed-key short backend OrClose dra
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(request);
 
-    var backend = Backend{};
-    var scratch: [64]u8 = undefined;
-    var out: [1]EndpointPolledDatagramResult = undefined;
-    const poll_options: EndpointPollInstalledKeyDatagramOptions = .{
-        .space = .application,
-        .destination_connection_id = &client_dcid,
-    };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-        &out,
-    ));
+    const backend = Backend{};
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, request));
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
@@ -40453,14 +40159,7 @@ test "EndpointConnectionLifecycle routes installed-key short receive and polls A
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndPollDatagram(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-        poll_options,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     const _routed1070 = try server_lifecycle.routeDatagram(server_receive_path, ping);
@@ -40553,13 +40252,7 @@ test "EndpointConnectionLifecycle routes installed-key short receive and selects
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
 
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
@@ -40717,20 +40410,11 @@ test "EndpointConnectionLifecycle routes installed-key short receive and drains 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ping);
 
-    var mismatch_out: [1]EndpointPolledDatagramResult = undefined;
     const poll_options: EndpointPollInstalledKeyDatagramOptions = .{
         .space = .application,
         .destination_connection_id = &client_dcid,
     };
-    try std.testing.expectError(error.InvalidPacket, server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-        client_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-        poll_options,
-        &mismatch_out,
-    ));
+    try std.testing.expectError(error.InvalidPacket, server_lifecycle.routeAndVerifyDatagram(client_connection_id, server_receive_path, ping));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
@@ -41031,16 +40715,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake receive and dra
     defer std.testing.allocator.free(client_datagram);
 
     var drained: [2]EndpointPolledDatagramResult = undefined;
-    try std.testing.expectError(error.InvalidPacket, lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams(
-        server_connection_id + 1,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        &client_dcid,
-        &server_dcid,
-        &drained,
-    ));
+    try std.testing.expectError(error.InvalidPacket, lifecycle.routeAndVerifyDatagram(server_connection_id + 1, server_receive_path, client_datagram));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.handshake));
 
     const _routed1037 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
@@ -41312,16 +40987,7 @@ test "EndpointConnectionLifecycle routes installed-key Handshake then drives bac
     };
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram(
-            server_connection_id + 1,
-            &server,
-            server_receive_path,
-            11,
-            client_datagram,
-            backend.backend(),
-            &scratch,
-            poll_options,
-        ),
+        lifecycle.routeAndVerifyDatagram(server_connection_id + 1, server_receive_path, client_datagram),
     );
     try std.testing.expect(!backend.sent);
     try std.testing.expectEqual(@as(usize, 0), backend.received_len);
