@@ -9,6 +9,7 @@ const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
 const X25519 = crypto.dh.X25519;
 const Certificate = crypto.Certificate;
 const EcdsaP256Sha256 = crypto.sign.ecdsa.EcdsaP256Sha256;
+const EcdsaP384Sha384 = crypto.sign.ecdsa.EcdsaP384Sha384;
 const Ed25519 = crypto.sign.Ed25519;
 const SignatureScheme = crypto.tls.SignatureScheme;
 
@@ -280,6 +281,7 @@ pub const ServerPskReplayFilter = struct {
 /// private key in `TlsConfig.private_key_bytes`).
 pub const PrivateKeyAlgorithm = enum {
     ecdsa_p256_sha256,
+    ecdsa_p384_sha384,
     ed25519,
 };
 
@@ -288,7 +290,8 @@ pub const TlsConfig = struct {
     alpn: []const []const u8 = &.{},
     server_name: ?[]const u8 = null,
     cert_chain_der: []const []const u8 = &.{},
-    /// Raw private key (32 bytes): P-256 scalar or Ed25519 seed.
+    /// Raw private key: 32-byte P-256 scalar, 48-byte P-384 scalar, or
+    /// 32-byte Ed25519 seed.
     private_key_bytes: ?[]const u8 = null,
     private_key_algorithm: PrivateKeyAlgorithm = .ecdsa_p256_sha256,
     skip_cert_verify: bool = true,
@@ -357,6 +360,12 @@ fn verifyCertificateVerifySignature(
             if (pub_key_algo != .X9_62_id_ecPublicKey) return error.BadCertificateVerify;
             const esig = EcdsaP256Sha256.Signature.fromDer(sig) catch return error.BadCertificateVerify;
             const pk = EcdsaP256Sha256.PublicKey.fromSec1(pub_key) catch return error.BadCertificateVerify;
+            esig.verify(signed_content, pk) catch return error.BadCertificateVerify;
+        },
+        .ecdsa_secp384r1_sha384 => {
+            if (pub_key_algo != .X9_62_id_ecPublicKey) return error.BadCertificateVerify;
+            const esig = EcdsaP384Sha384.Signature.fromDer(sig) catch return error.BadCertificateVerify;
+            const pk = EcdsaP384Sha384.PublicKey.fromSec1(pub_key) catch return error.BadCertificateVerify;
             esig.verify(signed_content, pk) catch return error.BadCertificateVerify;
         },
         .ed25519 => {
@@ -2100,6 +2109,7 @@ const hello_retry_request_random = [_]u8{
 };
 
 const sig_ecdsa_secp256r1_sha256: u16 = 0x0403;
+const sig_ecdsa_secp384r1_sha384: u16 = 0x0503;
 const sig_ed25519: u16 = 0x0807;
 const sig_rsa_pss_rsae_sha256: u16 = 0x0804;
 const max_new_session_ticket_lifetime_sec: u32 = 604800;
@@ -2107,24 +2117,31 @@ const max_new_session_ticket_lifetime_sec: u32 = 604800;
 fn signatureSchemeForPrivateKeyAlgorithm(algorithm: PrivateKeyAlgorithm) u16 {
     return switch (algorithm) {
         .ecdsa_p256_sha256 => sig_ecdsa_secp256r1_sha256,
+        .ecdsa_p384_sha384 => sig_ecdsa_secp384r1_sha384,
         .ed25519 => sig_ed25519,
     };
 }
 
 fn certificateVerifySignatureSchemeSupported(scheme: u16) bool {
     return scheme == sig_ecdsa_secp256r1_sha256 or
+        scheme == sig_ecdsa_secp384r1_sha384 or
         scheme == sig_rsa_pss_rsae_sha256 or
         scheme == sig_ed25519;
 }
 
 fn validateServerCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
     const private_key = config.private_key_bytes orelse return error.BadCertificate;
-    if (private_key.len != 32) return error.BadCertificate;
     switch (config.private_key_algorithm) {
         .ecdsa_p256_sha256 => {
+            if (private_key.len != 32) return error.BadCertificate;
             _ = EcdsaP256Sha256.SecretKey.fromBytes(private_key[0..32].*) catch return error.BadCertificate;
         },
+        .ecdsa_p384_sha384 => {
+            if (private_key.len != 48) return error.BadCertificate;
+            _ = EcdsaP384Sha384.SecretKey.fromBytes(private_key[0..48].*) catch return error.BadCertificate;
+        },
         .ed25519 => {
+            if (private_key.len != 32) return error.BadCertificate;
             _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
         },
     }
@@ -2132,12 +2149,17 @@ fn validateServerCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
 
 fn validateClientCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
     const private_key = config.client_private_key_bytes orelse return error.BadCertificate;
-    if (private_key.len != 32) return error.BadCertificate;
     switch (config.client_private_key_algorithm) {
         .ecdsa_p256_sha256 => {
+            if (private_key.len != 32) return error.BadCertificate;
             _ = EcdsaP256Sha256.SecretKey.fromBytes(private_key[0..32].*) catch return error.BadCertificate;
         },
+        .ecdsa_p384_sha384 => {
+            if (private_key.len != 48) return error.BadCertificate;
+            _ = EcdsaP384Sha384.SecretKey.fromBytes(private_key[0..48].*) catch return error.BadCertificate;
+        },
         .ed25519 => {
+            if (private_key.len != 32) return error.BadCertificate;
             _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
         },
     }
@@ -3093,10 +3115,12 @@ pub const Tls13Handshake = struct {
         pos += 32;
 
         // signature_algorithms
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 2 + 6);
-        writeU16(buf[pos..], 6);
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 2 + 8);
+        writeU16(buf[pos..], 8);
         pos += 2;
         writeU16(buf[pos..], sig_ecdsa_secp256r1_sha256);
+        pos += 2;
+        writeU16(buf[pos..], sig_ecdsa_secp384r1_sha384);
         pos += 2;
         writeU16(buf[pos..], sig_ed25519);
         pos += 2;
@@ -4471,7 +4495,7 @@ pub const Tls13Handshake = struct {
             if (client_ca_subjects_len > std.math.maxInt(u16)) return error.BadCertificate;
         }
         const ca_extension_len: usize = if (self.config.client_ca_subjects.len == 0) 0 else 4 + client_ca_subjects_len;
-        const extensions_len: usize = 4 + 6 + ca_extension_len;
+        const extensions_len: usize = 4 + 8 + ca_extension_len;
         const body_len: usize = 1 + 2 + extensions_len;
         if (4 + body_len > buf.len) return error.DecodeError;
         buf[0] = @intFromEnum(HandshakeType.certificate_request);
@@ -4483,10 +4507,12 @@ pub const Tls13Handshake = struct {
         pos += 1;
         writeU16(buf[pos..], @intCast(extensions_len));
         pos += 2;
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 6);
-        writeU16(buf[pos..], 4);
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 8);
+        writeU16(buf[pos..], 6);
         pos += 2;
         writeU16(buf[pos..], sig_ecdsa_secp256r1_sha256);
+        pos += 2;
+        writeU16(buf[pos..], sig_ecdsa_secp384r1_sha384);
         pos += 2;
         writeU16(buf[pos..], sig_ed25519);
         pos += 2;
@@ -4554,6 +4580,16 @@ pub const Tls13Handshake = struct {
                 @memcpy(sig_storage[0..sig_len], der);
                 break :blk sig_ecdsa_secp256r1_sha256;
             },
+            .ecdsa_p384_sha384 => blk: {
+                var der_buf: [EcdsaP384Sha384.Signature.der_encoded_length_max]u8 = undefined;
+                const sk = EcdsaP384Sha384.SecretKey.fromBytes(private_key[0..48].*) catch return error.InternalError;
+                const kp = EcdsaP384Sha384.KeyPair.fromSecretKey(sk) catch return error.InternalError;
+                const sig = kp.sign(&sign_content, null) catch return error.InternalError;
+                const der = sig.toDer(&der_buf);
+                sig_len = der.len;
+                @memcpy(sig_storage[0..sig_len], der);
+                break :blk sig_ecdsa_secp384r1_sha384;
+            },
             .ed25519 => blk: {
                 const kp = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.InternalError;
                 const sig = kp.sign(&sign_content, null) catch return error.InternalError;
@@ -4609,6 +4645,16 @@ pub const Tls13Handshake = struct {
                 sig_len = der.len;
                 @memcpy(sig_storage[0..sig_len], der);
                 break :blk sig_ecdsa_secp256r1_sha256;
+            },
+            .ecdsa_p384_sha384 => blk: {
+                var der_buf: [EcdsaP384Sha384.Signature.der_encoded_length_max]u8 = undefined;
+                const sk = EcdsaP384Sha384.SecretKey.fromBytes(private_key[0..48].*) catch return error.InternalError;
+                const kp = EcdsaP384Sha384.KeyPair.fromSecretKey(sk) catch return error.InternalError;
+                const sig = kp.sign(&sign_content, null) catch return error.InternalError;
+                const der = sig.toDer(&der_buf);
+                sig_len = der.len;
+                @memcpy(sig_storage[0..sig_len], der);
+                break :blk sig_ecdsa_secp384r1_sha384;
             },
             .ed25519 => blk: {
                 const kp = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.InternalError;
@@ -6621,6 +6667,21 @@ test "verifyCertificateVerifySignature accepts a valid ECDSA P-256 signature" {
     try verifyCertificateVerifySignature(&pub_key, .X9_62_id_ecPublicKey, 0x0403, der, &signed);
 }
 
+test "verifyCertificateVerifySignature accepts a valid ECDSA P-384 signature" {
+    const seed = [_]u8{0x22} ** 48;
+    const kp = try EcdsaP384Sha384.KeyPair.generateDeterministic(seed);
+    const pub_key = kp.public_key.toUncompressedSec1();
+
+    const th: [32]u8 = [_]u8{0xCD} ** 32;
+    const signed = certVerifySignedContent(th);
+
+    const sig = try kp.sign(&signed, null);
+    var der_buf: [EcdsaP384Sha384.Signature.der_encoded_length_max]u8 = undefined;
+    const der = sig.toDer(&der_buf);
+
+    try verifyCertificateVerifySignature(&pub_key, .X9_62_id_ecPublicKey, sig_ecdsa_secp384r1_sha384, der, &signed);
+}
+
 test "verifyCertificateVerifySignature rejects a tampered ECDSA P-256 signature" {
     const seed = [_]u8{0x11} ** 32;
     const kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed);
@@ -7936,6 +7997,7 @@ test "Tls13Handshake server rejects unsupported CertificateVerify signature sche
     writeU16(hello[sig_algs.body_offset + 2 ..][0..2], 0x0805);
     writeU16(hello[sig_algs.body_offset + 4 ..][0..2], 0x0806);
     writeU16(hello[sig_algs.body_offset + 6 ..][0..2], sig_rsa_pss_rsae_sha256);
+    writeU16(hello[sig_algs.body_offset + 8 ..][0..2], 0x0808);
 
     const cert_der = [_]u8{ 0x30, 0x03, 0x01 };
     var server = Tls13Handshake.initServer(.{
