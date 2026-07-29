@@ -2024,25 +2024,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed an installed-key datagram, process pending work, drive backends, then select a wakeup.
-    ///
-    /// This is the no-output receive/backend planning step for socket loops.
-    /// Backend progress runs only when the datagram routed to a connection and
-    /// pending idle/close cleanup did not retire any connection in this pass.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        deadline_connections: []const EndpointConnectionView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{});
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then select a wakeup.
     ///
@@ -2419,26 +2400,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then select a wakeup.
-    ///
-    /// This is the RFC 9368-compatible receive/pending/backend planning step
-    /// for socket loops. Backend progress runs only when the datagram routed
-    /// and pending idle/close cleanup did not retire any connection.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        deadline_connections: []const EndpointConnectionView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version close path, then select a wakeup.
     ///
@@ -2475,27 +2436,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive compatible-version backends across ordered spaces, then select a wakeup.
-    ///
-    /// This is the RFC 9368-compatible receive/pending/backend planning step
-    /// for socket loops that service ordered Initial/Handshake spaces in one
-    /// pass. Backend progress runs only when the datagram routed and pending
-    /// idle/close cleanup did not retire any connection.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        deadline_connections: []const EndpointConnectionView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendNextDeadlineResult {
-        return self.feedStepWithPendingWorkCryptoDeadline(receive_connections, deadline_connections, path, now_nanos, datagram, feed_options, backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version close path across ordered spaces, then select a wakeup.
     ///
@@ -2532,33 +2472,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then poll output.
-    ///
-    /// Backend progress runs only when the datagram routed and pending
-    /// idle/close cleanup did not retire any connection.
-    /// Feed one installed-key datagram, process pending work, drive one compatible-version backend, then poll output.
-    ///
-    /// This is the single-connection form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram()`.
-    /// Feed an installed-key datagram, process pending work, drive compatible-version backends, then poll explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one compatible-version backend, then poll explicit output.
     ///
@@ -2659,55 +2572,7 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then drain output.
-    ///
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return before
-    /// output draining.
-    /// Feed one installed-key datagram, process pending work, drive one compatible-version close path, then drain output.
-    ///
-    /// This is the single-connection form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams()`.
-    /// Feed an installed-key datagram, process pending work, drive compatible-version close path, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, out);
-    
-    }
 
-    /// Feed an installed-key datagram, process pending work, drive backends, then poll output.
-    ///
-    /// This is the receive/backend/output socket-loop step that also preserves
-    /// endpoint-owned idle, close, and recovery ordering between packet receive
-    /// and backend progress.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        return self.feedStepWithPendingWorkCryptoPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space);
-    
-    }
 
 
     /// Feed one installed-key datagram, process pending work, drive one backend
@@ -2824,24 +2689,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive backends, then poll explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then poll explicit output.
     ///
@@ -2945,24 +2792,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then poll explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyPoll(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one close-propagating backend, then poll explicit output.
     ///
@@ -3155,54 +2984,7 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive backends, then drain output.
-    ///
-    /// This is the bounded-output form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        return self.feedStepWithPendingWorkCryptoDrain(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space, out);
-    
-    }
 
-    /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then drain output.
-    ///
-    /// Backend peer transport-parameter errors queue CONNECTION_CLOSE and
-    /// return before output draining.
-    /// Feed one installed-key datagram, process pending work, drive one close-propagating backend, then drain output.
-    ///
-    /// This is the single-connection form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams()`.
-    /// Feed an installed-key datagram, process pending work, drive close-propagating backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, out);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one close-propagating backend, then drain explicit output.
     ///
@@ -3274,25 +3056,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Feed an installed-key datagram, process pending work, drive backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
-        return self.feedStepWithPendingWorkCryptoInstalledKeyDrain(receive_connections, path, now_nanos, datagram, feed_options, &.{backend_space}, drive_views, .{}, &.{}, poll_views, out);
-    
-    }
 
     /// Feed one installed-key datagram, process pending work, drive one backend, then drain explicit output.
     ///

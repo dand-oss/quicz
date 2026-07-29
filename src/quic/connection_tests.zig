@@ -14068,16 +14068,7 @@ test "EndpointConnectionLifecycle feed pending-work backend deadline step queues
         .{ .connection_id = 187, .connection = &decoy },
         .{ .connection_id = 186, .connection = &server },
     };
-    const first = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        &receive_connections,
-        &deadline_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        .handshake,
-        &drive_views,
-    );
+    const first = try server_lifecycle.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, server_path, 11, first_datagram, feed_options, &.{.handshake}, &drive_views, .{}, &.{});
     switch (first.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 186), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -15335,17 +15326,7 @@ test "EndpointConnectionLifecycle feed pending-work backend poll step returns ou
         .destination_connection_id = &client_dcid,
         .source_connection_id = &server_dcid,
     }};
-    const first = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagram(
-        &receive_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        .handshake,
-        &drive_views,
-        &poll_views,
-        .handshake,
-    );
+    const first = try server_lifecycle.feedStepWithPendingWorkCryptoPoll(&receive_connections, server_path, 11, first_datagram, feed_options, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views, .handshake);
     switch (first.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 188), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -15522,18 +15503,7 @@ test "EndpointConnectionLifecycle feed pending-work backend drain step returns b
         .source_connection_id = &server_dcid,
     }};
     var drain_out: [1]EndpointPolledDatagramResult = undefined;
-    const first = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
-        &receive_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        .handshake,
-        &drive_views,
-        &poll_views,
-        .handshake,
-        &drain_out,
-    );
+    const first = try server_lifecycle.feedStepWithPendingWorkCryptoDrain(&receive_connections, server_path, 11, first_datagram, feed_options, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views, .handshake, &drain_out);
     defer for (drain_out[0..(if (first.backend) |drain_backend| drain_backend.drain.datagrams_written else 0)]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -15722,16 +15692,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
             .source_connection_id = &server_dcid,
         },
     }};
-    const first = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        .handshake,
-        &drive_views,
-        &poll_views,
-    );
+    const first = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, server_path, 11, first_datagram, feed_options, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views);
     switch (first.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 194), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -15778,17 +15739,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
         },
     }};
     var drain_out: [1]EndpointPolledDatagramResult = undefined;
-    const second = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        14,
-        second_datagram,
-        feed_options,
-        .handshake,
-        &drain_drive_views,
-        &drain_poll_views,
-        &drain_out,
-    );
+    const second = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, server_path, 14, second_datagram, feed_options, &.{.handshake}, &drain_drive_views, .{}, &.{}, &drain_poll_views, &drain_out);
     defer for (drain_out[0..(if (second.backend) |drain_result| drain_result.drain.datagrams_written else 0)]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -15826,16 +15777,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
         .backend = close_poll_backend.backend(),
         .scratch = &close_poll_scratch,
     }};
-    const close_poll_result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        17,
-        third_datagram,
-        feed_options,
-        .handshake,
-        &close_poll_drive_views,
-        &poll_views,
-    );
+    const close_poll_result = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, server_path, 17, third_datagram, feed_options, &.{.handshake}, &close_poll_drive_views, .{ .close_on_error = true }, &.{}, &poll_views);
     switch (close_poll_result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 194), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -15867,17 +15809,7 @@ test "EndpointConnectionLifecycle feed pending-work backend explicit output opti
         .scratch = &close_drain_scratch,
     }};
     var close_drain_out: [1]EndpointPolledDatagramResult = undefined;
-    const close_drain_result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        20,
-        fourth_datagram,
-        feed_options,
-        .handshake,
-        &close_drain_drive_views,
-        &drain_poll_views,
-        &close_drain_out,
-    );
+    const close_drain_result = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, server_path, 20, fourth_datagram, feed_options, &.{.handshake}, &close_drain_drive_views, .{ .close_on_error = true }, &.{}, &drain_poll_views, &close_drain_out);
     defer for (close_drain_out[0..(if (close_drain_result.backend) |drain_backend_result| drain_backend_result.drain.datagrams_written else 0)]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -18833,22 +18765,12 @@ test "EndpointConnectionLifecycle feed pending-work compatible backend output ke
     var feed_out: [64]u8 = undefined;
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
 
-    const first_result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        11,
-        first_datagram,
-        .{
+    const first_result = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyPoll(&receive_connections, server_path, 11, first_datagram, .{
             .space = .handshake,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &server_versions,
-        },
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-    );
+        }, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views);
     switch (first_result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 322), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -18897,23 +18819,12 @@ test "EndpointConnectionLifecycle feed pending-work compatible backend output ke
         .scratch = &close_scratch,
     }};
     var drained: [1]EndpointPolledDatagramResult = undefined;
-    const second_result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &receive_connections,
-        server_path,
-        13,
-        second_datagram,
-        .{
+    const second_result = try server_lifecycle.feedStepWithPendingWorkCryptoInstalledKeyDrain(&receive_connections, server_path, 13, second_datagram, .{
             .space = .handshake,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &server_versions,
-        },
-        .handshake,
-        &close_drive_views,
-        &compatibilities,
-        &poll_views,
-        &drained,
-    );
+        }, &.{.handshake}, &close_drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &poll_views, &drained);
     defer for (drained[0..(if (second_result.backend) |drain_backend| drain_backend.drain.datagrams_written else 0)]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -20091,17 +20002,7 @@ test "EndpointConnectionLifecycle feed pending-work compatible backend deadline 
         .{ .connection_id = 315, .connection = &server },
     };
 
-    const result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        &receive_connections,
-        &deadline_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-    );
+    const result = try server_lifecycle.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, server_path, 11, first_datagram, feed_options, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities);
     switch (result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 315), route.connection_id),
         else => return error.TestUnexpectedResult,
@@ -20311,17 +20212,7 @@ test "EndpointConnectionLifecycle feed pending-work cross-space compatible backe
         .{ .connection_id = 315, .connection = &server },
     };
 
-    const result = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        &receive_connections,
-        &deadline_connections,
-        server_path,
-        11,
-        first_datagram,
-        feed_options,
-        &spaces,
-        &drive_views,
-        &compatibilities,
-    );
+    const result = try server_lifecycle.feedStepWithPendingWorkCryptoDeadline(&receive_connections, &deadline_connections, server_path, 11, first_datagram, feed_options, &spaces, &drive_views, .{ .compatible_version = true }, &compatibilities);
     switch (result.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 315), route.connection_id),
         else => return error.TestUnexpectedResult,
