@@ -26994,14 +26994,7 @@ test "EndpointConnectionLifecycle backend drive drains caller-owned output slots
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceAndDrainDatagrams(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-        .application,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, 10, .application, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     try std.testing.expectEqual(@as(usize, 2), result.drain.datagrams_written);
@@ -28801,14 +28794,7 @@ test "EndpointConnectionLifecycle close-propagating backend drive stops before d
 
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            .handshake,
-            &drive_views,
-            &poll_views,
-            10,
-            .application,
-            &out,
-        ),
+        lifecycle.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, 10, .application, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -45162,13 +45148,7 @@ test "EndpointConnectionLifecycle drives crypto backend sweep and polls installe
         .source_connection_id = &server_dcid,
     }};
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceAndPollDatagram(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-        .handshake,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithPoll(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, 10, .handshake);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), result.backend.progress.outbound_chunks);
     try std.testing.expectEqual(@as(usize, "backend handshake".len), result.backend.progress.outbound_bytes);

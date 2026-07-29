@@ -4040,13 +4040,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceAndPollDatagram(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
@@ -4207,14 +4201,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space, out),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
@@ -4379,13 +4366,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
@@ -4543,14 +4524,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .feed = feed,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space, out),
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
@@ -6884,22 +6858,6 @@ pub const EndpointConnectionLifecycle = struct {
         return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .output = .select_deadline }, &.{}, &deadline_connections);
     }
 
-    /// Drive crypto backends, then poll installed-key output across connections.
-    ///
-    /// This is the socket-loop step for TLS backend progress that may queue
-    /// protected CRYPTO or install keys and make already queued data sendable.
-    /// Connection/backend storage and output ordering remain caller-owned via
-    /// the two view slices.
-    pub fn driveCryptoBackendsInSpaceAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointCryptoBackendDriveDatagramResult {
-        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space);
-    }
 
 
 
@@ -7018,13 +6976,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.driveCryptoBackendsInSpaceAndPollDatagram(
-            space,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-        );
+        return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space);
     }
 
     /// Drive one backend, then poll explicit installed-key output.
@@ -7057,23 +7009,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Drive crypto backends, then drain installed-key output across connections.
-    ///
-    /// This is the bounded-output form for embeddable socket loops that own the
-    /// final datagram queue. Backend progress is applied before draining, and
-    /// the caller-provided output slice limits work for the current iteration.
-    pub fn driveCryptoBackendsInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space, out);
-    
-    }
 
     /// Drive crypto backends, then drain installed-key output with explicit options.
     ///
@@ -7119,14 +7054,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-            space,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-            out,
-        );
+        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space, out);
     }
 
     /// Drive one backend, then drain explicit installed-key output.
@@ -7210,21 +7138,6 @@ pub const EndpointConnectionLifecycle = struct {
         return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, &deadline_connections);
     }
 
-    /// Drive close-propagating crypto backends, then poll installed-key output.
-    ///
-    /// If backend peer transport-parameter processing fails, this returns that
-    /// connection error before polling output so callers can surface the close
-    /// path for the originating connection.
-    pub fn driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointCryptoBackendDriveDatagramResult {
-        return self.driveCryptoBackendStepWithPoll(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space);
-    }
 
     /// Drive close-propagating crypto backends, then poll explicit output.
     ///
@@ -7268,13 +7181,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-            space,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-        );
+        return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space);
     }
 
     /// Drive one close-propagating backend, then poll explicit installed-key output.
@@ -7305,7 +7212,12 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Drive close-propagating backends, then drain installed-key output.
+
+    /// Drive close-propagating backends, then drain explicit output.
+    ///
+    /// This is the bounded-output form of
+    /// `driveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions()`.
+/// Drive close-propagating backends, then drain installed-key output.
     ///
     /// Peer transport-parameter errors return before output draining. Successful
     /// backend progress uses the same bounded drain contract as
@@ -7323,10 +7235,6 @@ pub const EndpointConnectionLifecycle = struct {
     
     }
 
-    /// Drive close-propagating backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `driveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions()`.
     pub fn driveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
         self: *EndpointConnectionLifecycle,
         space: PacketNumberSpace,
@@ -7366,14 +7274,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = poll_options.destination_connection_id,
             .source_connection_id = poll_options.source_connection_id,
         }};
-        return self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            space,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            poll_options.space,
-            out,
-        );
+        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space, out);
     }
 
     /// Drive one close-propagating backend, then drain explicit installed-key output.
@@ -9442,13 +9343,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsInSpaceAndPollDatagram(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space),
         };
     }
 
@@ -9495,14 +9390,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space, out),
         };
     }
 
@@ -9560,14 +9448,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space, out),
         };
     }
 
@@ -9612,13 +9493,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space),
         };
     }
 
@@ -11170,13 +11045,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceAndPollDatagram(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
     }
@@ -11228,14 +11097,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space, out),
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
     }
@@ -11489,13 +11351,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space),
         };
     }
 
@@ -11544,14 +11400,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-                backend_space,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                poll_options.space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space, out),
         };
     }
 
@@ -12334,13 +12183,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceAndPollDatagram(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space),
         };
     }
 
@@ -12445,14 +12288,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos, poll_space, out),
         };
     }
 
@@ -12558,13 +12394,7 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-                backend_space,
-                drive_views,
-                poll_views,
-                now_nanos,
-                poll_space,
-            ),
+            .backend = try self.driveCryptoBackendStepWithPoll(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space),
         };
     }
 
@@ -16066,14 +15896,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = dcid,
             .source_connection_id = scid,
         }};
-        return try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-            .handshake,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            .handshake,
-            out,
-        );
+        return try self.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, now_nanos, .handshake, out);
     }
 
     /// Process installed-key Handshake input, drive backend, and poll one output.
@@ -16674,14 +16497,7 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return .{
             .route = route,
-            .backend = try self.driveCryptoBackendsInSpaceAndDrainDatagrams(
-                .handshake,
-                &drive_views,
-                &poll_views,
-                now_nanos,
-                .handshake,
-                out,
-            ),
+            .backend = try self.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, now_nanos, .handshake, out),
         };
     }
 
