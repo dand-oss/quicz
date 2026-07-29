@@ -6682,6 +6682,34 @@ test "verifyCertificateVerifySignature accepts a valid ECDSA P-384 signature" {
     try verifyCertificateVerifySignature(&pub_key, .X9_62_id_ecPublicKey, sig_ecdsa_secp384r1_sha384, der, &signed);
 }
 
+test "Tls13Handshake server emits an ECDSA P-384 CertificateVerify" {
+    const seed = [_]u8{0x33} ** 48;
+    const kp = try EcdsaP384Sha384.KeyPair.generateDeterministic(seed);
+    const private_key = kp.secret_key.bytes;
+
+    var server = Tls13Handshake.initServer(.{
+        .private_key_bytes = &private_key,
+        .private_key_algorithm = .ecdsa_p384_sha384,
+    }, &.{});
+    server.state = .server_send_certificate_verify;
+    const signed = certVerifySignedContent(server.transcript.current());
+    const action = try server.step();
+    const data = switch (action) {
+        .send_data => |send_data| send_data.data,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(sig_ecdsa_secp384r1_sha384, readU16(data[4..]));
+    const signature_len = readU16(data[6..]);
+    try std.testing.expectEqual(data.len, @as(usize, signature_len) + 8);
+    try verifyCertificateVerifySignature(
+        &kp.public_key.toUncompressedSec1(),
+        .X9_62_id_ecPublicKey,
+        sig_ecdsa_secp384r1_sha384,
+        data[8..],
+        &signed,
+    );
+}
+
 test "verifyCertificateVerifySignature rejects a tampered ECDSA P-256 signature" {
     const seed = [_]u8{0x11} ** 32;
     const kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed);
