@@ -461,9 +461,12 @@ pub const Tls13Backend = struct {
 
             .server_wait_client_finished,
             .client_wait_encrypted_extensions,
+            .client_wait_certificate_or_request,
             .client_wait_certificate,
             .client_wait_certificate_verify,
             .client_wait_finished,
+            .server_wait_client_certificate,
+            .server_wait_client_certificate_verify,
             => .handshake,
 
             .connected => .application,
@@ -472,9 +475,12 @@ pub const Tls13Backend = struct {
             // these neutral states only appear when the state machine cannot
             // yet name a peer input space.
             .client_start,
+            .client_send_certificate,
+            .client_send_certificate_verify,
             .client_send_finished,
             .server_send_server_hello,
             .server_send_encrypted_extensions,
+            .server_send_certificate_request,
             .server_send_certificate,
             .server_send_certificate_verify,
             .server_send_finished,

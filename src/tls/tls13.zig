@@ -298,6 +298,19 @@ pub const TlsConfig = struct {
     /// Optional CA bundle for chain-to-trust-anchor verification. Requires
     /// `now_sec` to be set as well.
     ca_bundle: ?*const Certificate.Bundle = null,
+    /// Require a client Certificate, CertificateVerify, and Finished after the
+    /// server Finished. `client_ca_bundle` and `now_sec` must be supplied
+    /// whenever this is enabled.
+    require_client_auth: bool = false,
+    /// Trust anchors used by a server when validating a required client
+    /// certificate chain. This is intentionally separate from `ca_bundle`,
+    /// which is used by clients to validate servers.
+    client_ca_bundle: ?*const Certificate.Bundle = null,
+    /// Client certificate chain and signing key used after a server sends a
+    /// CertificateRequest. They are ignored for a normal one-way handshake.
+    client_cert_chain_der: []const []const u8 = &.{},
+    client_private_key_bytes: ?[]const u8 = null,
+    client_private_key_algorithm: PrivateKeyAlgorithm = .ecdsa_p256_sha256,
     /// Optional shared replay filter for accepting PSK identities only once.
     server_psk_replay_filter: ?*ServerPskReplayFilter = null,
 };
@@ -2052,6 +2065,7 @@ const HandshakeType = enum(u8) {
     new_session_ticket = 4,
     encrypted_extensions = 8,
     certificate = 11,
+    certificate_request = 13,
     certificate_verify = 15,
     finished = 20,
 };
@@ -2109,6 +2123,24 @@ fn validateServerCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
             _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
         },
     }
+}
+
+fn validateClientCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
+    const private_key = config.client_private_key_bytes orelse return error.BadCertificate;
+    if (private_key.len != 32) return error.BadCertificate;
+    switch (config.client_private_key_algorithm) {
+        .ecdsa_p256_sha256 => {
+            _ = EcdsaP256Sha256.SecretKey.fromBytes(private_key[0..32].*) catch return error.BadCertificate;
+        },
+        .ed25519 => {
+            _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
+        },
+    }
+}
+
+fn validateRequiredClientAuth(config: TlsConfig) HandshakeError!void {
+    if (!config.require_client_auth) return;
+    if (config.client_ca_bundle == null or config.now_sec == null) return error.BadCertificate;
 }
 
 fn validateServerCertificateChain(cert_chain_der: []const []const u8, output_limit: usize) HandshakeError!void {
@@ -2330,16 +2362,22 @@ const HandshakeState = enum {
     client_start,
     client_wait_server_hello,
     client_wait_encrypted_extensions,
+    client_wait_certificate_or_request,
     client_wait_certificate,
     client_wait_certificate_verify,
     client_wait_finished,
+    client_send_certificate,
+    client_send_certificate_verify,
     client_send_finished,
     server_wait_client_hello,
     server_send_server_hello,
     server_send_encrypted_extensions,
+    server_send_certificate_request,
     server_send_certificate,
     server_send_certificate_verify,
     server_send_finished,
+    server_wait_client_certificate,
+    server_wait_client_certificate_verify,
     server_wait_client_finished,
     connected,
 };
@@ -2399,6 +2437,10 @@ pub const Tls13Handshake = struct {
     // Server certificate (first in chain, DER) — verified via verifyServerCertificate
     server_cert: [4096]u8 = undefined,
     server_cert_len: usize = 0,
+
+    // Server-side retained leaf from a required client Certificate.
+    client_cert: [4096]u8 = undefined,
+    client_cert_len: usize = 0,
 
     // CertificateVerify signature — verified via verifyCertificateVerify
     cert_verify_scheme: u16 = 0,
@@ -2467,6 +2509,10 @@ pub const Tls13Handshake = struct {
     server_encrypted_extensions_processed: bool = false,
     server_accepted_early_data: bool = false,
 
+    // Client-side marker set only after a syntactically valid server
+    // CertificateRequest has selected one of this client's signing schemes.
+    client_auth_requested: bool = false,
+
     /// Initialize as a TLS 1.3 client.
     pub fn initClient(config: TlsConfig, transport_params: []const u8) Tls13Handshake {
         var self: Tls13Handshake = undefined;
@@ -2488,6 +2534,7 @@ pub const Tls13Handshake = struct {
         self.peer_tp_len = 0;
         self.peer_tp_available = false;
         self.server_cert_len = 0;
+        self.client_cert_len = 0;
         self.cert_verify_scheme = 0;
         self.cert_verify_sig_len = 0;
         self.resumption_psk = null;
@@ -2513,6 +2560,7 @@ pub const Tls13Handshake = struct {
         self.client_offered_early_data = false;
         self.server_encrypted_extensions_processed = false;
         self.server_accepted_early_data = false;
+        self.client_auth_requested = false;
 
         // Copy pre-encoded transport parameters. Oversized local bytes cannot
         // be represented without changing the wire value, so defer failure to
@@ -2561,6 +2609,7 @@ pub const Tls13Handshake = struct {
         self.peer_tp_len = 0;
         self.peer_tp_available = false;
         self.server_cert_len = 0;
+        self.client_cert_len = 0;
         self.cert_verify_scheme = 0;
         self.cert_verify_sig_len = 0;
         self.resumption_psk = null;
@@ -2586,6 +2635,7 @@ pub const Tls13Handshake = struct {
         self.client_offered_early_data = false;
         self.server_encrypted_extensions_processed = false;
         self.server_accepted_early_data = false;
+        self.client_auth_requested = false;
 
         // Copy pre-encoded transport parameters (sent in EncryptedExtensions).
         // Oversized local bytes cannot be represented without changing the
@@ -2710,16 +2760,22 @@ pub const Tls13Handshake = struct {
             .client_start => return self.clientBuildHello(),
             .client_wait_server_hello => return self.clientProcessServerHello(),
             .client_wait_encrypted_extensions => return self.clientProcessEncryptedExtensions(),
+            .client_wait_certificate_or_request => return self.clientProcessCertificateOrRequest(),
             .client_wait_certificate => return self.clientProcessCertificate(),
             .client_wait_certificate_verify => return self.clientProcessCertificateVerify(),
             .client_wait_finished => return self.clientProcessServerFinished(),
+            .client_send_certificate => return self.clientBuildCertificate(),
+            .client_send_certificate_verify => return self.clientBuildCertificateVerify(),
             .client_send_finished => return self.clientSendFinished(),
             .server_wait_client_hello => return self.serverProcessClientHello(),
             .server_send_server_hello => return self.serverBuildServerHello(),
             .server_send_encrypted_extensions => return self.serverBuildEncryptedExtensions(),
+            .server_send_certificate_request => return self.serverBuildCertificateRequest(),
             .server_send_certificate => return self.serverBuildCertificate(),
             .server_send_certificate_verify => return self.serverBuildCertificateVerify(),
             .server_send_finished => return self.serverBuildFinished(),
+            .server_wait_client_certificate => return self.serverProcessClientCertificate(),
+            .server_wait_client_certificate_verify => return self.serverProcessClientCertificateVerify(),
             .server_wait_client_finished => return self.serverProcessClientFinished(),
             .connected => return .complete,
         }
@@ -3231,12 +3287,70 @@ pub const Tls13Handshake = struct {
         self.server_accepted_early_data = accepted_early_data;
         self.server_encrypted_extensions_processed = true;
         self.transcript.update(msg);
-        self.state = if (self.psk_selected) .client_wait_finished else .client_wait_certificate;
+        // A server may authenticate a resumed connection with a client
+        // certificate too. Wait for the next handshake message and accept
+        // either CertificateRequest/Certificate or Finished for an ordinary
+        // PSK-only resumption.
+        self.state = .client_wait_certificate_or_request;
         return ._continue;
     }
 
     /// Parse the server Certificate message and retain its leaf certificate
     /// for CertificateVerify (RFC 8446 §4.4.2).
+    fn clientProcessCertificateOrRequest(self: *Tls13Handshake) HandshakeError!Action {
+        const msg = (try self.readHandshakeMsg()) orelse return .wait_for_data;
+        if (msg.len < 4) return error.DecodeError;
+        if (msg[0] == @intFromEnum(HandshakeType.certificate)) {
+            // Reuse the Certificate parser without duplicating its strict
+            // certificate-list and chain-validation checks.
+            self.in_offset -= msg.len;
+            return self.clientProcessCertificate();
+        }
+        if (msg[0] == @intFromEnum(HandshakeType.finished) and self.psk_selected) {
+            self.in_offset -= msg.len;
+            return self.clientProcessServerFinished();
+        }
+        if (msg[0] != @intFromEnum(HandshakeType.certificate_request)) return error.UnexpectedMessage;
+
+        var pos: usize = 4;
+        if (pos >= msg.len or msg[pos] != 0) return error.DecodeError;
+        pos += 1;
+        if (pos + 2 > msg.len) return error.DecodeError;
+        const extensions_len = readU16(msg[pos..]);
+        pos += 2;
+        if (pos + extensions_len != msg.len) return error.DecodeError;
+        const extensions_end = msg.len;
+        var have_signature_algorithms = false;
+        var selected_signature_algorithm = false;
+        while (pos < extensions_end) {
+            if (pos + 4 > extensions_end) return error.DecodeError;
+            const extension_type = readU16(msg[pos..]);
+            const extension_len = readU16(msg[pos + 2 ..]);
+            pos += 4;
+            if (extension_len > extensions_end - pos) return error.DecodeError;
+            const extension = msg[pos .. pos + extension_len];
+            pos += extension_len;
+            if (extension_type != @intFromEnum(ExtType.signature_algorithms)) continue;
+            if (have_signature_algorithms or extension.len < 4) return error.DecodeError;
+            const algorithms_len = readU16(extension[0..]);
+            if (algorithms_len == 0 or algorithms_len + 2 != extension.len or algorithms_len % 2 != 0) return error.DecodeError;
+            have_signature_algorithms = true;
+            const client_scheme = signatureSchemeForPrivateKeyAlgorithm(self.config.client_private_key_algorithm);
+            var algorithm_pos: usize = 2;
+            while (algorithm_pos < extension.len) : (algorithm_pos += 2) {
+                if (readU16(extension[algorithm_pos..]) == client_scheme) selected_signature_algorithm = true;
+            }
+        }
+        if (!have_signature_algorithms or !selected_signature_algorithm) return error.UnsupportedSignatureAlgorithm;
+        try validateServerCertificateChain(self.config.client_cert_chain_der, self.out_buf.len);
+        try validateClientCertificatePrivateKey(self.config);
+
+        self.client_auth_requested = true;
+        self.transcript.update(msg);
+        self.state = .client_wait_certificate;
+        return ._continue;
+    }
+
     fn clientProcessCertificate(self: *Tls13Handshake) HandshakeError!Action {
         const msg = (try self.readHandshakeMsg()) orelse return .wait_for_data;
         if (msg.len < 4 or msg[0] != @intFromEnum(HandshakeType.certificate)) return error.UnexpectedMessage;
@@ -3466,10 +3580,13 @@ pub const Tls13Handshake = struct {
         @memcpy(&received, verify_data[0..32]);
         if (!std.crypto.timing_safe.eql([32]u8, expected, received)) return error.BadFinished;
 
-        // The transcript now includes server Finished for app secrets and the
-        // client Finished derived in the next step.
+        // Application secrets always derive from the transcript through the
+        // server Finished. In mutual TLS, the subsequent client Certificate
+        // and CertificateVerify authenticate the client but must not change
+        // the 1-RTT traffic secret derivation point.
         self.transcript.update(msg);
-        self.state = .client_send_finished;
+        self.key_schedule.deriveAppSecrets(self.transcript.current());
+        self.state = if (self.client_auth_requested) .client_send_certificate else .client_send_finished;
         return ._continue;
     }
 
@@ -3484,8 +3601,10 @@ pub const Tls13Handshake = struct {
     fn clientSendFinished(self: *Tls13Handshake) HandshakeError!Action {
         const th = self.transcript.current();
 
-        // Application secrets derive from the transcript up to server Finished.
-        self.key_schedule.deriveAppSecrets(th);
+        // Application secrets were derived when the server Finished was
+        // verified. Keep the guard so this handler is also safe for the
+        // normal one-way handshake state progression.
+        if (!self.key_schedule.app_secret_derived) self.key_schedule.deriveAppSecrets(th);
 
         // Client verify_data uses the client handshake traffic secret over the
         // same transcript hash.
@@ -3967,6 +4086,7 @@ pub const Tls13Handshake = struct {
                 try validateServerCertificatePrivateKey(self.config);
             }
         }
+        try validateRequiredClientAuth(self.config);
         self.transcript = next_transcript;
         self.key_schedule = next_key_schedule;
         self.psk_selected = next_psk_selected;
@@ -4103,7 +4223,7 @@ pub const Tls13Handshake = struct {
         if (total_len > self.out_buf.len) return error.DecodeError;
         const len = buildEncryptedExtensionsWithEarlyData(&self.out_buf, alpn, tp, accept_early_data);
         self.transcript.update(self.out_buf[0..len]);
-        self.state = if (self.psk_selected) .server_send_finished else .server_send_certificate;
+        self.state = if (self.config.require_client_auth) .server_send_certificate_request else if (self.psk_selected) .server_send_finished else .server_send_certificate;
         return Action{ .send_data = .{
             .level = .handshake,
             .data = self.out_buf[0..len],
@@ -4112,6 +4232,44 @@ pub const Tls13Handshake = struct {
 
     /// Build the Certificate message from the configured leaf-first chain
     /// (RFC 8446 §4.4.2).
+    fn serverBuildCertificateRequest(self: *Tls13Handshake) HandshakeError!Action {
+        try validateRequiredClientAuth(self.config);
+        const buf = &self.out_buf;
+        // Empty request context, then one mandatory signature_algorithms
+        // extension. Both currently supported client signing schemes are
+        // advertised; the client selects the one matching its certificate.
+        const body_len: usize = 1 + 2 + 4 + 2 + 4;
+        if (4 + body_len > buf.len) return error.DecodeError;
+        buf[0] = @intFromEnum(HandshakeType.certificate_request);
+        buf[1] = 0;
+        buf[2] = 0;
+        buf[3] = @intCast(body_len);
+        var pos: usize = 4;
+        buf[pos] = 0;
+        pos += 1;
+        writeU16(buf[pos..], 10);
+        pos += 2;
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 6);
+        writeU16(buf[pos..], 4);
+        pos += 2;
+        writeU16(buf[pos..], sig_ecdsa_secp256r1_sha256);
+        pos += 2;
+        writeU16(buf[pos..], sig_ed25519);
+        pos += 2;
+        self.transcript.update(buf[0..pos]);
+        self.state = .server_send_certificate;
+        return .{ .send_data = .{ .level = .handshake, .data = buf[0..pos] } };
+    }
+
+    fn clientBuildCertificate(self: *Tls13Handshake) HandshakeError!Action {
+        try validateServerCertificateChain(self.config.client_cert_chain_der, self.out_buf.len);
+        try validateClientCertificatePrivateKey(self.config);
+        const len = buildCertificateChain(&self.out_buf, self.config.client_cert_chain_der) orelse return error.BadCertificate;
+        self.transcript.update(self.out_buf[0..len]);
+        self.state = .client_send_certificate_verify;
+        return .{ .send_data = .{ .level = .handshake, .data = self.out_buf[0..len] } };
+    }
+
     fn serverBuildCertificate(self: *Tls13Handshake) HandshakeError!Action {
         try validateServerCertificateChain(self.config.cert_chain_der, self.out_buf.len);
         const len = buildCertificateChain(&self.out_buf, self.config.cert_chain_der) orelse return error.BadCertificate;
@@ -4183,6 +4341,58 @@ pub const Tls13Handshake = struct {
         } };
     }
 
+    fn clientBuildCertificateVerify(self: *Tls13Handshake) HandshakeError!Action {
+        try validateClientCertificatePrivateKey(self.config);
+        const private_key = self.config.client_private_key_bytes.?;
+        const th = self.transcript.current();
+        const label = "TLS 1.3, client CertificateVerify";
+        var sign_content: [64 + label.len + 1 + 32]u8 = undefined;
+        @memset(sign_content[0..64], 0x20);
+        @memcpy(sign_content[64..][0..label.len], label);
+        sign_content[64 + label.len] = 0;
+        @memcpy(sign_content[64 + label.len + 1 ..][0..32], &th);
+
+        var sig_storage: [128]u8 = undefined;
+        var sig_len: usize = 0;
+        const sig_scheme: u16 = switch (self.config.client_private_key_algorithm) {
+            .ecdsa_p256_sha256 => blk: {
+                var der_buf: [EcdsaP256Sha256.Signature.der_encoded_length_max]u8 = undefined;
+                const sk = EcdsaP256Sha256.SecretKey.fromBytes(private_key[0..32].*) catch return error.InternalError;
+                const kp = EcdsaP256Sha256.KeyPair.fromSecretKey(sk) catch return error.InternalError;
+                const sig = kp.sign(&sign_content, null) catch return error.InternalError;
+                const der = sig.toDer(&der_buf);
+                sig_len = der.len;
+                @memcpy(sig_storage[0..sig_len], der);
+                break :blk sig_ecdsa_secp256r1_sha256;
+            },
+            .ed25519 => blk: {
+                const kp = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.InternalError;
+                const sig = kp.sign(&sign_content, null) catch return error.InternalError;
+                const bytes = sig.toBytes();
+                sig_len = bytes.len;
+                @memcpy(sig_storage[0..sig_len], &bytes);
+                break :blk sig_ed25519;
+            },
+        };
+
+        const buf = &self.out_buf;
+        var pos: usize = 4;
+        writeU16(buf[pos..], sig_scheme);
+        pos += 2;
+        writeU16(buf[pos..], @intCast(sig_len));
+        pos += 2;
+        @memcpy(buf[pos..][0..sig_len], sig_storage[0..sig_len]);
+        pos += sig_len;
+        const body_len: u24 = @intCast(pos - 4);
+        buf[0] = @intFromEnum(HandshakeType.certificate_verify);
+        buf[1] = @intCast(body_len >> 16);
+        buf[2] = @intCast((body_len >> 8) & 0xff);
+        buf[3] = @intCast(body_len & 0xff);
+        self.transcript.update(buf[0..pos]);
+        self.state = .client_send_finished;
+        return .{ .send_data = .{ .level = .handshake, .data = buf[0..pos] } };
+    }
+
     /// Build the server Finished message and derive application traffic
     /// secrets (RFC 8446 §4.4.4 + §7.1).
     fn serverBuildFinished(self: *Tls13Handshake) HandshakeError!Action {
@@ -4197,11 +4407,82 @@ pub const Tls13Handshake = struct {
         // Application secrets derive from the transcript up to server Finished.
         self.key_schedule.deriveAppSecrets(self.transcript.current());
         self.pending_install_app = true;
-        self.state = .server_wait_client_finished;
+        self.state = if (self.config.require_client_auth) .server_wait_client_certificate else .server_wait_client_finished;
         return Action{ .send_data = .{
             .level = .handshake,
             .data = self.out_buf[0..len],
         } };
+    }
+
+    fn serverProcessClientCertificate(self: *Tls13Handshake) HandshakeError!Action {
+        const msg = (try self.readHandshakeMsg()) orelse return .wait_for_data;
+        if (msg.len < 8 or msg[0] != @intFromEnum(HandshakeType.certificate)) return error.UnexpectedMessage;
+        var pos: usize = 4;
+        if (msg[pos] != 0) return error.DecodeError;
+        pos += 1;
+        const list_len = (@as(usize, msg[pos]) << 16) |
+            (@as(usize, msg[pos + 1]) << 8) |
+            @as(usize, msg[pos + 2]);
+        pos += 3;
+        const list_end = std.math.add(usize, pos, list_len) catch return error.DecodeError;
+        if (list_end != msg.len) return error.DecodeError;
+        const leaf_der = try nextCertificateEntry(msg, &pos, list_end);
+        if (leaf_der.len > self.client_cert.len) return error.BadCertificate;
+        const chain_start = pos;
+        while (pos < list_end) _ = try nextCertificateEntry(msg, &pos, list_end);
+        try self.verifyClientCertificateChainWithLeaf(leaf_der, msg, chain_start, list_end);
+
+        self.client_cert_len = leaf_der.len;
+        @memcpy(self.client_cert[0..self.client_cert_len], leaf_der);
+        self.transcript.update(msg);
+        self.state = .server_wait_client_certificate_verify;
+        return ._continue;
+    }
+
+    fn verifyClientCertificateChainWithLeaf(
+        self: *Tls13Handshake,
+        leaf_der: []const u8,
+        certificate_message: []const u8,
+        chain_pos: usize,
+        chain_end: usize,
+    ) HandshakeError!void {
+        if (!certificateDerEnvelopeLooksParseable(leaf_der)) return error.BadCertificate;
+        const bundle = self.config.client_ca_bundle orelse return error.BadCertificate;
+        const now = self.config.now_sec orelse return error.BadCertificate;
+        var subject = (Certificate{ .buffer = leaf_der, .index = 0 }).parse() catch return error.BadCertificate;
+        var pos = chain_pos;
+        while (pos < chain_end) {
+            const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
+            const issuer = (Certificate{ .buffer = issuer_der, .index = 0 }).parse() catch return error.BadCertificate;
+            subject.verify(issuer, now) catch return error.BadCertificate;
+            subject = issuer;
+        }
+        bundle.verify(subject, now) catch return error.BadCertificate;
+    }
+
+    fn serverProcessClientCertificateVerify(self: *Tls13Handshake) HandshakeError!Action {
+        const msg = (try self.readHandshakeMsg()) orelse return .wait_for_data;
+        if (msg.len < 8 or msg[0] != @intFromEnum(HandshakeType.certificate_verify)) return error.UnexpectedMessage;
+        const scheme = readU16(msg[4..]);
+        if (!certificateVerifySignatureSchemeSupported(scheme)) return error.UnsupportedSignatureAlgorithm;
+        const sig_len = readU16(msg[6..]);
+        if (sig_len == 0 or 8 + sig_len != msg.len) return error.DecodeError;
+        try self.verifyClientCertificateVerify(self.transcript.current(), scheme, msg[8..]);
+        self.transcript.update(msg);
+        self.state = .server_wait_client_finished;
+        return ._continue;
+    }
+
+    fn verifyClientCertificateVerify(self: *Tls13Handshake, transcript_hash: [32]u8, scheme: u16, sig: []const u8) HandshakeError!void {
+        if (self.client_cert_len == 0 or !certificateDerEnvelopeLooksParseable(self.client_cert[0..self.client_cert_len])) return error.BadCertificate;
+        const parsed = (Certificate{ .buffer = self.client_cert[0..self.client_cert_len], .index = 0 }).parse() catch return error.BadCertificate;
+        const label = "TLS 1.3, client CertificateVerify";
+        var signed: [64 + label.len + 1 + 32]u8 = undefined;
+        @memset(signed[0..64], 0x20);
+        @memcpy(signed[64..][0..label.len], label);
+        signed[64 + label.len] = 0;
+        @memcpy(signed[64 + label.len + 1 ..][0..32], &transcript_hash);
+        try verifyCertificateVerifySignature(parsed.pubKey(), parsed.pub_key_algo, scheme, sig, &signed);
     }
 
     /// Verify the client Finished message against the transcript hash and
@@ -8034,6 +8315,108 @@ test "Tls13Handshake client↔server loopback completes with matching secrets" {
     // 7. Peer transport parameters crossed over.
     try std.testing.expectEqualSlices(u8, &server_tp, client.peer_tp[0..client.peer_tp_len]);
     try std.testing.expectEqualSlices(u8, &client_tp, server.peer_tp[0..server.peer_tp_len]);
+}
+
+test "Tls13Handshake mutual TLS loopback validates and proves client certificate ownership" {
+    const pem = @embedFile("../quic/testdata/quicz-echo-ca.pem");
+    const begin_marker = "-----BEGIN CERTIFICATE-----";
+    const end_marker = "-----END CERTIFICATE-----";
+    const begin = std.mem.indexOf(u8, pem, begin_marker) orelse return error.TestUnexpectedResult;
+    const encoded_start = begin + begin_marker.len;
+    const encoded_end = std.mem.indexOfPos(u8, pem, encoded_start, end_marker) orelse return error.TestUnexpectedResult;
+    const encoded = std.mem.trim(u8, pem[encoded_start..encoded_end], " \t\r\n");
+    var cert_der_storage: [512]u8 = undefined;
+    const der_len = try std.base64.standard.decoderWithIgnore("\r\n").decode(&cert_der_storage, encoded);
+    const cert_der = cert_der_storage[0..der_len];
+
+    const now_sec: i64 = 1_800_000_000;
+    var trust_bundle = Certificate.Bundle.empty;
+    defer trust_bundle.deinit(std.testing.allocator);
+    try trust_bundle.bytes.appendSlice(std.testing.allocator, cert_der);
+    try trust_bundle.parseCert(std.testing.allocator, 0, now_sec);
+
+    const private_key = [_]u8{
+        0x5b, 0xbf, 0x4f, 0x5a, 0x48, 0x42, 0x9f, 0x00,
+        0x5a, 0x57, 0x09, 0xc3, 0xb4, 0xc1, 0x3a, 0x64,
+        0x2e, 0xb1, 0x61, 0xf5, 0x0b, 0xde, 0x64, 0x4b,
+        0x3a, 0x38, 0xa6, 0x8f, 0xfa, 0x48, 0xda, 0x51,
+    };
+    const alpn = [_][]const u8{"hq-interop"};
+    const client_tp = [_]u8{ 0x01, 0x02, 0x03 };
+    const server_tp = [_]u8{ 0xaa, 0xbb };
+    var client = Tls13Handshake.initClient(.{
+        .alpn = &alpn,
+        .server_name = "localhost",
+        .now_sec = now_sec,
+        .ca_bundle = &trust_bundle,
+        .client_cert_chain_der = &.{cert_der},
+        .client_private_key_bytes = &private_key,
+    }, &client_tp);
+    var server = Tls13Handshake.initServer(.{
+        .alpn = &alpn,
+        .cert_chain_der = &.{cert_der},
+        .private_key_bytes = &private_key,
+        .require_client_auth = true,
+        .client_ca_bundle = &trust_bundle,
+        .now_sec = now_sec,
+    }, &server_tp);
+
+    const client_hello = (try client.step()).send_data.data;
+    server.provideData(client_hello);
+
+    var server_initial: [512]u8 = undefined;
+    var server_initial_len: usize = 0;
+    var server_handshake: [4096]u8 = undefined;
+    var server_handshake_len: usize = 0;
+    while (true) {
+        const action = try server.step();
+        switch (action) {
+            .send_data => |send_data| {
+                const target, const target_len = if (send_data.level == .initial)
+                    .{ &server_initial, &server_initial_len }
+                else
+                    .{ &server_handshake, &server_handshake_len };
+                @memcpy(target[target_len.*..][0..send_data.data.len], send_data.data);
+                target_len.* += send_data.data.len;
+            },
+            .install_keys, ._continue => continue,
+            .wait_for_data, .complete => break,
+        }
+    }
+    try std.testing.expect(server_initial_len > 0);
+    try std.testing.expect(server_handshake_len > 0);
+
+    client.provideData(server_initial[0..server_initial_len]);
+    client.provideData(server_handshake[0..server_handshake_len]);
+    var client_handshake: [4096]u8 = undefined;
+    var client_handshake_len: usize = 0;
+    while (true) {
+        const action = try client.step();
+        switch (action) {
+            .send_data => |send_data| {
+                @memcpy(client_handshake[client_handshake_len..][0..send_data.data.len], send_data.data);
+                client_handshake_len += send_data.data.len;
+            },
+            .install_keys, ._continue => continue,
+            .wait_for_data, .complete => break,
+        }
+    }
+    try std.testing.expect(client.client_auth_requested);
+    try std.testing.expect(client_handshake_len > 36); // Certificate + CertificateVerify + Finished
+
+    server.provideData(client_handshake[0..client_handshake_len]);
+    while (true) {
+        const action = try server.step();
+        switch (action) {
+            ._continue, .install_keys => continue,
+            .wait_for_data, .complete => break,
+            .send_data => return error.TestUnexpectedResult,
+        }
+    }
+    try std.testing.expect(client.isComplete());
+    try std.testing.expect(server.isComplete());
+    try std.testing.expectEqualSlices(u8, &client.key_schedule.client_app_traffic_secret, &server.key_schedule.client_app_traffic_secret);
+    try std.testing.expectEqualSlices(u8, &client.key_schedule.server_app_traffic_secret, &server.key_schedule.server_app_traffic_secret);
 }
 
 test "Tls13Handshake server rejects client Finished with wrong verify_data" {
