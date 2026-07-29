@@ -4631,7 +4631,7 @@ pub const Tls13Handshake = struct {
             if (client_ca_subjects_len > std.math.maxInt(u16)) return error.BadCertificate;
         }
         const ca_extension_len: usize = if (self.config.client_ca_subjects.len == 0) 0 else 4 + client_ca_subjects_len;
-        const extensions_len: usize = 4 + 8 + ca_extension_len;
+        const extensions_len: usize = 4 + 10 + ca_extension_len;
         const body_len: usize = 1 + 2 + extensions_len;
         if (4 + body_len > buf.len) return error.DecodeError;
         buf[0] = @intFromEnum(HandshakeType.certificate_request);
@@ -4643,14 +4643,16 @@ pub const Tls13Handshake = struct {
         pos += 1;
         writeU16(buf[pos..], @intCast(extensions_len));
         pos += 2;
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 8);
-        writeU16(buf[pos..], 6);
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 10);
+        writeU16(buf[pos..], 8);
         pos += 2;
         writeU16(buf[pos..], sig_ecdsa_secp256r1_sha256);
         pos += 2;
         writeU16(buf[pos..], sig_ecdsa_secp384r1_sha384);
         pos += 2;
         writeU16(buf[pos..], sig_ed25519);
+        pos += 2;
+        writeU16(buf[pos..], sig_rsa_pss_rsae_sha256);
         pos += 2;
         if (self.config.client_ca_subjects.len > 0) {
             pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.certificate_authorities), client_ca_subjects_len);
@@ -9024,12 +9026,21 @@ test "Tls13Handshake CertificateRequest includes configured client CA subjects" 
 
     var pos: usize = 7;
     var found_authorities = false;
+    var found_rsa_pss = false;
     while (pos < extensions_end) {
         const extension_type = readU16(request[pos..]);
         const extension_len = readU16(request[pos + 2 ..]);
         pos += 4;
         const extension = request[pos .. pos + extension_len];
         pos += extension_len;
+        if (extension_type == @intFromEnum(ExtType.signature_algorithms)) {
+            const signature_algorithms_len = readU16(extension[0..]);
+            var signature_algorithm_pos: usize = 2;
+            while (signature_algorithm_pos < signature_algorithms_len + 2) : (signature_algorithm_pos += 2) {
+                if (readU16(extension[signature_algorithm_pos..]) == sig_rsa_pss_rsae_sha256) found_rsa_pss = true;
+            }
+            continue;
+        }
         if (extension_type != @intFromEnum(ExtType.certificate_authorities)) continue;
         found_authorities = true;
         try std.testing.expectEqual(@as(usize, subjects[0].len + subjects[1].len + 6), extension.len);
@@ -9044,6 +9055,7 @@ test "Tls13Handshake CertificateRequest includes configured client CA subjects" 
         try std.testing.expectEqual(extension.len, authority_pos);
     }
     try std.testing.expect(found_authorities);
+    try std.testing.expect(found_rsa_pss);
 }
 
 test "client authentication EKU accepts client or absent usage and rejects server-only usage" {
