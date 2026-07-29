@@ -2688,33 +2688,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed one installed-key datagram, then poll explicit output.
-    ///
-    /// This is the single-connection form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn feedDatagramWithInstalledKeysAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramPollResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            poll_views,
-        );
-    }
 
     /// Feed an installed-key datagram, then drain installed-key output.
     ///
@@ -2949,44 +2922,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed one installed-key datagram, drive one backend, then poll explicit output.
-    ///
-    /// This is the single-connection form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-        );
-    }
 
     /// Feed an installed-key datagram, drive TLS backends, then drain output.
     ///
@@ -3223,44 +3158,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed one installed-key datagram, drive one close-propagating backend, then poll explicit output.
-    ///
-    /// Backend peer transport-parameter errors queue CONNECTION_CLOSE and
-    /// return before output polling.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            poll_views,
-        );
-    }
 
     /// Feed an installed-key datagram, drive close-propagating backends, then drain output.
     ///
@@ -3331,55 +3228,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Feed one installed-key datagram, drive close-propagating backend, then drain output.
-    ///
-    /// This is the single-connection OrClose form of
-    /// `feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams()`.
-    /// Backend peer transport-parameter errors queue CONNECTION_CLOSE and
-    /// return before any installed-key output slot is initialized.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramDrainResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
-    }
 
 
     /// Feed an installed-key datagram, drive compatible-version backends, then select a wakeup.
@@ -3567,43 +3415,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed one installed-key datagram, drive one compatible-version backend, then poll explicit output.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-        );
-    }
 
     /// Feed an installed-key datagram, drive compatible-version backends, then drain output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
@@ -3839,46 +3650,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-    /// Feed one installed-key datagram, drive one compatible-version close path, then poll explicit output.
-    ///
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return before
-    /// output polling.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            poll_views,
-        );
-    }
 
     /// Feed an installed-key datagram, drive compatible-version close path, then drain output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
@@ -3948,57 +3719,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Feed one installed-key datagram, drive compatible-version close path, then drain output.
-    ///
-    /// This is the single-connection OrClose form of
-    /// `feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams()`.
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return before
-    /// any installed-key output slot is initialized.
-    pub fn feedDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        backend_space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramDrainResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            backend_space,
-            &drive_views,
-            compatibilities,
-            &poll_views,
-            poll_options.space,
-            out,
-        );
-    }
 
 
     /// Process a client-side Version Negotiation response and retire old routes.
@@ -6032,34 +5752,6 @@ pub const EndpointConnectionLifecycle = struct {
         return self.driveCryptoBackendStep(spaces, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
     }
 
-    /// Drive one compatible-version close-propagating backend across ordered
-    /// packet number spaces, then select the next deadline.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const deadline_connections = [_]EndpointConnectionView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        return self.driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndSelectNextDeadline(
-            spaces,
-            &drive_views,
-            compatibilities,
-            &deadline_connections,
-        );
-    }
 
 
 
