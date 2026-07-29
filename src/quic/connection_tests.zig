@@ -27095,12 +27095,7 @@ test "EndpointConnectionLifecycle backend drive polls explicit installed-key out
         },
     };
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     const polled = result.datagram orelse return error.TestUnexpectedResult;
@@ -27211,13 +27206,7 @@ test "EndpointConnectionLifecycle backend drive drains explicit installed-key ou
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     try std.testing.expectEqual(@as(usize, 2), result.drain.datagrams_written);
@@ -28888,12 +28877,7 @@ test "EndpointConnectionLifecycle close backend drive polls explicit installed-k
         },
     };
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyPoll(&.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, 10);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     const polled = result.datagram orelse return error.TestUnexpectedResult;
@@ -29004,13 +28988,7 @@ test "EndpointConnectionLifecycle close backend drive drains explicit installed-
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.driveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        .handshake,
-        &drive_views,
-        &poll_views,
-        10,
-        &out,
-    );
+    const result = try lifecycle.driveCryptoBackendStepWithInstalledKeyDrain(&.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, 10, &out);
     try std.testing.expectEqual(@as(usize, 1), result.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
     try std.testing.expectEqual(@as(usize, 2), result.drain.datagrams_written);
