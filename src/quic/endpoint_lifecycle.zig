@@ -10050,95 +10050,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route caller-keyed long-header input through close-propagating backend.
-    ///
-    /// This is the routed socket-loop form of
-    /// `processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndDrainDatagrams()`.
-    /// Route errors or connection-id mismatches fail before packet processing.
-    /// Authenticated frame errors or backend peer transport-parameter errors
-    /// queue and drain protected close output in the same step.
-    pub fn processRoutedProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        backend: CryptoBackend,
-        scratch: []u8,
-        dcid: []const u8,
-        scid: []const u8,
-        initial_token: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveProtectedLongDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                space,
-                now_nanos,
-                receive_keys,
-                datagram,
-                backend,
-                scratch,
-                dcid,
-                scid,
-                initial_token,
-                send_keys,
-                out,
-            ),
-        };
-    }
-
-    /// Route caller-keyed long-header input through close-propagating backend.
-    ///
-    /// This is the routed socket-loop form of
-    /// `processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndPollDatagram()`.
-    /// Route errors or connection-id mismatches fail before packet processing.
-    /// Authenticated frame errors or backend peer transport-parameter errors
-    /// queue and poll protected close output in the same step.
-    pub fn processRoutedProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        backend: CryptoBackend,
-        scratch: []u8,
-        dcid: []const u8,
-        scid: []const u8,
-        initial_token: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveProtectedLongDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                space,
-                now_nanos,
-                receive_keys,
-                datagram,
-                backend,
-                scratch,
-                dcid,
-                scid,
-                initial_token,
-                send_keys,
-            ),
-        };
-    }
     /// Poll one caller-keyed protected 0-RTT datagram and refresh timers.
     ///
     /// This direct early-data bridge is for endpoint loops that already hold
@@ -10916,37 +10827,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route caller-keyed 1-RTT input through close propagation, then poll output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary output polling.
-    pub fn processRoutedProtectedShortDatagramOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-            ),
-        };
-    }
 
     /// Process caller-keyed 1-RTT input, then drain caller-keyed output.
     ///
@@ -11077,39 +10957,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route caller-keyed 1-RTT input through close propagation, then drain output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary output draining.
-    pub fn processRoutedProtectedShortDatagramOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.Aes128PacketProtectionKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                out,
-            ),
-        };
-    }
 
     /// Poll one explicit-key-phase protected 1-RTT datagram and refresh timers.
     ///
@@ -11382,39 +11229,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route explicit key-update 1-RTT input through close propagation, then poll output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary output polling.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        send_key_phase: bool,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramWithKeyUpdateOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                send_key_phase,
-            ),
-        };
-    }
 
     /// Process explicit key-update 1-RTT input, then drain explicit-phase output.
     ///
@@ -11551,41 +11365,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route explicit key-update 1-RTT input through close propagation, then drain output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary output draining.
-    pub fn processRoutedProtectedShortDatagramWithKeyUpdateOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_keys: protection.ShortPacketKeyUpdateKeys,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_keys: protection.Aes128PacketProtectionKeys,
-        send_key_phase: bool,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithKeyUpdateOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_keys,
-                send_key_phase,
-                out,
-            ),
-        };
-    }
 
     /// Poll one caller-owned key-phase protected 1-RTT datagram and refresh timers.
     ///
@@ -11847,37 +11626,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route caller-owned key-phase 1-RTT input through close propagation, then poll output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary stateful output polling.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_key_phase_state: *const protection.Aes128KeyPhaseState,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_key_phase_state,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_key_phase_state,
-            ),
-        };
-    }
 
     /// Process caller-owned key-phase 1-RTT input, then drain stateful output.
     ///
@@ -12007,39 +11755,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route caller-owned key-phase 1-RTT input through close propagation, then drain output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Application frame errors stop before ordinary stateful output draining.
-    pub fn processRoutedProtectedShortDatagramWithKeyPhaseStateOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        receive_key_phase_state: *protection.Aes128KeyPhaseState,
-        datagram: []const u8,
-        dcid: []const u8,
-        send_key_phase_state: *const protection.Aes128KeyPhaseState,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_key_phase_state,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                dcid,
-                send_key_phase_state,
-                out,
-            ),
-        };
-    }
 
     /// Poll one installed-key protected Handshake datagram and refresh timers.
     ///
@@ -12419,34 +12134,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-    /// Route installed-key Handshake input, then poll one installed-key output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-        scid: []const u8,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .datagram = try self.processProtectedHandshakeDatagramWithInstalledKeysAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-                scid,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
     /// Process installed-key Handshake input, then drain installed-key output.
     ///
     /// This is the bounded-output form of
@@ -12581,37 +12268,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key Handshake input through close propagation, then drain output.
-    ///
-    /// This preserves routed receive behavior while ensuring authenticated
-    /// Handshake frame errors stop before ordinary installed-key output draining.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-        scid: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-                scid,
-                out,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
 
     /// Process installed-key Handshake input, drive backend, and select a wakeup.
     ///
@@ -12764,77 +12420,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route installed-key Handshake input through close-propagating backend.
-    ///
-    /// This is the routed socket-loop form of
-    /// `processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams()`.
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// Authenticated frame errors or backend peer transport-parameter errors
-    /// queue and drain protected close output in the same step.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend: CryptoBackend,
-        scratch: []u8,
-        dcid: []const u8,
-        scid: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                backend,
-                scratch,
-                dcid,
-                scid,
-                out,
-            ),
-        };
-    }
-
-    /// Route installed-key Handshake input through close-propagating backend, then poll output.
-    ///
-    /// This is the routed socket-loop form of
-    /// `processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram()`.
-    /// Route errors and connection-id mismatches fail before packet processing.
-    /// Authenticated frame errors or backend peer transport-parameter errors
-    /// queue and poll protected close output in the same step.
-    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        backend: CryptoBackend,
-        scratch: []u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointRoutedCryptoBackendDriveDatagramResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .backend = try self.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                backend,
-                scratch,
-                poll_options,
-            ),
-        };
-    }
 
     /// Poll one installed-key protected 0-RTT datagram and refresh timers.
     ///
@@ -14821,41 +14406,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Route/process one installed-key 1-RTT datagram with close propagation, then drain output.
-    ///
-    /// Authenticated frame-payload errors queue CONNECTION_CLOSE and return
-    /// before output draining so callers do not receive partial output after a
-    /// failed receive step. Route mismatches fail before packet processing.
-    /// Route/process one installed-key 1-RTT datagram through close propagation and drain explicit output.
-    ///
-    /// Route errors and connection-id mismatches fail before packet processing;
-    /// authenticated frame errors stop before any installed-key output drain.
-    pub fn processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
-        const route = try self.routeDatagram(path, datagram);
-        if (route.connection_id != connection_id) return error.InvalidPacket;
-        return .{
-            .route = route,
-            .drain = try self.processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-                connection_id,
-                connection,
-                now_nanos,
-                route.destination_connection_id.asSlice().len,
-                datagram,
-                poll_options,
-                out,
-            ),
-            .next_deadline = self.nextDeadline(connection_id, connection),
-        };
-    }
 
     /// Retire all routes and any armed recovery timer for one connection handle.
     pub fn retireConnection(self: *EndpointConnectionLifecycle, connection_id: u64) EndpointConnectionRetireResult {

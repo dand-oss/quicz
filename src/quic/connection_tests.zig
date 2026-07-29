@@ -33036,20 +33036,10 @@ test "EndpointConnectionLifecycle routes long datagram in space and drains outpu
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.handshake));
 
-    const result = try lifecycle.processRoutedProtectedLongDatagramInSpaceAndDrainDatagrams(
-        92,
-        &server,
-        .handshake,
-        server_receive_path,
-        11,
-        secrets.client,
-        client_datagram,
-        &client_scid,
-        &server_scid,
-        &[_]u8{},
-        secrets.server,
-        &drained,
-    );
+    const _routed1002 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1002.connection_id != 92) return error.InvalidPacket;
+    const result = .{ .route = _routed1002, .drain = try lifecycle.processProtectedLongDatagramInSpaceAndDrainDatagrams( 92, &server, .handshake, 11, secrets.client, client_datagram, &client_scid, &server_scid, &[_]u8{}, secrets.server, &drained, ), };
+
     defer for (drained[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -33569,22 +33559,10 @@ test "EndpointConnectionLifecycle routed long backend OrClose drains close outpu
     var backend = BadBackend{};
     var scratch: [96]u8 = undefined;
     var drained: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        .handshake,
-        server_receive_path,
-        11,
-        secrets.client,
-        client_datagram,
-        backend.backend(),
-        &scratch,
-        &client_dcid,
-        &server_dcid,
-        &[_]u8{},
-        secrets.server,
-        &drained,
-    );
+    const _routed1003 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1003.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1003, .backend = try lifecycle.processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndDrainDatagrams( server_connection_id, &server, .handshake, 11, secrets.client, client_datagram, backend.backend(), &scratch, &client_dcid, &server_dcid, &[_]u8{}, secrets.server, &drained, ), };
+
     defer for (drained[0..result.backend.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -33813,16 +33791,10 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and polls
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server_lifecycle.recoveryTimerCount());
 
-    const result = try server_lifecycle.processRoutedProtectedZeroRttDatagramAndPollShortDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        early,
-        &client_dcid,
-        secrets.server,
-    );
+    const _routed1006 = try server_lifecycle.routeDatagram(server_receive_path, early);
+    if (_routed1006.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1006, .datagram = try server_lifecycle.processProtectedZeroRttDatagramAndPollShortDatagram( server_connection_id, &server, 11, secrets.client, early, &client_dcid, secrets.server, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -33917,17 +33889,10 @@ test "EndpointConnectionLifecycle routes caller-keyed zero RTT receive and drain
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedZeroRttDatagramAndDrainShortDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        early,
-        &client_dcid,
-        secrets.server,
-        &drained,
-    );
+    const _routed1008 = try server_lifecycle.routeDatagram(server_receive_path, early);
+    if (_routed1008.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1008, .drain = try server_lifecycle.processProtectedZeroRttDatagramAndDrainShortDatagrams( server_connection_id, &server, 11, secrets.client, early, &client_dcid, secrets.server, &drained, ), };
+
     defer for (drained[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -34426,14 +34391,10 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and poll
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(usize, 0), server_lifecycle.recoveryTimerCount());
 
-    const result = try server_lifecycle.processRoutedProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        early,
-        &client_dcid,
-    );
+    const _routed1044 = try server_lifecycle.routeDatagram(server_receive_path, early);
+    if (_routed1044.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1044, .datagram = try server_lifecycle.processProtectedZeroRttDatagramWithInstalledKeysAndPollShortDatagram( server_connection_id, &server, 11, early, &client_dcid, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
@@ -34541,15 +34502,10 @@ test "EndpointConnectionLifecycle routes installed-key zero RTT receive and drai
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        early,
-        &client_dcid,
-        &drained,
-    );
+    const _routed1046 = try server_lifecycle.routeDatagram(server_receive_path, early);
+    if (_routed1046.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1046, .drain = try server_lifecycle.processProtectedZeroRttDatagramWithInstalledKeysAndDrainShortDatagrams( server_connection_id, &server, 11, early, &client_dcid, &drained, ), };
+
     defer for (drained[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -34883,16 +34839,10 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and polls AC
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-        &client_dcid,
-        secrets.server,
-    );
+    const _routed1014 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1014.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1014, .datagram = try server_lifecycle.processProtectedShortDatagramAndPollDatagram( server_connection_id, &server, 11, secrets.client, _routed1014.destination_connection_id.asSlice().len, ping, &client_dcid, secrets.server, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const ack = result.datagram orelse return error.TestUnexpectedResult;
@@ -35018,16 +34968,10 @@ test "EndpointConnectionLifecycle caller-keyed short OrClose receive polls close
     }, try packet.encodePacketNumberForHeader(0, null), secrets.client, &unknown_frame);
     defer std.testing.allocator.free(invalid_short);
 
-    const result = try lifecycle.processRoutedProtectedShortDatagramOrCloseAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        invalid_short,
-        &client_dcid,
-        secrets.server,
-    );
+    const _routed1015 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1015.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1015, .datagram = try lifecycle.processProtectedShortDatagramOrCloseAndPollDatagram( server_connection_id, &server, 11, secrets.client, _routed1015.destination_connection_id.asSlice().len, invalid_short, &client_dcid, secrets.server, ), };
+
     const close_output = result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_output.datagram);
 
@@ -35108,17 +35052,10 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and drains A
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-        &client_dcid,
-        secrets.server,
-        &out,
-    );
+    const _routed1017 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1017.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1017, .drain = try server_lifecycle.processProtectedShortDatagramAndDrainDatagrams( server_connection_id, &server, 11, secrets.client, _routed1017.destination_connection_id.asSlice().len, ping, &client_dcid, secrets.server, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -35209,14 +35146,10 @@ test "EndpointConnectionLifecycle routes caller-keyed short receive and selects 
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        ping,
-    );
+    const _routed1012 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1012.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1012, .next_deadline = try server_lifecycle.processProtectedShortDatagramAndSelectNextDeadline( server_connection_id, &server, 11, secrets.client, _routed1012.destination_connection_id.asSlice().len, ping, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
@@ -35283,17 +35216,10 @@ test "EndpointConnectionLifecycle caller-keyed short OrClose receive drains clos
     defer std.testing.allocator.free(invalid_short);
 
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedShortDatagramOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        secrets.client,
-        invalid_short,
-        &client_dcid,
-        secrets.server,
-        &out,
-    );
+    const _routed1018 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1018.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1018, .drain = try lifecycle.processProtectedShortDatagramOrCloseAndDrainDatagrams( server_connection_id, &server, 11, secrets.client, _routed1018.destination_connection_id.asSlice().len, invalid_short, &client_dcid, secrets.server, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -35684,17 +35610,10 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and p
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        receive_keys,
-        ping,
-        &client_dcid,
-        secrets.server,
-        false,
-    );
+    const _routed1022 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1022.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1022, .datagram = try server_lifecycle.processProtectedShortDatagramWithKeyUpdateAndPollDatagram( server_connection_id, &server, 11, receive_keys, _routed1022.destination_connection_id.asSlice().len, ping, &client_dcid, secrets.server, false, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const ack = result.datagram orelse return error.TestUnexpectedResult;
@@ -35826,21 +35745,14 @@ test "EndpointConnectionLifecycle explicit key update OrClose receive polls clos
     }, try packet.encodePacketNumberForHeader(0, null), next_client_keys, &unknown_frame);
     defer std.testing.allocator.free(invalid_short);
 
-    const result = try lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateOrCloseAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        .{
+    const _routed1023 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1023.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1023, .datagram = try lifecycle.processProtectedShortDatagramWithKeyUpdateOrCloseAndPollDatagram( server_connection_id, &server, 11, .{
             .current = secrets.client,
             .next = next_client_keys,
             .current_key_phase = false,
-        },
-        invalid_short,
-        &client_dcid,
-        secrets.server,
-        false,
-    );
+        }, _routed1023.destination_connection_id.asSlice().len, invalid_short, &client_dcid, secrets.server, false, ), };
+
     const close_output = result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_output.datagram);
 
@@ -35930,18 +35842,10 @@ test "EndpointConnectionLifecycle routes explicit key update short receive and d
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        receive_keys,
-        ping,
-        &client_dcid,
-        secrets.server,
-        false,
-        &out,
-    );
+    const _routed1025 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1025.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1025, .drain = try server_lifecycle.processProtectedShortDatagramWithKeyUpdateAndDrainDatagrams( server_connection_id, &server, 11, receive_keys, _routed1025.destination_connection_id.asSlice().len, ping, &client_dcid, secrets.server, false, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -36038,14 +35942,10 @@ test "EndpointConnectionLifecycle routes explicit key update receive and selects
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        server_receive_keys,
-        ping,
-    );
+    const _routed1020 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1020.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1020, .next_deadline = try server_lifecycle.processProtectedShortDatagramWithKeyUpdateAndSelectNextDeadline( server_connection_id, &server, 11, server_receive_keys, _routed1020.destination_connection_id.asSlice().len, ping, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
@@ -36114,22 +36014,14 @@ test "EndpointConnectionLifecycle explicit key update OrClose receive drains clo
     defer std.testing.allocator.free(invalid_short);
 
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedShortDatagramWithKeyUpdateOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        .{
+    const _routed1026 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1026.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1026, .drain = try lifecycle.processProtectedShortDatagramWithKeyUpdateOrCloseAndDrainDatagrams( server_connection_id, &server, 11, .{
             .current = secrets.client,
             .next = next_client_keys,
             .current_key_phase = false,
-        },
-        invalid_short,
-        &client_dcid,
-        secrets.server,
-        false,
-        &out,
-    );
+        }, _routed1026.destination_connection_id.asSlice().len, invalid_short, &client_dcid, secrets.server, false, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -36397,16 +36289,10 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     try std.testing.expect(!server_recv_state.currentKeyPhase());
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-        &client_dcid,
-        &server_send_state,
-    );
+    const _routed1030 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1030.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1030, .datagram = try server_lifecycle.processProtectedShortDatagramWithKeyPhaseStateAndPollDatagram( server_connection_id, &server, 11, &server_recv_state, _routed1030.destination_connection_id.asSlice().len, ping, &client_dcid, &server_send_state, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expect(server_recv_state.currentKeyPhase());
@@ -36549,16 +36435,10 @@ test "EndpointConnectionLifecycle caller-owned key phase OrClose receive polls c
     }, try packet.encodePacketNumberForHeader(0, null), client_send_state.currentKeys(), &unknown_frame);
     defer std.testing.allocator.free(invalid_short);
 
-    const result = try lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateOrCloseAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        invalid_short,
-        &client_dcid,
-        &server_send_state,
-    );
+    const _routed1031 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1031.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1031, .datagram = try lifecycle.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndPollDatagram( server_connection_id, &server, 11, &server_recv_state, _routed1031.destination_connection_id.asSlice().len, invalid_short, &client_dcid, &server_send_state, ), };
+
     const close_output = result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_output.datagram);
 
@@ -36649,17 +36529,10 @@ test "EndpointConnectionLifecycle routes caller-owned key phase short receive an
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-        &client_dcid,
-        &server_send_state,
-        &out,
-    );
+    const _routed1033 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1033.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1033, .drain = try server_lifecycle.processProtectedShortDatagramWithKeyPhaseStateAndDrainDatagrams( server_connection_id, &server, 11, &server_recv_state, _routed1033.destination_connection_id.asSlice().len, ping, &client_dcid, &server_send_state, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -36761,14 +36634,10 @@ test "EndpointConnectionLifecycle routes caller-owned key phase receive and sele
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        ping,
-    );
+    const _routed1028 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1028.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1028, .next_deadline = try server_lifecycle.processProtectedShortDatagramWithKeyPhaseStateAndSelectNextDeadline( server_connection_id, &server, 11, &server_recv_state, _routed1028.destination_connection_id.asSlice().len, ping, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expect(server_recv_state.currentKeyPhase());
@@ -36843,17 +36712,10 @@ test "EndpointConnectionLifecycle caller-owned key phase OrClose receive drains 
     defer std.testing.allocator.free(invalid_short);
 
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedShortDatagramWithKeyPhaseStateOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        &server_recv_state,
-        invalid_short,
-        &client_dcid,
-        &server_send_state,
-        &out,
-    );
+    const _routed1034 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1034.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1034, .drain = try lifecycle.processProtectedShortDatagramWithKeyPhaseStateOrCloseAndDrainDatagrams( server_connection_id, &server, 11, &server_recv_state, _routed1034.destination_connection_id.asSlice().len, invalid_short, &client_dcid, &server_send_state, &out, ), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -37602,17 +37464,10 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
     try std.testing.expect(server.peerVersionInformation() == null);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-    );
+    const _routed1055 = try server_lifecycle.routeDatagram(server_receive_path, crypto_datagram);
+    if (_routed1055.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1055, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline( server_connection_id, &server, 11, _routed1055.destination_connection_id.asSlice().len, crypto_datagram, .application, backend.backend(), &scratch, &compatibilities, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
@@ -37732,16 +37587,10 @@ test "EndpointConnectionLifecycle routes installed-key short receive then drives
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        crypto_datagram,
-        .application,
-        backend.backend(),
-        &scratch,
-    );
+    const _routed1052 = try server_lifecycle.routeDatagram(server_receive_path, crypto_datagram);
+    if (_routed1052.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1052, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndSelectNextDeadline( server_connection_id, &server, 11, _routed1052.destination_connection_id.asSlice().len, crypto_datagram, .application, backend.backend(), &scratch, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
@@ -38426,19 +38275,10 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        poll_options,
-    );
+    const _routed1061 = try server_lifecycle.routeDatagram(server_receive_path, request);
+    if (_routed1061.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1061, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram( server_connection_id, &server, 11, _routed1061.destination_connection_id.asSlice().len, request, .application, backend.backend(), &scratch, &compatibilities, 12, poll_options, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
@@ -38733,20 +38573,10 @@ test "EndpointConnectionLifecycle routes installed-key short compatible backend 
     try std.testing.expect(!backend.peer_sent);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        &compatibilities,
-        12,
-        poll_options,
-        &out,
-    );
+    const _routed1067 = try server_lifecycle.routeDatagram(server_receive_path, request);
+    if (_routed1067.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1067, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams( server_connection_id, &server, 11, _routed1067.destination_connection_id.asSlice().len, request, .application, backend.backend(), &scratch, &compatibilities, 12, poll_options, &out, ), };
+
     defer for (out[0..result.backend.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -39605,18 +39435,10 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and p
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-    );
+    const _routed1058 = try server_lifecycle.routeDatagram(server_receive_path, request);
+    if (_routed1058.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1058, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndPollDatagram( server_connection_id, &server, 11, _routed1058.destination_connection_id.asSlice().len, request, .application, backend.backend(), &scratch, 12, poll_options, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
@@ -40085,19 +39907,10 @@ test "EndpointConnectionLifecycle routes installed-key short backend drive and d
     try std.testing.expectEqual(@as(usize, 0), backend.receive_calls);
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        request,
-        .application,
-        backend.backend(),
-        &scratch,
-        12,
-        poll_options,
-        &out,
-    );
+    const _routed1064 = try server_lifecycle.routeDatagram(server_receive_path, request);
+    if (_routed1064.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1064, .backend = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDriveCryptoBackendInSpaceAndDrainDatagrams( server_connection_id, &server, 11, _routed1064.destination_connection_id.asSlice().len, request, .application, backend.backend(), &scratch, 12, poll_options, &out, ), };
+
     defer for (out[0..result.backend.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -40650,14 +40463,10 @@ test "EndpointConnectionLifecycle routes installed-key short receive and polls A
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-        poll_options,
-    );
+    const _routed1070 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1070.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1070, .datagram = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndPollDatagram( server_connection_id, &server, 11, _routed1070.destination_connection_id.asSlice().len, ping, poll_options, ), .next_deadline = server_lifecycle.nextDeadline(server_connection_id, &server), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const ack = result.datagram orelse return error.TestUnexpectedResult;
@@ -40754,13 +40563,10 @@ test "EndpointConnectionLifecycle routes installed-key short receive and selects
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
     try std.testing.expectEqual(@as(?i64, null), server.idleTimeoutDeadline());
 
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-    );
+    const _routed1050 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1050.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1050, .next_deadline = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndSelectNextDeadline( server_connection_id, &server, 11, _routed1050.destination_connection_id.asSlice().len, ping, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const next = result.next_deadline orelse return error.TestUnexpectedResult;
@@ -40928,15 +40734,10 @@ test "EndpointConnectionLifecycle routes installed-key short receive and drains 
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
     var out: [2]EndpointPolledDatagramResult = undefined;
-    const result = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        ping,
-        poll_options,
-        &out,
-    );
+    const _routed1072 = try server_lifecycle.routeDatagram(server_receive_path, ping);
+    if (_routed1072.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1072, .drain = try server_lifecycle.processProtectedShortDatagramWithInstalledKeysAndDrainDatagramsWithInstalledKeyOptions( server_connection_id, &server, 11, _routed1072.destination_connection_id.asSlice().len, ping, poll_options, &out, ), .next_deadline = server_lifecycle.nextDeadline(server_connection_id, &server), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     try std.testing.expectEqual(@as(usize, 1), result.drain.datagrams_written);
@@ -41000,18 +40801,13 @@ test "EndpointConnectionLifecycle installed-key short OrClose receive drains clo
     defer std.testing.allocator.free(invalid_short);
 
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        invalid_short,
-        .{
+    const _routed1073 = try lifecycle.routeDatagram(server_receive_path, invalid_short);
+    if (_routed1073.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1073, .drain = try lifecycle.processProtectedShortDatagramWithInstalledKeysOrCloseAndDrainDatagramsWithInstalledKeyOptions( server_connection_id, &server, 11, _routed1073.destination_connection_id.asSlice().len, invalid_short, .{
             .space = .application,
             .destination_connection_id = &client_dcid,
-        },
-        &out,
-    );
+        }, &out, ), .next_deadline = lifecycle.nextDeadline(server_connection_id, &server), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -41175,15 +40971,10 @@ test "EndpointConnectionLifecycle routes installed-key Handshake receive and pol
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(client_datagram);
 
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        &client_dcid,
-        &server_dcid,
-    );
+    const _routed1035 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1035.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1035, .datagram = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysAndPollDatagram( server_connection_id, &server, 11, client_datagram, &client_dcid, &server_dcid, ), .next_deadline = lifecycle.nextDeadline(server_connection_id, &server), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
     const response = result.datagram orelse return error.TestUnexpectedResult;
@@ -41252,16 +41043,10 @@ test "EndpointConnectionLifecycle routes installed-key Handshake receive and dra
     ));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.handshake));
 
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        &client_dcid,
-        &server_dcid,
-        &drained,
-    );
+    const _routed1037 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1037.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1037, .drain = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysAndDrainDatagrams( server_connection_id, &server, 11, client_datagram, &client_dcid, &server_dcid, &drained, ), .next_deadline = lifecycle.nextDeadline(server_connection_id, &server), };
+
     defer for (drained[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -41374,16 +41159,10 @@ test "EndpointConnectionLifecycle routes installed-key Handshake OrClose drains 
     defer std.testing.allocator.free(invalid_handshake);
 
     var out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        invalid_handshake,
-        &client_dcid,
-        &server_dcid,
-        &out,
-    );
+    const _routed1038 = try lifecycle.routeDatagram(server_receive_path, invalid_handshake);
+    if (_routed1038.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1038, .drain = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysOrCloseAndDrainDatagrams( server_connection_id, &server, 11, invalid_handshake, &client_dcid, &server_dcid, &out, ), .next_deadline = lifecycle.nextDeadline(server_connection_id, &server), };
+
     defer for (out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -41547,16 +41326,10 @@ test "EndpointConnectionLifecycle routes installed-key Handshake then drives bac
     try std.testing.expect(!backend.sent);
     try std.testing.expectEqual(@as(usize, 0), backend.received_len);
 
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        backend.backend(),
-        &scratch,
-        poll_options,
-    );
+    const _routed1040 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1040.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1040, .backend = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndPollDatagram( server_connection_id, &server, 11, client_datagram, backend.backend(), &scratch, poll_options, ), };
+
 
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualSlices(u8, &server_dcid, result.route.destination_connection_id.asSlice());
@@ -41792,20 +41565,14 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend OrClose
 
     var backend = BadBackend{};
     var scratch: [96]u8 = undefined;
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        backend.backend(),
-        &scratch,
-        .{
+    const _routed1042 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1042.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1042, .backend = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndPollDatagram( server_connection_id, &server, 11, client_datagram, backend.backend(), &scratch, .{
             .space = .handshake,
             .destination_connection_id = &client_dcid,
             .source_connection_id = &server_dcid,
-        },
-    );
+        }, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualStrings("routed installed bad input", backend.received[0..backend.received_len]);
     try std.testing.expect(backend.peer_sent);
@@ -41918,18 +41685,10 @@ test "EndpointConnectionLifecycle routed installed-key Handshake backend OrClose
     var backend = BadBackend{};
     var scratch: [96]u8 = undefined;
     var drained: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams(
-        server_connection_id,
-        &server,
-        server_receive_path,
-        11,
-        client_datagram,
-        backend.backend(),
-        &scratch,
-        &client_dcid,
-        &server_dcid,
-        &drained,
-    );
+    const _routed1041 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1041.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1041, .backend = try lifecycle.processProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendOrCloseAndDrainDatagrams( server_connection_id, &server, 11, client_datagram, backend.backend(), &scratch, &client_dcid, &server_dcid, &drained, ), };
+
     defer for (drained[0..result.backend.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };
@@ -43958,21 +43717,10 @@ test "EndpointConnectionLifecycle routed caller-keyed long backend OrClose polls
 
     var backend = BadBackend{};
     var scratch: [128]u8 = undefined;
-    const result = try lifecycle.processRoutedProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndPollDatagram(
-        server_connection_id,
-        &server,
-        .handshake,
-        server_receive_path,
-        11,
-        secrets.client,
-        client_datagram,
-        backend.backend(),
-        &scratch,
-        &client_dcid,
-        &server_dcid,
-        &[_]u8{},
-        secrets.server,
-    );
+    const _routed1004 = try lifecycle.routeDatagram(server_receive_path, client_datagram);
+    if (_routed1004.connection_id != server_connection_id) return error.InvalidPacket;
+    const result = .{ .route = _routed1004, .backend = try lifecycle.processProtectedLongDatagramInSpaceAndDriveCryptoBackendOrCloseAndPollDatagram( server_connection_id, &server, .handshake, 11, secrets.client, client_datagram, backend.backend(), &scratch, &client_dcid, &server_dcid, &[_]u8{}, secrets.server, ), };
+
     try std.testing.expectEqual(server_connection_id, result.route.connection_id);
     try std.testing.expectEqualStrings("routed caller-keyed bad input", backend.received[0..backend.received_len]);
     try std.testing.expect(backend.peer_sent);
