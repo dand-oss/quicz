@@ -13007,12 +13007,12 @@ test "EndpointConnectionLifecycle feed pending-work step reports reset close dea
             .connection_id = 99,
             .connection = &conn,
         }};
-    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndSelectNextDeadline(&_w402_receive_connections, &_w402_deadline_connections, path, 11, reset_out.getWritten(), .{
+    const result = try lifecycle.feedStepWithPendingWorkDeadline(&_w402_receive_connections, &_w402_deadline_connections, path, 11, reset_out.getWritten(), .{
             .space = .application,
             .out = &out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },);
+        });
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result.feed);
     try std.testing.expectEqual(ConnectionState.draining, conn.connectionState());
@@ -13061,12 +13061,12 @@ test "EndpointConnectionLifecycle feed pending-work step retires due close" {
             .connection_id = 100,
             .connection = &conn,
         }};
-    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndSelectNextDeadline(&_w403_receive_connections, &_w403_deadline_connections, path, close_deadline, &datagram, .{
+    const result = try lifecycle.feedStepWithPendingWorkDeadline(&_w403_receive_connections, &_w403_deadline_connections, path, close_deadline, &datagram, .{
             .space = .application,
             .out = &out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },);
+        });
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result.feed);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
@@ -13309,19 +13309,12 @@ test "EndpointConnectionLifecycle feed pending-work explicit poll step keeps zer
     const reset_prefix = [_]u8{ 0x40, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde };
     const versions = [_]packet.Version{.v1};
     const dropped_datagram = [_]u8{ 0x40, 0x95, 0x96, 0x97, 0x98 };
-    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndPollDatagramWithInstalledKeyOptions(
-        &receive_connections,
-        path,
-        11,
-        &dropped_datagram,
-        .{
+    const result = try lifecycle.feedStepWithPendingWorkInstalledKeyPoll(&receive_connections, path, 11, &dropped_datagram, .{
             .space = .application,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-        &poll_views,
-    );
+        }, &poll_views);
 
     try std.testing.expectEqual(EndpointFeedInstalledKeyDatagramResult.dropped, result.feed);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.recovery_serviced_count);
@@ -13447,20 +13440,12 @@ test "EndpointConnectionLifecycle feed pending-work explicit drain step keeps ze
     const versions = [_]packet.Version{.v1};
     const dropped_datagram = [_]u8{ 0x40, 0x91, 0x92, 0x93, 0x94 };
     var drain_out: [1]EndpointPolledDatagramResult = undefined;
-    const result = try lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
-        &receive_connections,
-        path,
-        11,
-        &dropped_datagram,
-        .{
+    const result = try lifecycle.feedStepWithPendingWorkInstalledKeyDrain(&receive_connections, path, 11, &dropped_datagram, .{
             .space = .application,
             .out = &feed_out,
             .unpredictable_prefix = &reset_prefix,
             .supported_versions = &versions,
-        },
-        &poll_views,
-        &drain_out,
-    );
+        }, &poll_views, &drain_out);
     defer for (drain_out[0..result.drain.datagrams_written]) |entry| {
         std.testing.allocator.free(entry.datagram);
     };

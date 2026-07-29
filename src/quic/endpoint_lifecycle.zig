@@ -1931,12 +1931,14 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
 
-    /// Feed an installed-key datagram, process pending work, then select the next wakeup.
-    ///
-    /// This is the no-output socket-loop receive step that keeps datagram
-    /// processing, idle/close/recovery pending work, and deadline selection
-    /// under one endpoint lifecycle owner.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndSelectNextDeadline(
+
+
+    // -----------------------------------------------------------------------
+    // Unified feedDatagram + pending work + crypto backend drive step
+    // -----------------------------------------------------------------------
+
+    /// Unified feed + pending work + deadline selection (no crypto, no output).
+    pub fn feedStepWithPendingWorkDeadline(
         self: *EndpointConnectionLifecycle,
         receive_connections: []const EndpointConnectionReceiveView,
         deadline_connections: []const EndpointConnectionView,
@@ -1946,15 +1948,10 @@ pub const EndpointConnectionLifecycle = struct {
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkNextDeadlineResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
+            receive_connections, path, now_nanos, datagram, feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
+            receive_connections, now_nanos,
         );
         return .{
             .feed = feed,
@@ -1963,11 +1960,54 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
+    /// Unified feed + pending work + installed-key poll output (no crypto).
+    pub fn feedStepWithPendingWorkInstalledKeyPoll(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramPollResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            receive_connections, now_nanos,
+        );
+        return .{
+            .feed = feed,
+            .pending_work = pending_work,
+            .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(poll_views, now_nanos),
+            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
+        };
+    }
 
-
-    // -----------------------------------------------------------------------
-    // Unified feedDatagram + pending work + crypto backend drive step
-    // -----------------------------------------------------------------------
+    /// Unified feed + pending work + installed-key drain output (no crypto).
+    pub fn feedStepWithPendingWorkInstalledKeyDrain(
+        self: *EndpointConnectionLifecycle,
+        receive_connections: []const EndpointConnectionReceiveView,
+        path: endpoint.Udp4Tuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        feed_options: EndpointFeedInstalledKeyDatagramOptions,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+        out: []EndpointPolledDatagramResult,
+    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramDrainResult {
+        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
+            receive_connections, path, now_nanos, datagram, feed_options,
+        );
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            receive_connections, now_nanos,
+        );
+        return .{
+            .feed = feed,
+            .pending_work = pending_work,
+            .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(poll_views, now_nanos, out),
+            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
+        };
+    }
 
     /// Unified feed + crypto backend drive + deadline selection (no pending work).
     pub fn feedStepWithCryptoDeadline(
@@ -2341,69 +2381,6 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /// Feed an installed-key datagram, process pending work, then poll output.
-    ///
-    /// Unlike `feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagram()`,
-    /// this socket-loop step runs pending work and output polling even when the
-    /// received datagram is not routed to a live connection. That lets callers
-    /// keep timeout cleanup and queued output progress tied to a single receive
-    /// iteration.
-    /// Feed an installed-key datagram, process pending work, then poll explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndPollDatagram()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramPollResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptions(
-                poll_views,
-                now_nanos,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
-    }
-
     /// Feed one installed-key datagram, process pending work, then poll output.
     ///
     /// This is the single-connection form of
@@ -2507,49 +2484,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Feed an installed-key datagram, process pending work, then drain output.
-    ///
-    /// Unlike `feedDatagramWithInstalledKeysAcrossConnectionsAndDrainDatagrams()`,
-    /// this socket-loop step runs pending work and bounded output draining even
-    /// when the received datagram is not routed to a live connection. That lets
-    /// callers keep timeout cleanup and queued output progress tied to a single
-    /// receive iteration.
-    /// Feed an installed-key datagram, process pending work, then drain explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDrainDatagrams()`.
-    pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndProcessPendingWorkAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        receive_connections: []const EndpointConnectionReceiveView,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramDrainResult {
-        const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-        );
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections,
-            now_nanos,
-        );
-        return .{
-            .feed = feed,
-            .pending_work = pending_work,
-            .drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptions(
-                poll_views,
-                now_nanos,
-                out,
-            ),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
-        };
-    }
 
     /// Feed one installed-key datagram, process pending work, then drain output.
     ///
