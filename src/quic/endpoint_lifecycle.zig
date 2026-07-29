@@ -2666,41 +2666,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Feed one installed-key datagram, then poll installed-key output.
-    ///
-    /// This is the single-connection receive-to-output loop step. It reuses
-    /// the cross-connection lifecycle path with one caller-owned connection so
-    /// simple socket loops do not need to build receive/poll view slices.
-    pub fn feedDatagramWithInstalledKeysAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        path: endpoint.Udp4Tuple,
-        now_nanos: i64,
-        datagram: []const u8,
-        feed_options: EndpointFeedInstalledKeyDatagramOptions,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyDatagramPollResult {
-        const receive_connections = [_]EndpointConnectionReceiveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagram(
-            &receive_connections,
-            path,
-            now_nanos,
-            datagram,
-            feed_options,
-            &poll_views,
-            poll_options.space,
-        );
-    }
 
 
     /// Feed an installed-key datagram, then drain installed-key output.

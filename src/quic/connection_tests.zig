@@ -16362,17 +16362,24 @@ test "EndpointConnectionLifecycle feeds installed-key datagram then polls ACK ou
     })) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(second_ping);
 
-    const second = try server_lifecycle.feedDatagramWithInstalledKeysAndPollDatagram(
-        182,
-        &server,
+    const _w701_receive_connections = [_]EndpointConnectionReceiveView{.{
+        .connection_id = 182,
+        .connection = &server,
+    }};
+    const _w701_poll_views = [_]EndpointConnectionPollView{.{
+        .connection_id = 182,
+        .connection = &server,
+        .destination_connection_id = &client_dcid,
+        .source_connection_id = &[_]u8{},
+    }};
+    const second = try server_lifecycle.feedDatagramWithInstalledKeysAcrossConnectionsAndPollDatagram(
+        &_w701_receive_connections,
         server_path,
         14,
         second_ping,
         feed_options,
-        .{
-            .space = .application,
-            .destination_connection_id = &client_dcid,
-        },
+        &_w701_poll_views,
+        .application,
     );
     switch (second.feed) {
         .routed => |route| try std.testing.expectEqual(@as(u64, 182), route.connection_id),
