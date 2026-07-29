@@ -2188,14 +2188,19 @@ fn nextDerElement(input: []const u8, index: *usize) HandshakeError!DerElement {
     return .{ .tag = tag, .content = content };
 }
 
-/// Enforce the RFC 5280 extended-key-usage constraint corresponding to
-/// rustls/webpki's `KeyUsage::client_auth()`: a certificate without EKU is
-/// unrestricted, while a certificate that declares EKU must include either
-/// id-kp-clientAuth or anyExtendedKeyUsage.
-fn requireClientAuthenticationEku(cert_der: []const u8) HandshakeError!void {
+const CertificateExtensions = struct {
+    basic_constraints: ?[]const u8 = null,
+    extended_key_usage: ?[]const u8 = null,
+    key_usage: ?[]const u8 = null,
+};
+
+/// Extract the RFC 5280 extensions that constrain whether a certificate can
+/// act as a TLS leaf or issuing CA. Unknown extensions stay outside this
+/// narrow parser; the caller only uses the returned DER extension values.
+fn certificateExtensions(cert_der: []const u8) HandshakeError!CertificateExtensions {
     const eku_extension_oid = [_]u8{ 0x55, 0x1d, 0x25 }; // 2.5.29.37
-    const client_auth_oid = [_]u8{ 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02 }; // 1.3.6.1.5.5.7.3.2
-    const any_extended_key_usage_oid = [_]u8{ 0x55, 0x1d, 0x25, 0x00 }; // 2.5.29.37.0
+    const basic_constraints_extension_oid = [_]u8{ 0x55, 0x1d, 0x13 }; // 2.5.29.19
+    const key_usage_extension_oid = [_]u8{ 0x55, 0x1d, 0x0f }; // 2.5.29.15
 
     var certificate_index: usize = 0;
     const certificate = try nextDerElement(cert_der, &certificate_index);
@@ -2212,11 +2217,15 @@ fn requireClientAuthenticationEku(cert_der: []const u8) HandshakeError!void {
     // serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo.
     inline for (0..6) |_| _ = try nextDerElement(tbs_certificate.content, &tbs_index);
 
+    var result: CertificateExtensions = .{};
+    var have_extensions = false;
     while (tbs_index < tbs_certificate.content.len) {
         const optional_field = try nextDerElement(tbs_certificate.content, &tbs_index);
         switch (optional_field.tag) {
             0x81, 0x82 => {}, // issuerUniqueID / subjectUniqueID
             0xa3 => {
+                if (have_extensions) return error.BadCertificate;
+                have_extensions = true;
                 var outer_extensions_index: usize = 0;
                 const extensions = try nextDerElement(optional_field.content, &outer_extensions_index);
                 if (extensions.tag != 0x30 or outer_extensions_index != optional_field.content.len) return error.BadCertificate;
@@ -2234,25 +2243,76 @@ fn requireClientAuthenticationEku(cert_der: []const u8) HandshakeError!void {
                         break :blk try nextDerElement(extension.content, &extension_index);
                     } else maybe_critical;
                     if (extension_value.tag != 0x04 or extension_index != extension.content.len) return error.BadCertificate;
-                    if (!std.mem.eql(u8, extension_oid.content, &eku_extension_oid)) continue;
-
-                    var eku_index: usize = 0;
-                    const key_purposes = try nextDerElement(extension_value.content, &eku_index);
-                    if (key_purposes.tag != 0x30 or eku_index != extension_value.content.len) return error.BadCertificate;
-                    var key_purpose_index: usize = 0;
-                    while (key_purpose_index < key_purposes.content.len) {
-                        const key_purpose = try nextDerElement(key_purposes.content, &key_purpose_index);
-                        if (key_purpose.tag != 0x06) return error.BadCertificate;
-                        if (std.mem.eql(u8, key_purpose.content, &client_auth_oid) or
-                            std.mem.eql(u8, key_purpose.content, &any_extended_key_usage_oid)) return;
+                    if (std.mem.eql(u8, extension_oid.content, &basic_constraints_extension_oid)) {
+                        if (result.basic_constraints != null) return error.BadCertificate;
+                        result.basic_constraints = extension_value.content;
+                    } else if (std.mem.eql(u8, extension_oid.content, &eku_extension_oid)) {
+                        if (result.extended_key_usage != null) return error.BadCertificate;
+                        result.extended_key_usage = extension_value.content;
+                    } else if (std.mem.eql(u8, extension_oid.content, &key_usage_extension_oid)) {
+                        if (result.key_usage != null) return error.BadCertificate;
+                        result.key_usage = extension_value.content;
                     }
-                    return error.BadCertificate;
                 }
-                return;
             },
             else => return error.BadCertificate,
         }
     }
+    return result;
+}
+
+fn requireCertificateAuthority(cert_der: []const u8) HandshakeError!void {
+    const extensions = try certificateExtensions(cert_der);
+    const basic_constraints = extensions.basic_constraints orelse return error.BadCertificate;
+    var constraints_index: usize = 0;
+    const constraints = try nextDerElement(basic_constraints, &constraints_index);
+    if (constraints.tag != 0x30 or constraints_index != basic_constraints.len) return error.BadCertificate;
+
+    var value_index: usize = 0;
+    const ca = try nextDerElement(constraints.content, &value_index);
+    if (ca.tag != 0x01 or ca.content.len != 1 or ca.content[0] != 0xff) return error.BadCertificate;
+    if (value_index < constraints.content.len) {
+        const path_len = try nextDerElement(constraints.content, &value_index);
+        if (path_len.tag != 0x02 or path_len.content.len == 0) return error.BadCertificate;
+    }
+    if (value_index != constraints.content.len) return error.BadCertificate;
+
+    if (extensions.key_usage) |key_usage| {
+        var key_usage_index: usize = 0;
+        const bits = try nextDerElement(key_usage, &key_usage_index);
+        if (bits.tag != 0x03 or key_usage_index != key_usage.len or bits.content.len < 2 or bits.content[0] > 7 or (bits.content[1] & 0x04) == 0) return error.BadCertificate;
+    }
+}
+
+/// Enforce rustls/webpki's TLS leaf extended-key-usage policy. An absent EKU
+/// is unrestricted; when present, it must permit the TLS role.
+fn requireLeafCertificateUsage(cert_der: []const u8, required_eku_oid: []const u8) HandshakeError!void {
+    const any_extended_key_usage_oid = [_]u8{ 0x55, 0x1d, 0x25, 0x00 }; // 2.5.29.37.0
+    const extensions = try certificateExtensions(cert_der);
+    if (extensions.extended_key_usage) |extended_key_usage| {
+        var eku_index: usize = 0;
+        const key_purposes = try nextDerElement(extended_key_usage, &eku_index);
+        if (key_purposes.tag != 0x30 or eku_index != extended_key_usage.len) return error.BadCertificate;
+        var key_purpose_index: usize = 0;
+        while (key_purpose_index < key_purposes.content.len) {
+            const key_purpose = try nextDerElement(key_purposes.content, &key_purpose_index);
+            if (key_purpose.tag != 0x06) return error.BadCertificate;
+            if (std.mem.eql(u8, key_purpose.content, required_eku_oid) or
+                std.mem.eql(u8, key_purpose.content, &any_extended_key_usage_oid)) break;
+        } else return error.BadCertificate;
+    }
+}
+
+/// Enforce the RFC 5280 extended-key-usage constraint corresponding to
+/// rustls/webpki's `KeyUsage::client_auth()`.
+fn requireClientAuthenticationEku(cert_der: []const u8) HandshakeError!void {
+    const client_auth_oid = [_]u8{ 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02 }; // 1.3.6.1.5.5.7.3.2
+    return requireLeafCertificateUsage(cert_der, &client_auth_oid);
+}
+
+fn requireServerAuthenticationEku(cert_der: []const u8) HandshakeError!void {
+    const server_auth_oid = [_]u8{ 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01 }; // 1.3.6.1.5.5.7.3.1
+    return requireLeafCertificateUsage(cert_der, &server_auth_oid);
 }
 
 fn validateServerCertificateChain(cert_chain_der: []const []const u8, output_limit: usize) HandshakeError!void {
@@ -3555,11 +3615,15 @@ pub const Tls13Handshake = struct {
 
         if (self.config.ca_bundle) |bundle| {
             const now = self.config.now_sec orelse return error.BadCertificate;
+            try requireServerAuthenticationEku(leaf_der);
             var subject = parsed;
             var pos = chain_pos;
             while (pos < chain_end) {
                 const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
                 const issuer = (Certificate{ .buffer = issuer_der, .index = 0 }).parse() catch return error.BadCertificate;
+                // Trust anchors are configured out of band; RFC 5280 CA
+                // constraints apply to peer-supplied intermediates only.
+                if (bundle.find(issuer.subject()) == null) try requireCertificateAuthority(issuer_der);
                 subject.verify(issuer, now) catch return error.BadCertificate;
                 subject = issuer;
             }
@@ -4602,6 +4666,9 @@ pub const Tls13Handshake = struct {
         while (pos < chain_end) {
             const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
             const issuer = (Certificate{ .buffer = issuer_der, .index = 0 }).parse() catch return error.BadCertificate;
+            // Trust anchors are configured out of band; RFC 5280 CA
+            // constraints apply to peer-supplied intermediates only.
+            if (bundle.find(issuer.subject()) == null) try requireCertificateAuthority(issuer_der);
             subject.verify(issuer, now) catch return error.BadCertificate;
             subject = issuer;
         }
@@ -8652,6 +8719,7 @@ test "client authentication EKU accepts client or absent usage and rejects serve
     var client_cert_der_storage: [512]u8 = undefined;
     const client_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-client-auth.pem"), &client_cert_der_storage);
     try requireClientAuthenticationEku(client_cert_der);
+    try std.testing.expectError(error.BadCertificate, requireServerAuthenticationEku(client_cert_der));
 
     var no_eku_cert_der_storage: [512]u8 = undefined;
     const no_eku_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-client-ca.pem"), &no_eku_cert_der_storage);
@@ -8660,6 +8728,32 @@ test "client authentication EKU accepts client or absent usage and rejects serve
     var server_cert_der_storage: [512]u8 = undefined;
     const server_cert_der = try decodePem(@embedFile("../quic/testdata/quicz-echo-ca.pem"), &server_cert_der_storage);
     try std.testing.expectError(error.BadCertificate, requireClientAuthenticationEku(server_cert_der));
+    try requireServerAuthenticationEku(server_cert_der);
+}
+
+test "certificate authority validation requires an explicit CA basic constraint" {
+    const certificate_with_ca = [_]u8{
+        0x30, 0x29, 0x30, 0x22,
+        0x02, 0x01, 0x01, // serialNumber
+        0x30, 0x00, // signature
+        0x30, 0x00, // issuer
+        0x30, 0x00, // validity
+        0x30, 0x00, // subject
+        0x30, 0x00, // subjectPublicKeyInfo
+        0xa3, 0x13,
+        0x30, 0x11,
+        0x30, 0x0f,
+        0x06, 0x03, 0x55, 0x1d, 0x13, // basicConstraints
+        0x01, 0x01, 0xff, // critical
+        0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, // cA = true
+        0x30, 0x00, // signatureAlgorithm
+        0x03, 0x01, 0x00, // signatureValue
+    };
+    try requireCertificateAuthority(&certificate_with_ca);
+
+    var certificate_without_ca = certificate_with_ca;
+    certificate_without_ca[37] = 0x00;
+    try std.testing.expectError(error.BadCertificate, requireCertificateAuthority(&certificate_without_ca));
 }
 
 test "Tls13Handshake server rejects client Finished with wrong verify_data" {
