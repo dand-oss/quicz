@@ -12,6 +12,7 @@ const EcdsaP256Sha256 = crypto.sign.ecdsa.EcdsaP256Sha256;
 const EcdsaP384Sha384 = crypto.sign.ecdsa.EcdsaP384Sha384;
 const Ed25519 = crypto.sign.Ed25519;
 const SignatureScheme = crypto.tls.SignatureScheme;
+const RsaModulus = crypto.ff.Modulus(4096);
 
 pub const secret_len: usize = 32;
 const key_len: usize = 16;
@@ -283,6 +284,8 @@ pub const PrivateKeyAlgorithm = enum {
     ecdsa_p256_sha256,
     ecdsa_p384_sha384,
     ed25519,
+    /// PKCS#1 `RSAPrivateKey` DER signed with TLS 1.3 RSA-PSS-SHA256.
+    rsa_pss_rsae_sha256,
 };
 
 /// Configuration for a TLS 1.3 handshake.
@@ -290,8 +293,8 @@ pub const TlsConfig = struct {
     alpn: []const []const u8 = &.{},
     server_name: ?[]const u8 = null,
     cert_chain_der: []const []const u8 = &.{},
-    /// Raw private key: 32-byte P-256 scalar, 48-byte P-384 scalar, or
-    /// 32-byte Ed25519 seed.
+    /// Raw private key: 32-byte P-256 scalar, 48-byte P-384 scalar, 32-byte
+    /// Ed25519 seed, or a PKCS#1 `RSAPrivateKey` DER for RSA-PSS-SHA256.
     private_key_bytes: ?[]const u8 = null,
     private_key_algorithm: PrivateKeyAlgorithm = .ecdsa_p256_sha256,
     skip_cert_verify: bool = true,
@@ -2119,6 +2122,7 @@ fn signatureSchemeForPrivateKeyAlgorithm(algorithm: PrivateKeyAlgorithm) u16 {
         .ecdsa_p256_sha256 => sig_ecdsa_secp256r1_sha256,
         .ecdsa_p384_sha384 => sig_ecdsa_secp384r1_sha384,
         .ed25519 => sig_ed25519,
+        .rsa_pss_rsae_sha256 => sig_rsa_pss_rsae_sha256,
     };
 }
 
@@ -2144,6 +2148,7 @@ fn validateServerCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
             if (private_key.len != 32) return error.BadCertificate;
             _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
         },
+        .rsa_pss_rsae_sha256 => _ = parseRsaPrivateKey(private_key) catch return error.BadCertificate,
     }
 }
 
@@ -2162,6 +2167,131 @@ fn validateClientCertificatePrivateKey(config: TlsConfig) HandshakeError!void {
             if (private_key.len != 32) return error.BadCertificate;
             _ = Ed25519.KeyPair.generateDeterministic(private_key[0..32].*) catch return error.BadCertificate;
         },
+        .rsa_pss_rsae_sha256 => _ = parseRsaPrivateKey(private_key) catch return error.BadCertificate,
+    }
+}
+
+const RsaPrivateKey = struct {
+    modulus: []const u8,
+    private_exponent: []const u8,
+};
+
+/// Decode a two-prime PKCS#1 RSA key used by TLS 1.3 RSA-PSS. Only n and d
+/// are retained: they are sufficient for constant-time modular exponentiation
+/// and deliberately avoid a second, unblinded CRT implementation.
+fn parseRsaPrivateKey(der: []const u8) HandshakeError!RsaPrivateKey {
+    var root_index: usize = 0;
+    const sequence = try nextDerElement(der, &root_index);
+    if (sequence.tag != 0x30 or root_index != der.len) return error.BadCertificate;
+
+    var index: usize = 0;
+    const version = try nextPositiveDerInteger(sequence.content, &index);
+    if (!std.mem.eql(u8, version, &.{0})) return error.BadCertificate;
+    const modulus_bytes = try nextPositiveDerInteger(sequence.content, &index);
+    const public_exponent = try nextPositiveDerInteger(sequence.content, &index);
+    const private_exponent = try nextPositiveDerInteger(sequence.content, &index);
+    // Require the complete two-prime RSAPrivateKey structure even though its
+    // CRT fields are intentionally not used by the signing implementation.
+    inline for (0..5) |_| _ = try nextPositiveDerInteger(sequence.content, &index);
+    if (index != sequence.content.len) return error.BadCertificate;
+
+    switch (modulus_bytes.len) {
+        256, 384, 512 => {},
+        else => return error.BadCertificate,
+    }
+    if (modulus_bytes[0] & 0x80 == 0 or modulus_bytes[modulus_bytes.len - 1] & 1 == 0) return error.BadCertificate;
+    if (public_exponent.len > 4 or public_exponent[public_exponent.len - 1] & 1 == 0) return error.BadCertificate;
+    var public_exponent_value: u32 = 0;
+    for (public_exponent) |byte| public_exponent_value = (public_exponent_value << 8) | byte;
+    if (public_exponent_value < 3) return error.BadCertificate;
+    if (private_exponent.len == 1 and private_exponent[0] == 0) return error.BadCertificate;
+    if (private_exponent[private_exponent.len - 1] & 1 == 0) return error.BadCertificate;
+
+    const modulus = RsaModulus.fromBytes(modulus_bytes, .big) catch return error.BadCertificate;
+    _ = RsaModulus.Fe.fromBytes(modulus, private_exponent, .big) catch return error.BadCertificate;
+    return .{ .modulus = modulus_bytes, .private_exponent = private_exponent };
+}
+
+/// Return a canonical positive DER INTEGER. Rejecting negative values and
+/// redundant leading zeroes keeps malformed key material out of bigint code.
+fn nextPositiveDerInteger(input: []const u8, index: *usize) HandshakeError![]const u8 {
+    const element = try nextDerElement(input, index);
+    if (element.tag != 0x02 or element.content.len == 0) return error.BadCertificate;
+    if (element.content[0] == 0) {
+        // Zero itself is encoded as a single zero byte. Positive values whose
+        // high bit is set require exactly one leading zero byte.
+        if (element.content.len == 1) return element.content;
+        if (element.content[1] & 0x80 == 0) return error.BadCertificate;
+        return element.content[1..];
+    }
+    if (element.content[0] & 0x80 != 0) return error.BadCertificate;
+    return element.content;
+}
+
+/// Produce a TLS 1.3 rsa_pss_rsae_sha256 signature from a PKCS#1 private key.
+/// Zig's finite-field implementation uses the secret-exponent path whenever
+/// side-channel mitigations are enabled (the default Zig crypto setting).
+fn signRsaPssSha256(private_key_der: []const u8, msg: []const u8, out: []u8) HandshakeError![]const u8 {
+    if (comptime std.options.side_channels_mitigations == .none) return error.InternalError;
+    const private_key = try parseRsaPrivateKey(private_key_der);
+    switch (private_key.modulus.len) {
+        inline 256, 384, 512 => |modulus_len| {
+            if (out.len < modulus_len) return error.InternalError;
+            const encoded = try encodeRsaPssSha256(modulus_len, private_key.modulus, msg);
+            const modulus = RsaModulus.fromBytes(private_key.modulus, .big) catch return error.InternalError;
+            const message = RsaModulus.Fe.fromBytes(modulus, &encoded, .big) catch return error.InternalError;
+            const signature = modulus.powWithEncodedExponent(message, private_key.private_exponent, .big) catch return error.InternalError;
+            signature.toBytes(out[0..modulus_len], .big) catch return error.InternalError;
+            return out[0..modulus_len];
+        },
+        else => return error.BadCertificate,
+    }
+}
+
+/// EMSA-PSS-ENCODE with SHA-256, MGF1-SHA256 and a 32-byte salt, as required
+/// by TLS 1.3's rsa_pss_rsae_sha256 scheme (RFC 8446 section 4.2.3).
+fn encodeRsaPssSha256(comptime modulus_len: usize, modulus_bytes: []const u8, msg: []const u8) HandshakeError![modulus_len]u8 {
+    const modulus = RsaModulus.fromBytes(modulus_bytes, .big) catch return error.BadCertificate;
+    const em_bits = modulus.bits() - 1;
+    const em_len = (em_bits + 7) / 8;
+    if (em_len != modulus_len or em_len < Sha256.digest_length * 2 + 2) return error.BadCertificate;
+
+    var message_hash: [Sha256.digest_length]u8 = undefined;
+    Sha256.hash(msg, &message_hash, .{});
+    var salt: [Sha256.digest_length]u8 = undefined;
+    secureRandomBytes(&salt);
+
+    var hash_input: [8 + Sha256.digest_length * 2]u8 = [_]u8{0} ** (8 + Sha256.digest_length * 2);
+    @memcpy(hash_input[8..][0..message_hash.len], &message_hash);
+    @memcpy(hash_input[8 + message_hash.len ..], &salt);
+    var h: [Sha256.digest_length]u8 = undefined;
+    Sha256.hash(&hash_input, &h, .{});
+
+    const db_len = modulus_len - Sha256.digest_length - 1;
+    var encoded: [modulus_len]u8 = [_]u8{0} ** modulus_len;
+    encoded[db_len - salt.len - 1] = 1;
+    @memcpy(encoded[db_len - salt.len .. db_len], &salt);
+    try mgf1Sha256(encoded[0..db_len], &h);
+    const zero_bits = modulus_len * 8 - em_bits;
+    encoded[0] &= @as(u8, 0xff) >> @intCast(zero_bits);
+    @memcpy(encoded[db_len .. db_len + h.len], &h);
+    encoded[modulus_len - 1] = 0xbc;
+    return encoded;
+}
+
+/// XOR MGF1-SHA256 output into `masked_db`.
+fn mgf1Sha256(masked_db: []u8, seed: *const [Sha256.digest_length]u8) HandshakeError!void {
+    var input: [Sha256.digest_length + 4]u8 = undefined;
+    @memcpy(input[0..Sha256.digest_length], seed);
+    var counter: u32 = 0;
+    var offset: usize = 0;
+    while (offset < masked_db.len) : (counter += 1) {
+        std.mem.writeInt(u32, input[Sha256.digest_length..], counter, .big);
+        var block: [Sha256.digest_length]u8 = undefined;
+        Sha256.hash(&input, &block, .{});
+        const length = @min(block.len, masked_db.len - offset);
+        for (masked_db[offset..][0..length], block[0..length]) |*byte, mask| byte.* ^= mask;
+        offset += length;
     }
 }
 
@@ -4573,7 +4703,7 @@ pub const Tls13Handshake = struct {
         sign_content[64 + label.len] = 0x00;
         @memcpy(sign_content[64 + label.len + 1 ..][0..32], &th);
 
-        var sig_storage: [128]u8 = undefined;
+        var sig_storage: [512]u8 = undefined;
         var sig_len: usize = 0;
         const sig_scheme: u16 = switch (self.config.private_key_algorithm) {
             .ecdsa_p256_sha256 => blk: {
@@ -4603,6 +4733,11 @@ pub const Tls13Handshake = struct {
                 sig_len = bytes.len;
                 @memcpy(sig_storage[0..sig_len], &bytes);
                 break :blk sig_ed25519;
+            },
+            .rsa_pss_rsae_sha256 => blk: {
+                const signature = try signRsaPssSha256(private_key, &sign_content, &sig_storage);
+                sig_len = signature.len;
+                break :blk sig_rsa_pss_rsae_sha256;
             },
         };
 
@@ -4639,7 +4774,7 @@ pub const Tls13Handshake = struct {
         sign_content[64 + label.len] = 0;
         @memcpy(sign_content[64 + label.len + 1 ..][0..32], &th);
 
-        var sig_storage: [128]u8 = undefined;
+        var sig_storage: [512]u8 = undefined;
         var sig_len: usize = 0;
         const sig_scheme: u16 = switch (self.config.client_private_key_algorithm) {
             .ecdsa_p256_sha256 => blk: {
@@ -4669,6 +4804,11 @@ pub const Tls13Handshake = struct {
                 sig_len = bytes.len;
                 @memcpy(sig_storage[0..sig_len], &bytes);
                 break :blk sig_ed25519;
+            },
+            .rsa_pss_rsae_sha256 => blk: {
+                const signature = try signRsaPssSha256(private_key, &sign_content, &sig_storage);
+                sig_len = signature.len;
+                break :blk sig_rsa_pss_rsae_sha256;
             },
         };
 
@@ -6656,6 +6796,73 @@ pub fn certVerifySignedContent(transcript_hash: [32]u8) [130]u8 {
     signed[64 + label.len] = 0x00;
     @memcpy(signed[64 + label.len + 1 ..][0..32], &transcript_hash);
     return signed;
+}
+
+// Independent 2048-bit RSA test key. It is only used to verify the TLS
+// CertificateVerify implementation against QUICZ's existing RSA-PSS verifier.
+const rsa_test_private_key_base64 = "MIIEpAIBAAKCAQEAzhh0V9bgIhOHjilyOLYV1C2DiVw+NsYTNlMkqO+FRdKyDd3GKaPWXxQnKRhhYgAhcMvf2Mom19OXmzO3k/CgwHAYAJ1CVMeqv1lYquP2j/uly3WXHdvAtnIUpx/ticGFbHV9XSbvMBgRygbmgl/zwVO2i9ymev8i9U9OdHLRu0G7kFIkNjH4kD4JiuEeuoTLb6LPGpVYjgRzY9XRlU0gMNzWZxWTG4vrL2buqsHMjhJ8YKYFeoWe69VeN5ho0esnLreFjtzsRFzrc3EUCrerP7m1zcYtNpwZKrKU/TBYazbMNfXjf1LhxFJCGp35AEy4Pk/R15rReyvJ82jFpFFUiQIDAQABAoIBACGPeeKT6wuhgoFz3lW90PAsOS81BiyFNLuz7lRULK+iD7ySUKKXO2FgNsBKaBE9VDS5/kmfIZQjsJxlX4+Hr6Wmm0H+Wb7UhMmEExxA4vWvVOA81c7W6hrLmPFeEaBNEx0GRNPWczyxrrPnS8IPPfJNX3yHAdUlltu7flsYF28WikoUFPV02L15042rdikCzFYKDoJEhLj8sAB+6oYzUPWxfdqWfJDOq0WXCvyPMevPFXPlHsIlE0Q/2QyN9iEopewqCacbhvuysHLYT++osXViA7yXIjQI5FXw2FuXPU+fmTMX1QjbTHtT8A2z1YRWZuCyy+o0GCX/YjxS52FZdsECgYEA7cwjtjdyNf0LFUtyh/eRK4NaGRi2oy9S4JwjnHKEyUnHn90MiXpIXyxi3kw2YmFDHZX0MSY9DzEz0iKCnUB2v7Y3aQbTEQ9HPzEtkVYQHyPC98aKrTqypDQ4uPWtEG1E75WB9Q8Kf9oRztx7jY1U/0KW4+DNfX+MH6zTEykNy6MCgYEA3d8WRdmrE+L4NO543B+eSoFumU9Tmi3qi44mnvG0+jBU1xCl1/GYFClXViLPYp5kpDCIssN+7rCTy387WBAkBLdyJ6Jlodi9GwvvxhCPuXHagWuHhdtn6asgFtZlIXJQESTXhss8vXx4+xJJfa0FRUlnQnlL7aXakvdloeAvYeMCgYEA10LaeRLMIq9EHyzDKu4izd8D6oACpMosHgN6AR9xsL1HJiH2PWUiqnUFsvIOsRQWq2uZN/zDfUMvA+QVlMBMPtN2aW6yFllcR4n/E/dydJ3s2lsyIgpmuFpFlrlexuYDZ1ZR5EKPYJlJUZcpiUQNU102NmbD3f1eHTZXhJq/UD0CgYAlHw8l7q497IqkqIWWJsAgLRmpEumk8Su937G8hCpIdc+sD///ak+MiAIxyi8yi9fA1NH6PtU88FQ6BvaR3Fl6ZIr38Kbadl3laZDbbafuWgs5/hi1n6j6IoSC7aoL94lH5QceaWCnP20qbLvZCBrKpeZd69d1UnuIfVYGyHCFCwKBgQDQycEzQttlizltcpp7quvGUAcF7Ju1PomBwh31N8Lvxn/rzYmPRAGSy2SkkXYBmHxx5NWjZpwUNlyczlcBCF/PCzS5fdx5cFhC2zcfL5xVPrdfvbqGSOKVuia6orf4OlMv+oSt3Of+y+wB85xM1ODAIkFL05CJJ8dzittKSAwD3w==";
+const rsa_test_public_key_base64 = "MIIBCgKCAQEAzhh0V9bgIhOHjilyOLYV1C2DiVw+NsYTNlMkqO+FRdKyDd3GKaPWXxQnKRhhYgAhcMvf2Mom19OXmzO3k/CgwHAYAJ1CVMeqv1lYquP2j/uly3WXHdvAtnIUpx/ticGFbHV9XSbvMBgRygbmgl/zwVO2i9ymev8i9U9OdHLRu0G7kFIkNjH4kD4JiuEeuoTLb6LPGpVYjgRzY9XRlU0gMNzWZxWTG4vrL2buqsHMjhJ8YKYFeoWe69VeN5ho0esnLreFjtzsRFzrc3EUCrerP7m1zcYtNpwZKrKU/TBYazbMNfXjf1LhxFJCGp35AEy4Pk/R15rReyvJ82jFpFFUiQIDAQAB";
+
+fn decodeRsaTestPrivateKey() !struct { bytes: [2048]u8, len: usize } {
+    var bytes: [2048]u8 = undefined;
+    const len = try std.base64.standard.decoderWithIgnore("").decode(&bytes, rsa_test_private_key_base64);
+    return .{ .bytes = bytes, .len = len };
+}
+
+fn decodeRsaTestPublicKey() !struct { bytes: [512]u8, len: usize } {
+    var bytes: [512]u8 = undefined;
+    const len = try std.base64.standard.decoderWithIgnore("").decode(&bytes, rsa_test_public_key_base64);
+    return .{ .bytes = bytes, .len = len };
+}
+
+test "Tls13Handshake server emits a valid RSA-PSS CertificateVerify" {
+    const private_key = try decodeRsaTestPrivateKey();
+    const public_key = try decodeRsaTestPublicKey();
+    var server = Tls13Handshake.initServer(.{
+        .private_key_bytes = private_key.bytes[0..private_key.len],
+        .private_key_algorithm = .rsa_pss_rsae_sha256,
+    }, &.{});
+    server.state = .server_send_certificate_verify;
+    const signed = certVerifySignedContent(server.transcript.current());
+    const action = try server.step();
+    const data = switch (action) {
+        .send_data => |send_data| send_data.data,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(sig_rsa_pss_rsae_sha256, readU16(data[4..]));
+    const signature_len = readU16(data[6..]);
+    try std.testing.expectEqual(@as(usize, 256), signature_len);
+    try std.testing.expectEqual(data.len, @as(usize, signature_len) + 8);
+    try verifyRsaPssSha256(public_key.bytes[0..public_key.len], data[8..], &signed);
+}
+
+test "Tls13Handshake client emits a valid RSA-PSS CertificateVerify" {
+    const private_key = try decodeRsaTestPrivateKey();
+    const public_key = try decodeRsaTestPublicKey();
+    var client = Tls13Handshake.initClient(.{
+        .client_private_key_bytes = private_key.bytes[0..private_key.len],
+        .client_private_key_algorithm = .rsa_pss_rsae_sha256,
+    }, &.{});
+    client.state = .client_send_certificate_verify;
+
+    const transcript_hash = client.transcript.current();
+    const label = "TLS 1.3, client CertificateVerify";
+    var signed: [64 + label.len + 1 + 32]u8 = undefined;
+    @memset(signed[0..64], 0x20);
+    @memcpy(signed[64..][0..label.len], label);
+    signed[64 + label.len] = 0;
+    @memcpy(signed[64 + label.len + 1 ..][0..32], &transcript_hash);
+
+    const action = try client.step();
+    const data = switch (action) {
+        .send_data => |send_data| send_data.data,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(sig_rsa_pss_rsae_sha256, readU16(data[4..]));
+    const signature_len = readU16(data[6..]);
+    try std.testing.expectEqual(@as(usize, 256), signature_len);
+    try std.testing.expectEqual(data.len, @as(usize, signature_len) + 8);
+    try verifyRsaPssSha256(public_key.bytes[0..public_key.len], data[8..], &signed);
 }
 
 test "verifyCertificateVerifySignature accepts a valid ECDSA P-256 signature" {
