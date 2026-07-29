@@ -2261,7 +2261,10 @@ fn certificateExtensions(cert_der: []const u8) HandshakeError!CertificateExtensi
     return result;
 }
 
-fn requireCertificateAuthority(cert_der: []const u8) HandshakeError!void {
+/// Returns the RFC 5280 path-length limit declared by an issuing CA, if any.
+/// The caller applies it to the number of peer-supplied intermediate CAs below
+/// this issuer in the certificate path.
+fn certificateAuthorityPathLength(cert_der: []const u8) HandshakeError!?usize {
     const extensions = try certificateExtensions(cert_der);
     const basic_constraints = extensions.basic_constraints orelse return error.BadCertificate;
     var constraints_index: usize = 0;
@@ -2271,9 +2274,28 @@ fn requireCertificateAuthority(cert_der: []const u8) HandshakeError!void {
     var value_index: usize = 0;
     const ca = try nextDerElement(constraints.content, &value_index);
     if (ca.tag != 0x01 or ca.content.len != 1 or ca.content[0] != 0xff) return error.BadCertificate;
+    var path_length: ?usize = null;
     if (value_index < constraints.content.len) {
         const path_len = try nextDerElement(constraints.content, &value_index);
         if (path_len.tag != 0x02 or path_len.content.len == 0) return error.BadCertificate;
+        var integer = path_len.content;
+        if (integer[0] == 0) {
+            if (integer.len == 1) {
+                path_length = 0;
+            } else {
+                if ((integer[1] & 0x80) == 0) return error.BadCertificate;
+                integer = integer[1..];
+            }
+        } else if ((integer[0] & 0x80) != 0) return error.BadCertificate;
+
+        if (path_length == null) {
+            var parsed: usize = 0;
+            for (integer) |byte| {
+                parsed = std.math.mul(usize, parsed, 256) catch return error.BadCertificate;
+                parsed = std.math.add(usize, parsed, @as(usize, byte)) catch return error.BadCertificate;
+            }
+            path_length = parsed;
+        }
     }
     if (value_index != constraints.content.len) return error.BadCertificate;
 
@@ -2282,6 +2304,11 @@ fn requireCertificateAuthority(cert_der: []const u8) HandshakeError!void {
         const bits = try nextDerElement(key_usage, &key_usage_index);
         if (bits.tag != 0x03 or key_usage_index != key_usage.len or bits.content.len < 2 or bits.content[0] > 7 or (bits.content[1] & 0x04) == 0) return error.BadCertificate;
     }
+    return path_length;
+}
+
+fn requireCertificateAuthority(cert_der: []const u8) HandshakeError!void {
+    _ = try certificateAuthorityPathLength(cert_der);
 }
 
 /// Enforce rustls/webpki's TLS leaf extended-key-usage policy. An absent EKU
@@ -3618,12 +3645,19 @@ pub const Tls13Handshake = struct {
             try requireServerAuthenticationEku(leaf_der);
             var subject = parsed;
             var pos = chain_pos;
+            var intermediate_ca_count: usize = 0;
             while (pos < chain_end) {
                 const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
                 const issuer = (Certificate{ .buffer = issuer_der, .index = 0 }).parse() catch return error.BadCertificate;
                 // Trust anchors are configured out of band; RFC 5280 CA
                 // constraints apply to peer-supplied intermediates only.
-                if (bundle.find(issuer.subject()) == null) try requireCertificateAuthority(issuer_der);
+                if (bundle.find(issuer.subject()) == null) {
+                    const path_length = try certificateAuthorityPathLength(issuer_der);
+                    if (path_length) |limit| {
+                        if (intermediate_ca_count > limit) return error.BadCertificate;
+                    }
+                    intermediate_ca_count = std.math.add(usize, intermediate_ca_count, 1) catch return error.BadCertificate;
+                }
                 subject.verify(issuer, now) catch return error.BadCertificate;
                 subject = issuer;
             }
@@ -4663,12 +4697,19 @@ pub const Tls13Handshake = struct {
         var subject = (Certificate{ .buffer = leaf_der, .index = 0 }).parse() catch return error.BadCertificate;
         try requireClientAuthenticationEku(leaf_der);
         var pos = chain_pos;
+        var intermediate_ca_count: usize = 0;
         while (pos < chain_end) {
             const issuer_der = try nextCertificateEntry(certificate_message, &pos, chain_end);
             const issuer = (Certificate{ .buffer = issuer_der, .index = 0 }).parse() catch return error.BadCertificate;
             // Trust anchors are configured out of band; RFC 5280 CA
             // constraints apply to peer-supplied intermediates only.
-            if (bundle.find(issuer.subject()) == null) try requireCertificateAuthority(issuer_der);
+            if (bundle.find(issuer.subject()) == null) {
+                const path_length = try certificateAuthorityPathLength(issuer_der);
+                if (path_length) |limit| {
+                    if (intermediate_ca_count > limit) return error.BadCertificate;
+                }
+                intermediate_ca_count = std.math.add(usize, intermediate_ca_count, 1) catch return error.BadCertificate;
+            }
             subject.verify(issuer, now) catch return error.BadCertificate;
             subject = issuer;
         }
@@ -8754,6 +8795,29 @@ test "certificate authority validation requires an explicit CA basic constraint"
     var certificate_without_ca = certificate_with_ca;
     certificate_without_ca[37] = 0x00;
     try std.testing.expectError(error.BadCertificate, requireCertificateAuthority(&certificate_without_ca));
+
+    const certificate_with_zero_path_length = [_]u8{
+        0x30, 0x2c, 0x30, 0x25,
+        0x02, 0x01, 0x01, // serialNumber
+        0x30, 0x00, // signature
+        0x30, 0x00, // issuer
+        0x30, 0x00, // validity
+        0x30, 0x00, // subject
+        0x30, 0x00, // subjectPublicKeyInfo
+        0xa3, 0x16,
+        0x30, 0x14,
+        0x30, 0x12,
+        0x06, 0x03, 0x55, 0x1d, 0x13, // basicConstraints
+        0x01, 0x01, 0xff, // critical
+        0x04, 0x08, 0x30, 0x06, 0x01, 0x01, 0xff, 0x02, 0x01, 0x00, // cA = true, pathLen = 0
+        0x30, 0x00, // signatureAlgorithm
+        0x03, 0x01, 0x00, // signatureValue
+    };
+    try std.testing.expectEqual(@as(?usize, 0), try certificateAuthorityPathLength(&certificate_with_zero_path_length));
+
+    var certificate_with_negative_path_length = certificate_with_zero_path_length;
+    certificate_with_negative_path_length[40] = 0xff;
+    try std.testing.expectError(error.BadCertificate, certificateAuthorityPathLength(&certificate_with_negative_path_length));
 }
 
 test "Tls13Handshake server rejects client Finished with wrong verify_data" {
