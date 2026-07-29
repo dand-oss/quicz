@@ -6904,14 +6904,7 @@ test "EndpointConnectionLifecycle cross-connection due-deadline cross-space comp
         .connection = &conn,
     }};
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        &due_connections,
-        recovery_before.deadline_nanos,
-        &spaces,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, recovery_before.deadline_nanos, &spaces, &drive_views, .{ .compatible_version = true }, &compatibilities, &deadline_connections)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 180), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
     const backend_result = result.backend orelse return error.TestUnexpectedResult;
@@ -12134,24 +12127,12 @@ test "EndpointConnectionLifecycle due-deadline backend loop step selects next de
         .{ .connection_id = 202, .connection = &backend_connection },
     };
 
-    const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos - 1,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const before = try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos - 1, &.{.handshake}, &drive_views, .{}, &.{}, &deadline_connections);
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &.{.handshake}, &drive_views, .{}, &.{}, &deadline_connections)) orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(@as(u64, 201), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, result.due_work.deadline.kind);
@@ -12235,24 +12216,12 @@ test "EndpointConnectionLifecycle due-deadline close backend loop step selects n
         .{ .connection_id = 204, .connection = &backend_connection },
     };
 
-    const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos - 1,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const before = try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos - 1, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &deadline_connections);
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &deadline_connections)) orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(@as(u64, 203), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, result.due_work.deadline.kind);
@@ -12353,24 +12322,12 @@ test "EndpointConnectionLifecycle due-deadline cross-space backend loop step sel
         .{ .connection_id = 310, .connection = &backend_connection },
     };
 
-    const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos - 1,
-        &backend_spaces,
-        &drive_views,
-        &deadline_connections,
-    );
+    const before = try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos - 1, &backend_spaces, &drive_views, .{}, &.{}, &deadline_connections);
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expectEqual(@as(usize, 0), backend.pulls);
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        &backend_spaces,
-        &drive_views,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &backend_spaces, &drive_views, .{}, &.{}, &deadline_connections)) orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(@as(u64, 309), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, result.due_work.deadline.kind);
@@ -12468,13 +12425,7 @@ test "EndpointConnectionLifecycle due-deadline cross-space close backend loop re
         .connection = &due_connection,
     }};
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        &backend_spaces,
-        &drive_views,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &backend_spaces, &drive_views, .{ .close_on_error = true }, &.{}, &deadline_connections)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 311), result.due_work.deadline.connection_id);
     try std.testing.expect(result.due_work.pending_work.recovery_serviced != null);
     const backend_result = result.backend orelse return error.TestUnexpectedResult;
@@ -12573,26 +12524,12 @@ test "EndpointConnectionLifecycle due-deadline compatible backend loop step sele
         .{ .connection_id = 206, .connection = &backend_connection },
     };
 
-    const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos - 1,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const before = try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos - 1, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &deadline_connections);
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(!backend.peer_sent);
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &deadline_connections)) orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(@as(u64, 205), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, result.due_work.deadline.kind);
@@ -12709,26 +12646,12 @@ test "EndpointConnectionLifecycle due-deadline compatible close backend loop ste
         .{ .connection_id = 208, .connection = &backend_connection },
     };
 
-    const before = try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos - 1,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const before = try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos - 1, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &deadline_connections);
     try std.testing.expect(before == null);
     try std.testing.expectEqual(@as(usize, 1), lifecycle.recoveryTimerCount());
     try std.testing.expect(!backend.peer_sent);
 
-    const result = (try lifecycle.processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        &due_connections,
-        due_deadline.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    )) orelse return error.TestUnexpectedResult;
+    const result = (try lifecycle.processDueDeadlineStepWithCryptoDeadline(&due_connections, due_deadline.deadline_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &deadline_connections)) orelse return error.TestUnexpectedResult;
 
     try std.testing.expectEqual(@as(u64, 207), result.due_work.deadline.connection_id);
     try std.testing.expectEqual(EndpointConnectionDeadlineKind.recovery, result.due_work.deadline.kind);
