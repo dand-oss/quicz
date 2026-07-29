@@ -6650,14 +6650,7 @@ test "EndpointConnectionLifecycle cross-connection pending-work cross-space comp
     const drive_views = [_]EndpointCryptoBackendDriveView{.{ .connection_id = 181, .connection = &server, .backend = backend.backend(), .scratch = &scratch }};
     const poll_views = [_]EndpointConnectionInstalledKeyPollView{.{ .connection_id = 182, .connection = &client, .poll_options = .{ .space = .zero_rtt, .destination_connection_id = &server_dcid, .source_connection_id = &client_dcid } }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        10,
-        &spaces,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, 10, &spaces, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.backend.progress.peer_compatible_version_selected);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -7791,13 +7784,7 @@ test "EndpointConnectionLifecycle pending-work backend poll keeps explicit zero 
         .poll_options = options,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        timer.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, timer.deadline_nanos, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
@@ -7891,13 +7878,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend poll keeps ex
         .poll_options = options,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        timer.deadline_nanos,
-        &backend_spaces,
-        &drive_views,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, timer.deadline_nanos, &backend_spaces, &drive_views, .{}, &.{}, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -8023,14 +8004,7 @@ test "EndpointConnectionLifecycle pending-work backend drain keeps explicit zero
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        &pending_connections,
-        now_nanos,
-        .handshake,
-        &drive_views,
-        &poll_views,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyDrain(&pending_connections, now_nanos, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views, &out);
     try std.testing.expectEqual(@as(usize, 2), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
@@ -8164,14 +8138,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend drain keeps e
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
-        &pending_connections,
-        now_nanos,
-        &backend_spaces,
-        &drive_views,
-        &poll_views,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyDrain(&pending_connections, now_nanos, &backend_spaces, &drive_views, .{}, &.{}, &poll_views, &out);
     try std.testing.expectEqual(@as(usize, 2), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 2), backend.pulls);
@@ -8616,13 +8583,7 @@ test "EndpointConnectionLifecycle pending-work close backend poll keeps explicit
         .poll_options = options,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        timer.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, timer.deadline_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
@@ -8748,14 +8709,7 @@ test "EndpointConnectionLifecycle pending-work close backend drain keeps explici
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &pending_connections,
-        now_nanos,
-        .handshake,
-        &drive_views,
-        &poll_views,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyDrain(&pending_connections, now_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, &out);
     try std.testing.expectEqual(@as(usize, 2), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(usize, 1), backend.pulls);
@@ -10962,14 +10916,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend poll keeps exp
         .poll_options = options,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        timer.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, timer.deadline_nanos, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.backend.progress.peer_compatible_version_selected);
@@ -11125,15 +11072,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend drain keeps ex
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        &pending_connections,
-        now_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyDrain(&pending_connections, now_nanos, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &poll_views, &out);
     try std.testing.expectEqual(@as(usize, 2), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.backend.progress.peer_compatible_version_selected);
@@ -11263,14 +11202,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend poll kee
         .poll_options = options,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-        &pending_connections,
-        timer.deadline_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyPoll(&pending_connections, timer.deadline_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &poll_views);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.backend.progress.peer_compatible_version_selected);
@@ -11426,15 +11358,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend drain ke
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        &pending_connections,
-        now_nanos,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &poll_views,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoInstalledKeyDrain(&pending_connections, now_nanos, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &poll_views, &out);
     try std.testing.expectEqual(@as(usize, 2), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), result.backend.backend.progress.peer_compatible_version_selected);

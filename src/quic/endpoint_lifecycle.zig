@@ -7861,6 +7861,55 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
+    /// Unified pending-work sweep + crypto backend drive + installed-key poll.
+    pub fn processPendingWorkStepWithCryptoInstalledKeyPoll(
+        self: *EndpointConnectionLifecycle,
+        pending_connections: []const EndpointConnectionReceiveView,
+        now_nanos: i64,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            pending_connections,
+            now_nanos,
+        );
+        return .{
+            .pending_work = pending_work,
+            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos,
+            ),
+        };
+    }
+
+    /// Unified pending-work sweep + crypto backend drive + installed-key drain.
+    pub fn processPendingWorkStepWithCryptoInstalledKeyDrain(
+        self: *EndpointConnectionLifecycle,
+        pending_connections: []const EndpointConnectionReceiveView,
+        now_nanos: i64,
+        spaces: []const PacketNumberSpace,
+        drive_views: []const EndpointCryptoBackendDriveView,
+        crypto_opts: lifecycle_opts.CryptoDriveStepOptions,
+        compatibilities: []const VersionCompatibility,
+        poll_views: []const EndpointConnectionInstalledKeyPollView,
+        out: []EndpointPolledDatagramResult,
+    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
+        const pending_work = try self.processPendingWorkAcrossConnections(
+            pending_connections,
+            now_nanos,
+        );
+        return .{
+            .pending_work = pending_work,
+            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
+                spaces, drive_views, crypto_opts, compatibilities,
+                poll_views, now_nanos, out,
+            ),
+        };
+    }
+
     /// Process pending work, then select the next endpoint-visible deadline.
     ///
     /// This is the no-output wakeup planning step for socket loops. It applies
@@ -8046,283 +8095,20 @@ pub const EndpointConnectionLifecycle = struct {
 
 
 
-    /// Process pending work, drive crypto backends, then poll explicit output.
-    ///
-    /// This is the caller-owned connection map form for no-new-datagram socket
-    /// loop ticks that need pending recovery work and backend progress to
-    /// preserve per-connection installed-key output choices.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
-    /// Process pending work, drive crypto backends across ordered packet number
-    /// spaces, then poll output.
-    ///
-    /// This is the cross-space form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram()`.
-    /// Process pending work, drive crypto backends across ordered packet number
-    /// spaces, then poll explicit output.
-    ///
-    /// This is the per-connection-output-options form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(backend_spaces, drive_views, .{}, &.{}, poll_views, now_nanos),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
-
-    /// Process pending work, drive crypto backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(&.{backend_space}, drive_views, .{}, &.{}, poll_views, now_nanos, out),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
-    /// Process pending work, drive crypto backends across ordered packet number
-    /// spaces, then drain output.
-    ///
-    /// This is the bounded-output cross-space form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagram()`.
-    /// Process pending work, drive crypto backends across ordered packet number
-    /// spaces, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(backend_spaces, drive_views, .{}, &.{}, poll_views, now_nanos, out),
-            .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
-        };
-    }
-
-
-    /// Process pending work, drive close-propagating backends, then poll explicit output.
-    ///
-    /// Peer transport-parameter errors return before output polling. Successful
-    /// pending-work/backend ticks preserve each caller-owned connection's
-    /// installed-key output choice.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos),
-        };
-    }
-
-    /// Process pending work, drive close-propagating backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, out),
-        };
-    }
 
 
 
-    /// Process pending work, drive compatible-version backends, then poll explicit output.
-    ///
-    /// This is the no-new-datagram socket-loop step for RFC 9368-compatible
-    /// handshakes where both pending recovery work and backend progress need to
-    /// preserve per-connection installed-key output choices.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos),
-        };
-    }
 
-    /// Process pending work, drive compatible-version backends, then drain output.
-    /// Process pending work, drive compatible-version backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(&.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos, out),
-        };
-    }
 
-    /// Process pending work, drive compatible-version backends across ordered
-    /// packet number spaces, then poll output.
-    /// Process pending work, drive compatible-version backends across ordered
-    /// packet number spaces, then poll explicit output.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos),
-        };
-    }
 
-    /// Process pending work, drive compatible-version close path, then poll explicit output.
-    ///
-    /// Peer Version Information errors return before output polling. Successful
-    /// ticks preserve per-connection installed-key output options after pending
-    /// work and RFC 9368-compatible close-propagating backend progress.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos),
-        };
-    }
 
-    /// Process pending work, drive compatible-version close path, then drain output.
-    /// Process pending work, drive compatible-version close path, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagramWithInstalledKeyOptions()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagramsWithInstalledKeyOptions(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionInstalledKeyPollView,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        const pending_work = try self.processPendingWorkAcrossConnections(
-            pending_connections,
-            now_nanos,
-        );
-        return .{
-            .pending_work = pending_work,
-            .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(&.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, now_nanos, out),
-        };
-    }
+
+
+
+
+
+
+
     fn pendingWorkSweepFromSingle(pending_work: EndpointPendingWorkResult) EndpointPendingWorkSweepResult {
         return .{
             .idle_retired_count = if (pending_work.idle_retired != null) 1 else 0,
