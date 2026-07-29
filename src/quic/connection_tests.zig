@@ -6555,14 +6555,7 @@ test "EndpointConnectionLifecycle cross-connection pending-work cross-space comp
         .connection = &conn,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        &pending_connections,
-        recovery_before.deadline_nanos,
-        &spaces,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, recovery_before.deadline_nanos, &spaces, &drive_views, .{ .compatible_version = true }, &compatibilities, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 1), result.backend.backend.connections_driven);
     try std.testing.expectEqual(peer_params.len, result.backend.backend.progress.peer_transport_parameters_bytes);
@@ -7694,14 +7687,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step polls PTO outpu
         .connection = &client,
         .destination_connection_id = &server_dcid,
     }};
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
-        &pending_connections,
-        deadline.deadline_nanos,
-        .application,
-        &[_]EndpointCryptoBackendDriveView{},
-        &poll_views,
-        .application,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoPoll(&pending_connections, deadline.deadline_nanos, &.{.application}, &[_]EndpointCryptoBackendDriveView{}, .{}, &.{}, &poll_views, .application);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.recovery_serviced_count);
@@ -8276,13 +8262,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step selects next de
         .{ .connection_id = 192, .connection = &backend_connection },
     };
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        &pending_connections,
-        idle_deadline,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, idle_deadline, &.{.handshake}, &drive_views, .{}, &.{}, &deadline_connections);
 
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -8377,13 +8357,7 @@ test "EndpointConnectionLifecycle pending-work cross-space backend loop step sel
         .{ .connection_id = 302, .connection = &backend_connection },
     };
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-        &pending_connections,
-        recovery_before.deadline_nanos,
-        &backend_spaces,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, recovery_before.deadline_nanos, &backend_spaces, &drive_views, .{}, &.{}, &deadline_connections);
 
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -8470,13 +8444,7 @@ test "EndpointConnectionLifecycle pending-work cross-space close backend loop re
         .connection = &connection,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
-        &pending_connections,
-        10,
-        &backend_spaces,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, 10, &backend_spaces, &drive_views, .{ .close_on_error = true }, &.{}, &deadline_connections);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.recovery_serviced_count);
     try std.testing.expectEqual(@as(usize, 0), result.backend.backend.connections_driven);
     try std.testing.expect(result.backend.next_deadline == null);
@@ -8552,13 +8520,7 @@ test "EndpointConnectionLifecycle pending-work close backend loop step selects n
         .{ .connection_id = 194, .connection = &backend_connection },
     };
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        &pending_connections,
-        idle_deadline,
-        .handshake,
-        &drive_views,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, idle_deadline, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &deadline_connections);
 
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -8914,14 +8876,7 @@ test "EndpointConnectionLifecycle pending-work compatible backend loop step sele
         .{ .connection_id = 196, .connection = &backend_connection },
     };
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        &pending_connections,
-        idle_deadline,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, idle_deadline, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &deadline_connections);
 
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -9041,14 +8996,7 @@ test "EndpointConnectionLifecycle pending-work compatible close backend loop ste
         .{ .connection_id = 198, .connection = &backend_connection },
     };
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        &pending_connections,
-        idle_deadline,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &deadline_connections,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDeadline(&pending_connections, idle_deadline, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &compatibilities, &deadline_connections);
 
     try std.testing.expectEqual(@as(usize, 1), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
@@ -9149,15 +9097,7 @@ test "EndpointConnectionLifecycle pending-work backend loop step drains queued o
     };
     var out: [2]EndpointPolledDatagramResult = undefined;
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
-        &pending_connections,
-        10,
-        .handshake,
-        &drive_views,
-        &poll_views,
-        .application,
-        &out,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoDrain(&pending_connections, 10, &.{.handshake}, &drive_views, .{}, &.{}, &poll_views, .application, &out);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.recovery_serviced_count);
@@ -10739,14 +10679,7 @@ test "EndpointConnectionLifecycle pending-work close-propagating backend stops b
 
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-            &pending_connections,
-            10,
-            .handshake,
-            &drive_views,
-            &[_]EndpointConnectionPollView{},
-            .handshake,
-        ),
+        lifecycle.processPendingWorkStepWithCryptoPoll(&pending_connections, 10, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &[_]EndpointConnectionPollView{}, .handshake),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -10828,15 +10761,7 @@ test "EndpointConnectionLifecycle pending-work close-propagating backend stops b
 
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            &pending_connections,
-            10,
-            .handshake,
-            &drive_views,
-            &poll_views,
-            .application,
-            &out,
-        ),
+        lifecycle.processPendingWorkStepWithCryptoDrain(&pending_connections, 10, &.{.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, .application, &out),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);
@@ -10916,15 +10841,7 @@ test "EndpointConnectionLifecycle pending-work compatible-version backend applie
         .scratch = &scratch,
     }};
 
-    const result = try lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
-        &pending_connections,
-        10,
-        .handshake,
-        &drive_views,
-        &compatibilities,
-        &[_]EndpointConnectionPollView{},
-        .handshake,
-    );
+    const result = try lifecycle.processPendingWorkStepWithCryptoPoll(&pending_connections, 10, &.{.handshake}, &drive_views, .{ .compatible_version = true }, &compatibilities, &[_]EndpointConnectionPollView{}, .handshake);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.idle_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.close_retired_count);
     try std.testing.expectEqual(@as(usize, 0), result.pending_work.recovery_serviced_count);
@@ -11620,15 +11537,7 @@ test "EndpointConnectionLifecycle pending-work compatible-version close path sto
 
     try std.testing.expectError(
         error.InvalidPacket,
-        lifecycle.processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-            &pending_connections,
-            10,
-            .handshake,
-            &drive_views,
-            &[_]VersionCompatibility{},
-            &[_]EndpointConnectionPollView{},
-            .handshake,
-        ),
+        lifecycle.processPendingWorkStepWithCryptoPoll(&pending_connections, 10, &.{.handshake}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, &[_]VersionCompatibility{}, &[_]EndpointConnectionPollView{}, .handshake),
     );
     try std.testing.expect(backend.peer_sent);
     try std.testing.expect(!backend.output_pulled);

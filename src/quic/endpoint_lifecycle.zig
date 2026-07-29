@@ -8042,98 +8042,9 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Process pending work, drive crypto backends, then select the next deadline.
-    ///
-    /// This is the no-output timer/backend planning step for socket loops.
-    /// Pending idle/close/recovery work runs first, backend progress refreshes
-    /// endpoint recovery scheduling, and the final deadline selection sees the
-    /// updated caller-owned connection state without polling datagrams.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, &.{backend_space}, drive_views, .{}, &.{}, deadline_connections);
-    
-    }
 
-    /// Process pending work, drive close-propagating backends, then select a deadline.
-    ///
-    /// Peer transport-parameter errors queue CONNECTION_CLOSE and return before
-    /// deadline selection. Successful backend progress uses the same no-output
-    /// wakeup planning contract as the non-close-propagating path.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, deadline_connections);
-    
-    }
 
-    /// Process pending work, drive crypto backends across ordered packet number
-    /// spaces, then select the next endpoint-visible deadline.
-    ///
-    /// This is the cross-space form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndSelectNextDeadline()`.
-    /// It lets no-new-datagram socket-loop ticks service pending timers and
-    /// then pull TLS output from each ordered packet number space before the
-    /// next wakeup is selected.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, backend_spaces, drive_views, .{}, &.{}, deadline_connections);
-    
-    }
 
-    /// Process pending work, drive close-propagating crypto backends across
-    /// ordered packet number spaces, then select the next endpoint-visible
-    /// deadline.
-    ///
-    /// Peer transport-parameter errors queue CONNECTION_CLOSE and return before
-    /// deadline selection. Successful backend progress uses the same
-    /// cross-space no-output wakeup planning contract as the strict path.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, backend_spaces, drive_views, .{ .close_on_error = true }, &.{}, deadline_connections);
-    
-    }
-    /// Process pending work, drive crypto backends, then poll installed-key output.
-    ///
-    /// This is the no-new-datagram socket-loop step: timers and close/idle
-    /// cleanup run first, then TLS backend progress is driven, and finally the
-    /// first installed-key datagram is polled across caller-owned connections.
-    /// The lifecycle owns ordering and timer mirroring; callers still own
-    /// connection/backend storage and output fairness through the view slices.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        return self.processPendingWorkStepWithCryptoPoll(pending_connections, now_nanos, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space);
-    
-    }
 
     /// Process pending work, drive crypto backends, then poll explicit output.
     ///
@@ -8188,24 +8099,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Process pending work, drive crypto backends, then drain installed-key output.
-    ///
-    /// This is the bounded-output form for no-new-datagram socket-loop ticks.
-    /// Pending work runs before backend progress; the caller-owned output slice
-    /// bounds the send work produced by backend or recovery state.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        return self.processPendingWorkStepWithCryptoDrain(pending_connections, now_nanos, &.{backend_space}, drive_views, .{}, &.{}, poll_views, poll_space, out);
-    
-    }
 
     /// Process pending work, drive crypto backends, then drain explicit output.
     ///
@@ -8261,23 +8154,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-    /// Process pending work, drive close-propagating backends, then poll output.
-    ///
-    /// This is the timer/flush tick form for socket loops that need peer
-    /// transport-parameter errors to queue CONNECTION_CLOSE and stop before
-    /// installed-key output polling.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        return self.processPendingWorkStepWithCryptoPoll(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, poll_space);
-    
-    }
 
     /// Process pending work, drive close-propagating backends, then poll explicit output.
     ///
@@ -8300,22 +8176,6 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos),
         };
-    }
-    /// Process pending work, drive close-propagating backends, then drain output.
-    ///
-    /// Backend peer transport-parameter errors return before output draining.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramDrainResult {
-        return self.processPendingWorkStepWithCryptoDrain(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, poll_space, out);
-    
     }
 
     /// Process pending work, drive close-propagating backends, then drain explicit output.
@@ -8340,61 +8200,8 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(&.{backend_space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, out),
         };
     }
-    /// Process pending work, drive compatible-version backends, then select a deadline.
-    ///
-    /// This is the no-output RFC 9368-compatible timer/backend planning step.
-    /// It applies pending endpoint work first, lets backend progress apply
-    /// compatible Version Information, and selects the next deadline from the
-    /// updated caller-owned connection map without polling output.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, deadline_connections);
-    
-    }
 
-    /// Process pending work, drive compatible-version backends across ordered
-    /// packet number spaces, then select the next deadline.
-    ///
-    /// This is the cross-space form of
-    /// `processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndSelectNextDeadline()`.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsAcrossSpacesWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities, deadline_connections);
-    
-    }
 
-    /// Process pending work, drive compatible-version backends, then poll output.
-    ///
-    /// This is the no-new-datagram socket-loop step for RFC 9368-compatible
-    /// server handshakes where backend progress may authenticate Version
-    /// Information and make queued output sendable.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        return self.processPendingWorkStepWithCryptoPoll(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, poll_space);
-    
-    }
 
     /// Process pending work, drive compatible-version backends, then poll explicit output.
     ///
@@ -8466,41 +8273,6 @@ pub const EndpointConnectionLifecycle = struct {
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(backend_spaces, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos),
         };
-    }
-    /// Process pending work, drive compatible-version close path, then select a deadline.
-    ///
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return before
-    /// deadline selection. Successful compatible-version backend progress uses
-    /// the same no-output wakeup planning contract as the non-close path.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointPendingWorkCryptoBackendNextDeadlineResult {
-        return self.processPendingWorkStepWithCryptoDeadline(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, deadline_connections);
-    
-    }
-    /// Process pending work, drive compatible-version close path, then poll output.
-    ///
-    /// Peer Version Information errors queue CONNECTION_CLOSE and return before
-    /// output polling, while successful compatible-version backend progress uses
-    /// the normal installed-key datagram poll step.
-    pub fn processPendingWorkAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        pending_connections: []const EndpointConnectionReceiveView,
-        now_nanos: i64,
-        backend_space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        poll_views: []const EndpointConnectionPollView,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-    ) Error!EndpointPendingWorkCryptoBackendDatagramResult {
-        return self.processPendingWorkStepWithCryptoPoll(pending_connections, now_nanos, &.{backend_space}, drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, poll_views, poll_space);
-    
     }
 
     /// Process pending work, drive compatible-version close path, then poll explicit output.
