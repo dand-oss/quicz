@@ -80,7 +80,7 @@ fn main() {
                     Ok((read, fin)) => {
                         if read > 0 {
                             println!("request: {:?}", String::from_utf8_lossy(&sbuf[..read]));
-                            let _ = conn.stream_send(sid, b"Hello from quiche!", true);
+                            let _ = conn.stream_send(sid, &sbuf[..read], true);
                         }
                         if fin {
                             break;
