@@ -45592,7 +45592,7 @@ test "EndpointConnectionLifecycle drives compatible-version cross-space close sw
             .connection_id = 169,
             .connection = &single,
         }};
-    const single_result = try lifecycle.driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndSelectNextDeadline(&spaces, &_w508_drive_views, &compatibilities, &_w508_deadline_connections,);
+    const single_result = try lifecycle.driveCryptoBackendStep(&spaces, &_w508_drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, &compatibilities, &_w508_deadline_connections);
     try std.testing.expect(single_backend.peer_sent);
     try std.testing.expect(!single_backend.output_pulled);
     try std.testing.expectEqual(ConnectionState.closing, single.connectionState());

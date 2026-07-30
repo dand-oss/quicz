@@ -5239,17 +5239,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-    /// Drive compatible-version close-propagating backends across ordered
-    /// packet number spaces, then select the next deadline.
-    pub fn driveCryptoBackendsAcrossSpacesWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        spaces: []const PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        compatibilities: []const VersionCompatibility,
-        deadline_connections: []const EndpointConnectionView,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        return self.driveCryptoBackendStep(spaces, drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, deadline_connections);
-    }
 
 
 
