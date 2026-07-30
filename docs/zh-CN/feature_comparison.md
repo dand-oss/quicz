@@ -83,23 +83,29 @@
 
 ## 性能对比
 
-测试条件：loopback UDP，单流上传，ReleaseFast 构建。
+测试条件：loopback UDP，单流上传，ReleaseFast 构建，ns 精度计时。
 
 | 实现 | 语言 | 吞吐量 | 平台 | 备注 |
 | --- | --- | --- | --- | --- |
-| msquic | C | 1.5-2.5 GB/s | Linux | XDP/GSO，内核旁路 |
-| **quicz** | **Zig** | **~1.6-2.3 GB/s** | **macOS** | **线程化 std.Io，CUBIC，ns pacer，无 GSO** |
-| s2n-quic | Rust | ~800 MB/s | Linux | GSO/GRO |
-| quic-go | Go | ~400-600 MB/s | Linux | GSO |
-| quiche | Rust | ~300-500 MB/s | Linux | — |
-| quinn | Rust | ~300-500 MB/s | Linux | tokio async |
+| msquic | C | ~7-8 Gbps | Windows, XDP | secnetperf dashboard |
+| msquic | C | ~3 Gbps | Linux, 无 XDP | Aalto 2025 thesis |
+| msquic | C | ~1 Gbps | macOS, loopback | secnetperf |
+| **quicz** | **Zig** | **~53 MB/s (0.4 Gbps)** | **macOS, loopback** | **std.Io 线程化，CUBIC，无 GSO** |
+| quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
+| quic-go | Go | ~4 Gbps | Linux, GSO, 多流 | KIT 2025 |
+| s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
+| quiche | Rust | ~300-500 MB/s | Linux, 无 GSO | TQUIC benchmark |
+| quinn | Rust | ~300-500 MB/s | Linux, tokio | KIT 2025 / ETH thesis |
+| TQUIC | Rust | ~1-2 Gbps | Linux, GSO | TQUIC benchmark |
+| lsquic | C | ~2-4 Gbps | Linux, GSO | KIT 2025 |
+| picoquic | C | ~1-2 Gbps | Linux | KIT 2025 |
 
 说明：
-- quicz 在 macOS loopback（无 GSO/XDP）下达到 1.94 GB/s，超过 msquic 下限（1.5 GB/s）。
-- msquic 的 2.5 GB/s 依赖 Linux XDP 内核旁路 + UDP_SEGMENT (GSO)，macOS 无此能力。
-- 在 Linux + GSO 条件下，quicz 预期可进一步提升（sendmmsg + UDP_SEGMENT）。
-- 测试方法：16 MB 单流上传，client/server 分线程，CUBIC 拥塞控制，cwnd 增长至 2.3 MB。
-- 运行：`zig build run-quic-bench`
+- quicz 当前 ~53 MB/s，瓶颈在每包处理路径开销（std.Io 事件循环 + 无 GSO 批量发送）。
+- 其他实现的高吞吐依赖 Linux GSO/GRO（3-10x 提升）或 XDP 内核旁路。
+- macOS 不支持 GSO/XDP，msquic 在 macOS loopback 下约 1 Gbps。
+- 优化路径：每包处理优化（2-5x）→ sendmmsg 批量发送（2-3x）→ Linux GSO（3-10x）。
+- 详细对比见 [benchmark.md](benchmark.md)。
 
 ## 生产环境调优
 

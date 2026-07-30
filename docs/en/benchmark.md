@@ -133,7 +133,6 @@ zig build run-quic-bench
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
 Benchmark uses `Duration(0)` non-blocking receive; `nanoTime()` fixed to true nanosecond precision.
-Historical data (~2 GB/s) was measured when nanoTime used mach ticks as ns (RTT underestimated 41.67x).
 Current throughput bottleneck is per-packet processing overhead; QUIC packet path optimization needed.
 
 ## References
