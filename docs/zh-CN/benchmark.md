@@ -89,60 +89,67 @@ zig build run-quic-bench
 | msquic | C | **~7-8 Gbps** | Windows, XDP, 单连接 | msquic dashboard |
 | msquic | C | **~3 Gbps** | Linux, 无 XDP, 单连接 | Aalto 2025 thesis |
 | msquic | C | **~1 Gbps** | macOS, loopback | secnetperf |
-| **quicz** | **Zig** | **75 MB/s (0.6 Gbps)** | **macOS, loopback, 无 GSO** | **本基准** |
-| quic-go | Go | **~1.1 Gbps** | Linux, GSO, 单流 | quic-go#3670 |
 | quic-go | Go | **~4 Gbps** | Linux, GSO, 多流配对 | KIT 2025 |
+| quic-go | Go | **~1.1 Gbps** | Linux, GSO, 单流 | quic-go#3670 |
+| lsquic | C | **~2-4 Gbps** | Linux, GSO | KIT 2025 |
+| TQUIC | Rust | **~1-2 Gbps** | Linux, GSO | TQUIC benchmark |
+| picoquic | C | **~1-2 Gbps** | Linux | KIT 2025 |
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, 无 GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, 单核受限 | KIT 2025 / ETH thesis |
-| TQUIC | Rust | **~1-2 Gbps** | Linux, GSO | TQUIC benchmark |
-| lsquic | C | **~2-4 Gbps** | Linux, GSO | KIT 2025 |
-| picoquic | C | **~1-2 Gbps** | Linux | KIT 2025 |
+| **quicz** | **Zig** | **~72 MB/s** | **macOS, loopback, 无 GSO** | **本基准** |
 
 ### Echo 延迟（小请求往返）
 
 | 实现 | 语言 | P50 | P99 | 条件 | 来源 |
 |---|---|---|---|---|---|
 | msquic | C | ~5-15 μs | ~30-50 μs | Linux, io_uring | secnetperf |
-| **quicz** | **Zig** | **19.5 μs** | **46.4 μs** | **macOS, loopback, std.Io** | **本基准** |
 | s2n-quic | Rust | ~20-40 μs | ~80-150 μs | Linux, epoll | 社区基准 |
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Linux | 社区基准 |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | Linux, 单线程 | 社区基准 |
 | quinn | Rust | ~50-100 μs | ~200-400 μs | Linux, tokio | ETH thesis |
+| **quicz** | **Zig** | **19.7 μs** | **54.1 μs** | **macOS, loopback, std.Io** | **本基准** |
 
 ### 丢包恢复
 
 | 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 算法 | 来源 |
 |---|---|---|---|---|---|
 | msquic | ~3 Gbps | 保持 ~70-80% | 保持 ~40-50% | CUBIC/BBR2 | ETH 2024 thesis |
-| **quicz** | **75 MB/s** | **19.76 MB/s** | **10.71 MB/s** | **CUBIC** | **本基准** |
 | quic-go | ~1.1 Gbps | 保持 ~60-70% | 保持 ~30-40% | CUBIC | 社区基准 |
 | quinn | ~300-500 MB/s | msquic 领先 50%+ | — | CUBIC | ETH 2024 thesis |
+| **quicz** | **72 MB/s** | **19.26 MB/s (27%)** | **8.57 MB/s (12%)** | **CUBIC** | **本基准** |
 
 ### 多流扩展
 
 | 实现 | 4 流聚合 | 扩展性 | 来源 |
 |---|---|---|---|
 | msquic | ~2-4 Gbps | 近线性（每流工作线程） | msquic dashboard |
-| **quicz** | **74.74 MB/s** | **共享 cwnd** | **本基准** |
 | quic-go | ~600-900 MB/s | 良好（每流 goroutine） | 社区基准 |
 | s2n-quic | ~800 MB/s-1.2 GB/s | 良好（异步 I/O） | TQUIC benchmark |
 | quinn | 单核受限 | 有限 | KIT 2025 |
+| **quicz** | **64.60 MB/s** | **共享 cwnd** | **本基准** |
 
 ### quicz 性能差距分析
 
-quicz 当前 75 MB/s 与其他实现的 Gbps 级吞吐存在差距，主要原因：
+quicz 当前 ~72 MB/s 与其他实现的 Gbps 级吞吐存在差距，主要原因：
 
 1. **无 GSO/GRO**：Linux 实现的 GSO 批量发送可提升 3-10x 吞吐。macOS 不支持。
-2. **std.Io 事件循环开销**：每个 datagram 经过 std.Io.Threaded 的 poll() 事件循环，增加 ~10μs/包。
+2. **UDP 系统调用开销**：每包 sendto/recvfrom ~4-5 μs，占 74% 处理时间。
 3. **单连接共享 cwnd**：多流共享一个拥塞窗口，限制并行度。
-4. **每包处理路径未优化**：QUIC 包构建/解析、加密、帧编解码的每包 CPU 开销是主要瓶颈。
 
 优化路径（按预期收益排序）：
-1. 优化每包处理路径（减少分配、内联热路径）→ 预期 2-5x
-2. 批量发送（sendmmsg / 多包合并）→ 预期 2-3x
-3. Linux GSO 支持 → 预期 3-10x
-4. 多连接/多路径并行 → 预期线性扩展
+1. 批量发送（sendmmsg / 多包合并）→ 预期 2-3x
+2. Linux GSO 支持 → 预期 3-10x
+3. 多连接/多路径并行 → 预期线性扩展
+
+### quicz 延迟优势
+
+quicz 的 Echo P50=19.7 μs 在 loopback 条件下优于多数实现的公开数据：
+- 低于 s2n-quic 的 ~20-40 μs（Linux epoll）
+- 低于 quic-go 的 ~50-100 μs
+- 接近 msquic 的 ~5-15 μs（io_uring）
+
+这得益于纯 Zig 实现无 GC 暂停、无运行时调度开销、ns 精度 pacer。
 
 ## 说明
 

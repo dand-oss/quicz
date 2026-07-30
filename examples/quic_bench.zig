@@ -569,12 +569,18 @@ pub fn main() !void {
     // --- Comparison with other QUIC implementations ---
     std.debug.print("\n  --- Comparison (loopback, single stream) ---\n", .{});
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "Implementation", "Lang", "Throughput", "Notes" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "1.5-2.5 GB/s", "Linux XDP/GSO" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~53 MB/s", "macOS, ns RTT, CUBIC" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "~7-8 Gbps", "Windows XDP, secnetperf" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "~3 Gbps", "Linux, no XDP" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "~1 Gbps", "macOS loopback" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quic-go", "Go", "~4 Gbps", "Linux GSO, multi-stream" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quic-go", "Go", "~1.1 Gbps", "Linux GSO, single" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "lsquic", "C", "~2-4 Gbps", "Linux GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "TQUIC", "Rust", "~1-2 Gbps", "Linux GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "picoquic", "C", "~1-2 Gbps", "Linux" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "s2n-quic", "Rust", "~800 MB/s", "Linux GSO/GRO" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quic-go", "Go", "400-600 MB/s", "Linux GSO" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quinn", "Rust", "300-500 MB/s", "tokio async" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux, no GSO" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quinn", "Rust", "300-500 MB/s", "Linux tokio" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~72 MB/s", "macOS loopback, no GSO" });
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }

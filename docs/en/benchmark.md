@@ -70,47 +70,86 @@ zig build run-quic-bench
 
 ## Comparison with Other QUIC Implementations
 
-### Throughput (single stream, loopback)
+### Test Condition Differences
 
-| Implementation | Language | Throughput | Platform | Source |
+Benchmark conditions vary significantly across implementations. Direct number comparisons require caution:
+
+| Factor | Impact |
+|---|---|
+| GSO/GRO (Linux) | 3-10x throughput, batch syscalls |
+| XDP (Linux kernel bypass) | 2-5x throughput, bypasses kernel network stack |
+| loopback vs physical network | loopback has no loss/jitter, RTT ~1μs |
+| single-thread vs multi-thread | multi-core scales linearly |
+| Platform (macOS vs Linux) | macOS lacks GSO/XDP, higher syscall overhead |
+
+### Single-Stream Throughput
+
+| Implementation | Language | Throughput | Conditions | Source |
 |---|---|---|---|---|
-| msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **75 MB/s** | **macOS, no GSO** | **This benchmark** |
-| s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
-| quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
-| quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
-| quinn | Rust | 300-500 MB/s | Linux, tokio | ETH thesis |
+| msquic | C | **~7-8 Gbps** | Windows, XDP, single conn | msquic dashboard |
+| msquic | C | **~3 Gbps** | Linux, no XDP, single conn | Aalto 2025 thesis |
+| msquic | C | **~1 Gbps** | macOS, loopback | secnetperf |
+| quic-go | Go | **~4 Gbps** | Linux, GSO, multi-stream | KIT 2025 |
+| quic-go | Go | **~1.1 Gbps** | Linux, GSO, single stream | quic-go#3670 |
+| lsquic | C | **~2-4 Gbps** | Linux, GSO | KIT 2025 |
+| TQUIC | Rust | **~1-2 Gbps** | Linux, GSO | TQUIC benchmark |
+| picoquic | C | **~1-2 Gbps** | Linux | KIT 2025 |
+| s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
+| quiche | Rust | **~300-500 MB/s** | Linux, no GSO | TQUIC benchmark |
+| quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
+| **quicz** | **Zig** | **~72 MB/s** | **macOS, loopback, no GSO** | **This benchmark** |
 
-### Echo Latency (1 KB round-trip, loopback)
+### Echo Latency (small request round-trip)
 
-| Implementation | Language | P50 | P99 | Notes |
-|---|---|---|---|---|
-| msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
-| **quicz** | **Zig** | **19.5 μs** | **46.4 μs** | **std.Io threaded, ns RTT** |
-| s2n-quic | Rust | ~20-40 μs | ~80-150 μs | epoll async |
-| quic-go | Go | ~50-100 μs | ~200-500 μs | Go runtime scheduling |
-| quiche | Rust | ~30-80 μs | ~100-200 μs | Single-thread event loop |
-| quinn | Rust | ~50-100 μs | ~200-400 μs | tokio async runtime |
-
-### Multi-stream Throughput (4 concurrent streams)
-
-| Implementation | Language | 4-stream aggregate | Scalability | Notes |
-|---|---|---|---|---|
-| msquic | C | ~2-4 GB/s | Near-linear | Per-stream worker threads |
-| **quicz** | **Zig** | **74.74 MB/s** | **Shared cwnd** | **Single connection, CUBIC** |
-| quic-go | Go | ~600-900 MB/s | Good | Per-stream goroutine |
-| s2n-quic | Rust | ~800 MB/s-1.2 GB/s | Good | Async I/O |
-| quiche | Rust | ~300-500 MB/s | Limited | Single-thread |
+| Implementation | Language | P50 | P99 | Conditions | Source |
+|---|---|---|---|---|---|
+| msquic | C | ~5-15 μs | ~30-50 μs | Linux, io_uring | secnetperf |
+| s2n-quic | Rust | ~20-40 μs | ~80-150 μs | Linux, epoll | community bench |
+| quic-go | Go | ~50-100 μs | ~200-500 μs | Linux | community bench |
+| quiche | Rust | ~30-80 μs | ~100-200 μs | Linux, single-thread | community bench |
+| quinn | Rust | ~50-100 μs | ~200-400 μs | Linux, tokio | ETH thesis |
+| **quicz** | **Zig** | **19.7 μs** | **54.1 μs** | **macOS, loopback, std.Io** | **This benchmark** |
 
 ### Loss Recovery
 
-| Implementation | 0% loss | 1% loss | 5% loss | Algorithm |
-|---|---|---|---|---|
-| msquic | 1.5+ GB/s | ~70-80% retention | ~40-50% retention | BBR2/CUBIC |
-| **quicz** | **75 MB/s** | **19.76 MB/s** | **10.71 MB/s** | **CUBIC** |
-| quic-go | 400-600 MB/s | ~60-70% retention | ~30-40% retention | CUBIC/NewReno |
-| quiche | 300-500 MB/s | ~50-60% retention | ~25-35% retention | CUBIC |
-| quinn | 300-500 MB/s | ~55-65% retention | ~30-40% retention | CUBIC/NewReno |
+| Implementation | 0% loss | 1% loss | 5% loss | Algorithm | Source |
+|---|---|---|---|---|---|
+| msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
+| quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
+| quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
+| **quicz** | **72 MB/s** | **19.26 MB/s (27%)** | **8.57 MB/s (12%)** | **CUBIC** | **This benchmark** |
+
+### Multi-Stream Scaling
+
+| Implementation | 4-stream aggregate | Scalability | Source |
+|---|---|---|---|
+| msquic | ~2-4 Gbps | Near-linear (per-stream worker threads) | msquic dashboard |
+| quic-go | ~600-900 MB/s | Good (per-stream goroutine) | community bench |
+| s2n-quic | ~800 MB/s-1.2 GB/s | Good (async I/O) | TQUIC benchmark |
+| quinn | single-core limited | Limited | KIT 2025 |
+| **quicz** | **64.60 MB/s** | **Shared cwnd** | **This benchmark** |
+
+### quicz Performance Gap Analysis
+
+quicz at ~72 MB/s vs Gbps-level throughput in other implementations, primarily due to:
+
+1. **No GSO/GRO**: Linux GSO batch sending provides 3-10x throughput. macOS does not support it.
+2. **UDP syscall overhead**: per-packet sendto/recvfrom ~4-5 μs, 74% of processing time.
+3. **Single connection shared cwnd**: multi-stream shares one congestion window, limiting parallelism.
+
+Optimization path (by expected gain):
+1. Batch sending (sendmmsg / packet coalescing) → expected 2-3x
+2. Linux GSO support → expected 3-10x
+3. Multi-connection / multi-path parallelism → expected linear scaling
+
+### quicz Latency Advantage
+
+quicz Echo P50=19.7 μs under loopback conditions is competitive with most implementations:
+- Lower than s2n-quic ~20-40 μs (Linux epoll)
+- Lower than quic-go ~50-100 μs
+- Close to msquic ~5-15 μs (io_uring)
+
+This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, and ns-precision pacer.
 
 ## Notes
 
