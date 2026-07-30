@@ -800,8 +800,9 @@ pub fn unprotectShortPacketAes128(
     const ciphertext_end = datagram.len - aead_tag_len;
     if (payload_start > ciphertext_end) return error.InvalidPayloadLength;
 
-    const aad = try allocator.alloc(u8, payload_start);
-    defer allocator.free(aad);
+    // Stack buffer for header AAD: max 1 (flags) + 20 (dcid) + 4 (pn) = 25 bytes.
+    var aad_buf: [32]u8 = undefined;
+    const aad = aad_buf[0..payload_start];
     @memcpy(aad, datagram[0..payload_start]);
     try applyHeaderProtectionMask(.short, &aad[0], aad[pn_offset..payload_start], mask);
     std.debug.assert(aad[0] == first_byte);
