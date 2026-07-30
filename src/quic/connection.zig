@@ -5502,6 +5502,9 @@ pub const Connection = struct {
             const encoded_len = try addWireLen(ack_len, pingFrameWireLen());
             return try self.buildProtectedShortControlPacket(dcid, keys, key_phase, encoded_len, ack_to_send, true);
         }
+        if (self.pending_datagrams.items.len != 0) {
+            return try self.buildProtectedShortDatagramFramePacket(dcid, keys, key_phase, ack_to_send);
+        }
         self.dropResetClosedStreamFrames();
         if (self.send_queue.items.len != 0) {
             return try self.buildProtectedShortStreamPacket(dcid, keys, key_phase, ack_to_send);
@@ -6324,6 +6327,80 @@ pub const Connection = struct {
             .ack_eliciting = true,
             .clear_ack = ack_to_send != null,
             .consume_crypto = true,
+        };
+    }
+
+    /// Build one protected short packet carrying a DATAGRAM frame (RFC 9221).
+    ///
+    /// Dequeues the first pending DATAGRAM payload and encodes it alongside
+    /// an optional ACK frame. DATAGRAM frames are ack-eliciting but not
+    /// retransmitted on loss (unreliable by design).
+    fn buildProtectedShortDatagramFramePacket(
+        self: *Connection,
+        dcid: []const u8,
+        keys: protection.Aes128PacketProtectionKeys,
+        key_phase: bool,
+        ack_to_send: ?frame.AckFrame,
+    ) Error!BuiltProtectedShortPacket {
+        if (self.next_packet_number > max_quic_varint) return error.Internal;
+        if (self.pending_datagrams.items.len == 0) return error.Internal;
+
+        const packet_number = self.next_packet_number;
+        const packet_number_encoding = packet.encodePacketNumberForHeader(
+            packet_number,
+            self.largest_acknowledged,
+        ) catch return error.Internal;
+
+        const min_payload_len = if (packet_number_encoding.len >= 4) 0 else 4 - packet_number_encoding.len;
+        const dgram_data = self.pending_datagrams.items[0];
+        const ack_encoded_len = if (ack_to_send) |ack| try ackFrameWireLen(ack) else 0;
+        const datagram_frame_len = try wire_len.datagramFrameWireLen(dgram_data.len);
+        const encoded_frame_len = try addWireLen(ack_encoded_len, datagram_frame_len);
+        const plaintext_len = @max(encoded_frame_len, min_payload_len);
+
+        const empty_datagram_len = try protectedShortDatagramWireLen(dcid.len, packet_number_encoding.len, 0);
+        if (empty_datagram_len + plaintext_len > self.maxTxDatagramSize()) return error.BufferTooSmall;
+
+        const plaintext = self.allocator.alloc(u8, plaintext_len) catch return error.OutOfMemory;
+        defer self.allocator.free(plaintext);
+        @memset(plaintext, 0);
+
+        var plaintext_out = buffer.fixedWriter(plaintext);
+        if (ack_to_send) |ack| {
+            frame.encodeFrame(plaintext_out.writer(), .{ .ack = ack }) catch |err| switch (err) {
+                error.NoSpaceLeft => return error.BufferTooSmall,
+                else => return error.Internal,
+            };
+        }
+        frame.encodeFrame(plaintext_out.writer(), .{ .datagram = .{ .data = dgram_data } }) catch |err| switch (err) {
+            error.NoSpaceLeft => return error.BufferTooSmall,
+            else => return error.Internal,
+        };
+
+        const datagram = protection.protectShortPacketAes128(self.allocator, .{
+            .dcid = dcid,
+            .spin_bit = self.shortHeaderSpinBit(),
+            .key_phase = key_phase,
+            .packet_number = packet_number,
+        }, packet_number_encoding, keys, plaintext) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.NoSpaceLeft => return error.BufferTooSmall,
+            else => return error.InvalidPacket,
+        };
+        errdefer self.allocator.free(datagram);
+
+        if (datagram.len > self.maxTxDatagramSize()) return error.BufferTooSmall;
+
+        // Dequeue the DATAGRAM payload after successful encoding.
+        const owned = self.pending_datagrams.orderedRemove(0);
+        self.allocator.free(owned);
+
+        return .{
+            .packet_number = packet_number,
+            .datagram = datagram,
+            .ack_eliciting = true,
+            .clear_ack = ack_to_send != null,
+            .consume_ping = false,
         };
     }
 
