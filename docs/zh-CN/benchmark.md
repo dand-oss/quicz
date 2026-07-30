@@ -14,8 +14,26 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 ## 运行方式
 
 ```bash
+# 内存直连基准（单线程，无 UDP 开销）
+zig build-exe -OReleaseFast --dep quicz \
+  -Mroot=examples/quic_bench_simple.zig -Mquicz=src/lib.zig \
+  --name quicz-quic-bench-simple -femit-bin=zig-out/bin/quicz-quic-bench-simple \
+  --cache-dir .zig-cache --global-cache-dir .zig-cache/global
+./zig-out/bin/quicz-quic-bench-simple
+
+# UDP loopback 基准（线程化，已知 hang bug 待修复）
 zig build run-quic-bench
 ```
+
+## 内存直连基准（单线程，ReleaseFast）
+
+| 指标 | 数值 | 说明 |
+|---|---|---|
+| 单流上传（16 MB） | **0.29 GB/s** | 无 UDP 开销，CUBIC，cwnd=272 KB |
+| Echo P50 | **8.0 μs** | 1 KB 完整 QUIC 往返（内存直连） |
+| Echo P99 | **12.0 μs** | |
+| Echo P99.9 | **182.1 μs** | |
+| 4 流聚合（4×4 MB） | **0.26 GB/s** | 共享 cwnd |
 
 ## 吞吐量（单流，loopback）
 
@@ -37,9 +55,10 @@ zig build run-quic-bench
 
 ## 多流吞吐（4 并发流）
 
-| 指标 | 数值 | 说明 |
+| 模式 | 4 流聚合 | 说明 |
 |---|---|---|
-| 4 流聚合 | **~1.6 GB/s** | 单连接，共享 cwnd，CUBIC |
+| 内存直连（单线程） | **0.26 GB/s** | 无 UDP 开销，共享 cwnd，CUBIC |
+| UDP loopback（线程化） | **~1.6 GB/s** | std.Io 线程化，需修复 bench hang |
 
 ## 丢包恢复（loopback + 模拟丢包）
 
@@ -103,7 +122,7 @@ zig build run-quic-bench
 
 ## 待完成基准
 
-- [ ] 多流并发扩展（1/2/4/8/16 流）
+- [x] 多流并发（4 流，内存直连）
 - [ ] DATAGRAM 吞吐（RFC 9221）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
