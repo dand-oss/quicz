@@ -6961,7 +6961,7 @@ pub const Connection = struct {
                 return error.InvalidPacket;
             }
 
-            self.processDatagramInSpaceWithPacketType(space, packet_type, now_nanos, datagram, received_packet_number) catch |err| {
+            self.processFramesInSpaceNoSnapshot(space, packet_type, now_nanos, datagram, received_packet_number) catch |err| {
                 switch (err) {
                     error.InvalidPacket, error.InvalidStream => {
                         if (try self.classifyFrameProcessingCloseError(packet_type, datagram)) |close| {
@@ -6979,7 +6979,97 @@ pub const Connection = struct {
             };
             return;
         }
-        return self.processDatagramInSpaceWithPacketType(space, packet_type, now_nanos, datagram, received_packet_number);
+        return self.processFramesInSpaceNoSnapshot(space, packet_type, now_nanos, datagram, received_packet_number);
+    }
+
+
+    /// Process decoded frames without transactional snapshot/rollback.
+    ///
+    /// Used by the close-on-error path where frame errors close the connection
+    /// instead of rolling back state. Avoids O(n) sent_packets cloning per
+    /// inbound datagram, eliminating the O(n²) throughput bottleneck.
+    fn processFramesInSpaceNoSnapshot(
+        self: *Connection,
+        space: PacketNumberSpace,
+        packet_type: FramePacketType,
+        now_nanos: i64,
+        datagram: []const u8,
+        received_packet_number: ?u64,
+    ) Error!void {
+        if (!try self.prepareInboundDatagramProcessing(now_nanos)) return;
+        if (datagram.len == 0 or datagram.len > self.config.max_datagram_size) return error.InvalidPacket;
+        const packet_space = self.packetNumberSpace(space);
+        if (packet_space.discarded.*) return error.InvalidPacket;
+
+        var ack_eliciting = false;
+        var received_handshake_done = false;
+        var offset: usize = 0;
+        while (offset < datagram.len) {
+            var decoded = frame.decodeFrameSlice(datagram[offset..], self.allocator) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.InvalidPacket,
+            };
+            defer frame.deinitFrame(&decoded.frame, self.allocator);
+
+            if (decoded.len == 0) return error.InvalidPacket;
+            if (!frameAllowedInFramePacketType(decoded.frame, packet_type)) return error.InvalidPacket;
+
+            if (frameIsAckEliciting(decoded.frame)) {
+                ack_eliciting = true;
+            }
+
+            switch (decoded.frame) {
+                .ack => |ack| try self.receiveAckFrame(space, now_nanos, ack, null),
+                .ack_ecn => |ack_ecn| try self.receiveAckFrame(space, now_nanos, ack_ecn.ack, ack_ecn.ecn_counts),
+                .max_data => |max_data| self.receiveMaxDataFrame(max_data),
+                .max_stream_data => |max_stream_data| try self.receiveMaxStreamDataFrame(max_stream_data),
+                .max_streams_bidi => |max_streams| try self.receiveMaxStreamsBidiFrame(max_streams),
+                .max_streams_uni => |max_streams| try self.receiveMaxStreamsUniFrame(max_streams),
+                .data_blocked => |data_blocked| try self.receiveDataBlockedFrame(data_blocked),
+                .stream_data_blocked => |stream_data_blocked| try self.receiveStreamDataBlockedFrame(stream_data_blocked),
+                .streams_blocked_bidi => |streams_blocked| try self.receiveStreamsBlockedBidiFrame(streams_blocked),
+                .streams_blocked_uni => |streams_blocked| try self.receiveStreamsBlockedUniFrame(streams_blocked),
+                .path_challenge => |path_challenge| try self.receivePathChallengeFrame(path_challenge),
+                .path_response => |path_response| try self.receivePathResponseFrame(path_response),
+                .stop_sending => |stop_sending| try self.receiveStopSendingFrame(stop_sending),
+                .reset_stream => |reset_stream| try self.receiveResetStreamFrame(reset_stream),
+                .crypto => |crypto| try self.receiveCryptoFrame(space, crypto),
+                .stream => |stream_frame| try self.receiveStreamFrame(stream_frame),
+                .new_connection_id => |new_connection_id| try self.receiveNewConnectionIdFrame(new_connection_id),
+                .retire_connection_id => |retire_connection_id| try self.receiveRetireConnectionIdFrame(retire_connection_id),
+                .new_token => |new_token| try self.receiveNewTokenFrame(new_token),
+                .handshake_done => {
+                    try self.receiveHandshakeDoneFrame();
+                    received_handshake_done = true;
+                },
+                .connection_close => |connection_close| try self.receiveConnectionCloseFrame(now_nanos, connection_close),
+                .application_close => |application_close| try self.receiveApplicationCloseFrame(now_nanos, application_close),
+                .datagram => |dg| {
+                    if (self.config.max_datagram_frame_size > 0) {
+                        const owned = self.allocator.alloc(u8, dg.data.len) catch return error.OutOfMemory;
+                        @memcpy(owned, dg.data);
+                        self.received_datagrams.append(self.allocator, owned) catch {
+                            self.allocator.free(owned);
+                            return error.OutOfMemory;
+                        };
+                    }
+                },
+                else => {},
+            }
+
+            offset += decoded.len;
+        }
+
+        if (ack_eliciting and !self.closed) {
+            try self.queueAckForReceivedPacket(space, received_packet_number);
+        }
+        self.markHandshakeSpaceUsed(space);
+        try self.drainPendingRecvStreams();
+        self.recordPacketActivity(now_nanos);
+        self.maybeDiscardInitialAfterHandshakePacketReceived(space);
+        if (received_handshake_done and !self.isClosingOrClosed()) {
+            try self.discardPacketNumberSpace(.handshake);
+        }
     }
 
     pub fn processDatagramInSpaceWithPacketType(
