@@ -4612,27 +4612,6 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space);
     }
-    /// Drive close-propagating backends, then drain explicit output.
-    ///
-    /// This is the bounded-output form of
-    /// `driveCryptoBackendsInSpaceOrCloseAndPollDatagramWithInstalledKeyOptions()`.
-/// Drive close-propagating backends, then drain installed-key output.
-    ///
-    /// Peer transport-parameter errors return before output draining. Successful
-    /// backend progress uses the same bounded drain contract as
-    /// `drainDatagramsAcrossConnections()`.
-    pub fn driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        space: PacketNumberSpace,
-        drive_views: []const EndpointCryptoBackendDriveView,
-        poll_views: []const EndpointConnectionPollView,
-        now_nanos: i64,
-        poll_space: EndpointInstalledKeyDatagramSpace,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space, out);
-    
-    }
     /// Drive a crypto backend and queue transport close on peer-parameter errors.
     ///
     /// This is the endpoint lifecycle wrapper for
@@ -4761,35 +4740,6 @@ pub const EndpointConnectionLifecycle = struct {
         try self.armRecoveryTimerFromConnection(connection_id, connection);
         return progress;
     }
-
-    /// Drive a compatible-version backend across ordered packet number spaces
-    /// and queue transport close on negotiation errors.
-    ///
-    /// This wraps `Connection.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrClose()`
-    /// and refreshes endpoint recovery scheduling after both success and
-    /// close-propagating peer Version Information errors.
-    pub fn driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndArmConnection(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        spaces: []const PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) Error!CryptoBackendProgress {
-        const progress = connection.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrClose(
-            spaces,
-            backend,
-            scratch,
-            compatibilities,
-        ) catch |err| {
-            self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
-            return err;
-        };
-        try self.armRecoveryTimerFromConnection(connection_id, connection);
-        return progress;
-    }
-
     /// Drive compatible-version crypto backends with close propagation.
     ///
     /// This is the sweep form of
@@ -4831,14 +4781,16 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointCryptoBackendDriveSweepResult {
         var result = EndpointCryptoBackendDriveSweepResult{};
         for (views) |view| {
-            const progress = try self.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrCloseAndArmConnection(
-                view.connection_id,
-                view.connection,
+            const progress = view.connection.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrClose(
                 spaces,
                 view.backend,
                 view.scratch,
                 compatibilities,
-            );
+            ) catch |err| {
+                self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
+                return err;
+            };
+            try self.armRecoveryTimerFromConnection(view.connection_id, view.connection);
             accumulateCryptoBackendProgress(&result, progress);
         }
         return result;
@@ -10957,14 +10909,7 @@ pub const EndpointConnectionLifecycle = struct {
             .destination_connection_id = dcid,
             .source_connection_id = scid,
         }};
-        return self.driveCryptoBackendsInSpaceOrCloseAndDrainDatagrams(
-            .handshake,
-            &drive_views,
-            &poll_views,
-            now_nanos,
-            .handshake,
-            out,
-        ) catch |err| {
+        return self.driveCryptoBackendStepWithDrain(&.{PacketNumberSpace.handshake}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, .handshake, out) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             return .{
                 .backend = .{},
