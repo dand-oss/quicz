@@ -9654,17 +9654,26 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
+        try self.processProtectedZeroRttDatagramOrClose(
+            connection_id,
+            connection,
+            now_nanos,
+            receive_keys,
+            datagram,
+        );
+        const polled_output = try self.pollProtectedShortDatagram(
+            connection_id,
+            connection,
+            now_nanos,
+            dcid,
+            send_keys,
+        );
         return .{
             .route = route,
-            .datagram = try self.processProtectedZeroRttDatagramOrCloseAndPollShortDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                datagram,
-                dcid,
-                send_keys,
-            ),
+            .datagram = if (polled_output) |bytes| .{
+                .connection_id = connection_id,
+                .datagram = bytes,
+            } else null,
         };
     }
 
@@ -9686,18 +9695,37 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramDrainResult {
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
+        try self.processProtectedZeroRttDatagramOrClose(
+            connection_id,
+            connection,
+            now_nanos,
+            receive_keys,
+            datagram,
+        );
+        const drain_result = blk: {
+            var result = EndpointDatagramDrainResult{};
+            while (result.datagrams_written < out.len) {
+                const output = self.pollProtectedShortDatagram(
+                    connection_id,
+                    connection,
+                    now_nanos,
+                    dcid,
+                    send_keys,
+                ) catch |err| {
+                    result.first_error = err;
+                    break :blk result;
+                };
+                out[result.datagrams_written] = .{
+                    .connection_id = connection_id,
+                    .datagram = output orelse break :blk result,
+                };
+                result.datagrams_written += 1;
+            }
+            break :blk result;
+        };
         return .{
             .route = route,
-            .drain = try self.processProtectedZeroRttDatagramOrCloseAndDrainShortDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                receive_keys,
-                datagram,
-                dcid,
-                send_keys,
-                out,
-            ),
+            .drain = drain_result,
         };
     }
 
