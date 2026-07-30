@@ -39,17 +39,17 @@ zig build run-quic-bench
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（16 MB） | **~1.6-2.3 GB/s** | 线程化 client/server，CUBIC，ns RTT |
+| 流上传（16 MB） | **~53 MB/s** | 线程化 client/server，CUBIC，ns RTT |
 | 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
-| 总耗时 | ~7-10 ms | cwnd 增长至 2.3 MB |
+| 总耗时 | ~300 ms | cwnd 增长至 1.6 MB |
 
 ## Echo 延迟（1 KB 往返，loopback）
 
 | 百分位 | 延迟 | 说明 |
 |---|---|---|
-| P50 | **17.6 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
-| P99 | **46.1 μs** | |
-| P99.9 | **65.0 μs** | |
+| P50 | **766 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
+| P99 | **5104 μs** | |
+| P99.9 | **33382 μs** | |
 
 测试：5000 次迭代，macOS loopback，ReleaseFast。
 
@@ -58,15 +58,15 @@ zig build run-quic-bench
 | 模式 | 4 流聚合 | 说明 |
 |---|---|---|
 | 内存直连（单线程） | **0.26 GB/s** | 无 UDP 开销，共享 cwnd，CUBIC |
-| UDP loopback（线程化） | **~1.6 GB/s** | std.Io 线程化，需修复 bench hang |
+| UDP loopback（线程化） | **~53 MB/s** | std.Io 线程化，Duration(0) 非阻塞 |
 
 ## 丢包恢复（loopback + 模拟丢包）
 
 | 丢包率 | 吞吐量 | 保持率 | 说明 |
 |---|---|---|---|
-| 0% | ~2.0 GB/s | 100% | 基线 |
-| 1% | ~1.0+ GB/s | 85% | 超过 msquic (70-80%) |
-| 5% | ~350-410 MB/s | 17-20% | 待优化（目标 30-40%） |
+| 0% | ~53 MB/s | 100% | 基线 |
+| 1% | ~5.6 MB/s | — | loopback |
+| 5% | ~3.0 MB/s | — | loopback |
 
 ## 与其他 QUIC 实现对比
 
@@ -75,7 +75,7 @@ zig build run-quic-bench
 | 实现 | 语言 | 吞吐量 | 平台 | 来源 |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.6-2.3 GB/s** | **macOS，无 GSO** | **本基准** |
+| **quicz** | **Zig** | **~53 MB/s** | **macOS，无 GSO** | **本基准** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
@@ -86,7 +86,7 @@ zig build run-quic-bench
 | 实现 | 语言 | P50 | P99 | 说明 |
 |---|---|---|---|---|
 | msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
-| **quicz** | **Zig** | **~18 μs** | **~46 μs** | **std.Io 线程化，ns RTT** |
+| **quicz** | **Zig** | **~766 μs** | **~5104 μs** | **std.Io 线程化，ns RTT** |
 | s2n-quic | Rust | ~20-40 μs | ~80-150 μs | epoll 异步 |
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Go 运行时调度开销 |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | 单线程事件循环 |
@@ -97,7 +97,7 @@ zig build run-quic-bench
 | 实现 | 语言 | 4 流聚合 | 扩展性 | 说明 |
 |---|---|---|---|---|
 | msquic | C | ~2-4 GB/s | 近线性 | 每流工作线程 |
-| **quicz** | **Zig** | **~1.6 GB/s** | **共享 cwnd** | **单连接，CUBIC，ns RTT** |
+| **quicz** | **Zig** | **~53 MB/s** | **共享 cwnd** | **单连接，CUBIC，ns RTT** |
 | quic-go | Go | ~600-900 MB/s | 良好 | 每流 goroutine |
 | s2n-quic | Rust | ~800 MB/s-1.2 GB/s | 良好 | 异步 I/O |
 | quiche | Rust | ~300-500 MB/s | 有限 | 单线程 |
@@ -107,7 +107,7 @@ zig build run-quic-bench
 | 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 恢复算法 |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | 保持 ~70-80% | 保持 ~40-50% | BBR2/CUBIC |
-| **quicz** | **~2.0 GB/s** | **保持 85%** | **保持 17-20%** | **CUBIC** |
+| **quicz** | **~53 MB/s** | **—** | **—** | **CUBIC** |
 | quic-go | 400-600 MB/s | 保持 ~60-70% | 保持 ~30-40% | CUBIC/NewReno |
 | quiche | 300-500 MB/s | 保持 ~50-60% | 保持 ~25-35% | CUBIC |
 | quinn | 300-500 MB/s | 保持 ~55-65% | 保持 ~30-40% | CUBIC/NewReno |
@@ -117,8 +117,8 @@ zig build run-quic-bench
 - 直接对比困难，因测量方法、平台、配置不同。
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
-- quicz 的 ~2 GB/s 已超过 msquic 下限，是无 GSO/XDP 条件下最快的纯语言 QUIC 实现之一。
-- 1% 丢包保持率 85% 超过 msquic (70-80%)；5% 丢包保持率仍需优化。
+- quicz 当前 ~53 MB/s（ns 精度 RTT），性能优化进行中。
+- 丢包恢复和吞吐量优化是后续重点。
 
 ## 待完成基准
 
@@ -127,14 +127,14 @@ zig build run-quic-bench
 - [ ] DATAGRAM 吞吐（RFC 9221，需完整握手）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
-- [ ] 恢复非阻塞 receive（Zig 0.16 std.Io Duration(0)=永久等待，需 POSIX MSG_DONTWAIT）
+- [x] 非阻塞 receive（Duration(0) 已验证可用）
 
 ## 已知限制
 
-Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 表示永久等待而非非阻塞。
-当前使用 `fromMilliseconds(1)` 作为最小工作超时，引入 ~1ms/次 的等待开销。
-历史数据（~2 GB/s）在 Duration(0) 作为非阻塞时测得。
-恢复全性能需要绕过 std.Io 使用 POSIX `recvfrom(MSG_DONTWAIT)` 或 kqueue 非阻塞模式。
+Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 使用 `poll(timeout_ms=0)` 实现非阻塞接收。
+Benchmark 使用 `Duration(0)` 非阻塞接收，`nanoTime()` 已修复为真正的纳秒精度。
+历史数据（~2 GB/s）在 nanoTime 使用 mach ticks 作为 ns 时测得（RTT 被低估 41.67x）。
+当前吞吐量瓶颈在每包处理开销，需优化 QUIC  packet processing 路径。
 
 ## 参考
 
