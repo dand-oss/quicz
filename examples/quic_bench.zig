@@ -11,6 +11,8 @@ const std = @import("std");
 const quicz = @import("quicz");
 
 const max_datagram_size: usize = 8000;
+/// Stream payload per chunk: leave room for QUIC header + AEAD tag + stream frame header.
+const stream_chunk_size: usize = max_datagram_size - 64;
 const transfer_size: usize = 16 * 1024 * 1024; // 16 MB
 const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
 const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
@@ -146,7 +148,7 @@ pub fn main() !void {
 
     // Client: send data
     const stream_id = try client.openStream();
-    var payload: [max_datagram_size]u8 = undefined;
+    var payload: [stream_chunk_size]u8 = undefined;
     @memset(&payload, 'X');
     var recv_buf: [9000]u8 = undefined;
 
@@ -358,7 +360,7 @@ pub fn main() !void {
 
         const ms_thr = try std.Thread.spawn(.{}, ms_fn, .{&ms_ctx});
 
-        var ms_payload: [max_datagram_size]u8 = undefined;
+        var ms_payload: [stream_chunk_size]u8 = undefined;
         @memset(&ms_payload, 'M');
         var ms_rb: [9000]u8 = undefined;
         var ms_queued: [num_streams]usize = .{ 0, 0, 0, 0 };
@@ -514,7 +516,7 @@ pub fn main() !void {
             const loss_thr = try std.Thread.spawn(.{}, loss_fn, .{&loss_ctx});
 
             const loss_stream = try loss_cli.openStream();
-            var loss_payload: [max_datagram_size]u8 = undefined;
+            var loss_payload: [stream_chunk_size]u8 = undefined;
             @memset(&loss_payload, 'L');
             var loss_rb: [9000]u8 = undefined;
             var loss_queued: usize = 0;
