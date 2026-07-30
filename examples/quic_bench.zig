@@ -11,12 +11,22 @@ const std = @import("std");
 const quicz = @import("quicz");
 
 const max_datagram_size: usize = 1324;
-const transfer_size: usize = 16 * 1024 * 1024; // 64 MB
+const transfer_size: usize = 16 * 1024 * 1024; // 16 MB
 const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
 const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
 
+const MachTimebaseInfo = extern struct { numer: u32, denom: u32 };
+extern fn mach_timebase_info(info: *MachTimebaseInfo) i32;
+var _tb: MachTimebaseInfo = undefined;
+var _tb_init: bool = false;
+var _t0: u64 = 0;
 fn nanoTime() u64 {
-    return std.c.mach_absolute_time();
+    if (!_tb_init) {
+        _ = mach_timebase_info(&_tb);
+        _t0 = std.c.mach_absolute_time();
+        _tb_init = true;
+    }
+    return (std.c.mach_absolute_time() - _t0) * _tb.numer / _tb.denom;
 }
 
 const ServerContext = struct {
@@ -38,7 +48,7 @@ fn serverThread(ctx: *ServerContext) void {
         // Receive datagrams
         var received_any = false;
         while (true) {
-            const received = ctx.socket.receiveTimeout(ctx.io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+            const received = ctx.socket.receiveTimeout(ctx.io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
             // Learn client address from first datagram
             if (!have_client_addr) {
                 ctx.client_addr = received.from;
@@ -166,7 +176,7 @@ pub fn main() !void {
 
         // Process ACKs
         while (true) {
-            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(
                 @intCast(nanoTime()),
                 server_dcid.len,
@@ -188,7 +198,7 @@ pub fn main() !void {
             client_socket.send(io, &server_addr, dg) catch break;
         }
         while (true) {
-            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(
                 @intCast(nanoTime()),
                 server_dcid.len,
@@ -320,7 +330,7 @@ pub fn main() !void {
                 while (!c.flag.load(.acquire)) {
                     var got = false;
                     while (true) {
-                        const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                        const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                         if (!have) { c.peer = r.from; have = true; }
                         _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                         got = true;
@@ -370,7 +380,7 @@ pub fn main() !void {
                 ms_client_sock.send(io, &ms_addr, dg) catch break;
             }
             while (true) {
-                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                 _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
             }
         }
@@ -383,7 +393,7 @@ pub fn main() !void {
                 ms_client_sock.send(io, &ms_addr, dg) catch break;
             }
             while (true) {
-                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                const a = ms_client_sock.receiveTimeout(io, &ms_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                 _ = ms_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
             }
         }
@@ -471,7 +481,7 @@ pub fn main() !void {
                     while (!c.flag.load(.acquire)) {
                         var got = false;
                         while (true) {
-                            const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                            const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                             if (!have) { c.peer = r.from; have = true; }
                             // Simulate random packet loss (xorshift PRNG)
                             c.rng_state.* ^= c.rng_state.* << 13; c.rng_state.* ^= c.rng_state.* >> 7; c.rng_state.* ^= c.rng_state.* << 17;
@@ -519,7 +529,7 @@ pub fn main() !void {
                     loss_cli_sock.send(io, &loss_addr, dg) catch break;
                 }
                 while (true) {
-                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                     _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
                 }
                 // Service loss detection timer (PTO retransmission for undetected losses)
@@ -534,7 +544,7 @@ pub fn main() !void {
                     loss_cli_sock.send(io, &loss_addr, dg) catch break;
                 }
                 while (true) {
-                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(0) } }) catch break;
+                    const a = loss_cli_sock.receiveTimeout(io, &loss_rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromNanoseconds(1) } }) catch break;
                     _ = loss_cli.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_dcid.len, a.data) catch {};
                 }
                 _ = loss_cli.serviceLossDetectionTimer(@intCast(nanoTime())) catch {};
