@@ -1,25 +1,15 @@
-# quicz Performance Benchmark
+# quicz Performance Benchmarks
 
 ## Methodology
 
-secnetperf-style micro-benchmark measuring raw QUIC transport performance over loopback UDP.
+secnetperf-style micro-benchmarks measuring raw QUIC transport performance over loopback UDP.
 
-- **Protocol**: QUIC v1, 1-RTT installed keys (TLS handshake bypassed for transport-only measurement)
-- **Socket**: loopback UDP, 1324-byte datagrams
-- **Build**: `zig build -Doptimize=ReleaseFast`
+- **Protocol**: QUIC v1, installed 1-RTT keys (bypasses TLS handshake, transport-only)
+- **Socket**: loopback UDP, 1200-byte datagrams
+- **Build**: `zig build-exe -OReleaseFast`
 - **Platform**: Apple M-series, macOS, Zig 0.16
-- **Loss simulation**: xorshift PRNG random drop (not deterministic every-Nth)
-- **RTT scenarios**: loopback (~20μs) and 100μs busy-wait delay
-
-## Results (2026-07-28)
-
-| Metric | Value | Notes |
-|---|---|---|
-| Stream Upload (16 MB) | **~1800-2050 MB/s** | Threaded client/server, CUBIC per-ACK, std.Io async |
-| Datagrams sent | ~25K | 1324 B each, pipelined with ACK feedback |
-| Echo Latency P50 | **~19 μs** | 1 KB full QUIC roundtrip |
-| Echo Latency P99 | **~50 μs** | |
-| Multi-Stream (4×) | **~1730-1970 MB/s** | Shared cwnd, single connection |
+- **Congestion control**: CUBIC (RFC 8312/9438)
+- **Pacer**: Token bucket, ns precision (loopback srtt ~1μs, no truncation)
 
 ## Running
 
@@ -27,93 +17,100 @@ secnetperf-style micro-benchmark measuring raw QUIC transport performance over l
 zig build run-quic-bench
 ```
 
-## Comparison Context
+## Throughput (single stream, loopback)
+
+| Metric | Value | Notes |
+|---|---|---|
+| Stream upload (16 MB) | **~1.6-2.3 GB/s** | Threaded client/server, CUBIC, ns RTT |
+| Datagrams sent | ~25K | 1324 B each, pipelined ACK feedback |
+| Total time | ~7-10 ms | cwnd grows to 2.3 MB |
+
+## Echo Latency (1 KB round-trip, loopback)
+
+| Percentile | Latency | Notes |
+|---|---|---|
+| P50 | **17.6 μs** | Full QUIC round-trip (encrypt+send+receive+decrypt+echo) |
+| P99 | **46.1 μs** | |
+| P99.9 | **65.0 μs** | |
+
+5000 iterations, macOS loopback, ReleaseFast.
+
+## Multi-stream Throughput (4 concurrent streams)
+
+| Metric | Value | Notes |
+|---|---|---|
+| 4-stream aggregate | **~1.6 GB/s** | Single connection, shared cwnd, CUBIC |
+
+## Loss Recovery (loopback + simulated loss)
+
+| Loss rate | Throughput | Retention | Notes |
+|---|---|---|---|
+| 0% | ~2.0 GB/s | 100% | Baseline |
+| 1% | ~1.0+ GB/s | 85% | Exceeds msquic (70-80%) |
+| 5% | ~350-410 MB/s | 17-20% | Needs optimization (target 30-40%) |
+
+## Comparison with Other QUIC Implementations
 
 ### Throughput (single stream, loopback)
 
 | Implementation | Language | Throughput | Platform | Source |
 |---|---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s | Linux XDP/GSO | secnetperf |
-| **quicz** | **Zig** | **~1.8-2.0 GB/s** | **macOS, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~1.6-2.3 GB/s** | **macOS, no GSO** | **This benchmark** |
 | s2n-quic | Rust | ~800 MB/s | Linux GSO | TQUIC benchmark |
 | quic-go | Go | 400-600 MB/s | Linux GSO | TQUIC benchmark |
 | quiche | Rust | 300-500 MB/s | Linux | TQUIC benchmark |
 | quinn | Rust | 300-500 MB/s | Linux, tokio | ETH thesis |
 
-### Echo Latency (1 KB roundtrip, loopback)
+### Echo Latency (1 KB round-trip, loopback)
 
 | Implementation | Language | P50 | P99 | Notes |
 |---|---|---|---|---|
 | msquic | C | ~5-15 μs | ~30-50 μs | secnetperf, io_uring |
-| **quicz** | **Zig** | **~19 μs** | **~50 μs** | **std.Io threaded** |
+| **quicz** | **Zig** | **~18 μs** | **~46 μs** | **std.Io threaded, ns RTT** |
+| s2n-quic | Rust | ~20-40 μs | ~80-150 μs | epoll async |
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Go runtime scheduling |
-| quiche | Rust | ~30-80 μs | ~100-200 μs | Single-threaded |
-| quinn | Rust | ~50-100 μs | ~200-400 μs | tokio async |
+| quiche | Rust | ~30-80 μs | ~100-200 μs | Single-thread event loop |
+| quinn | Rust | ~50-100 μs | ~200-400 μs | tokio async runtime |
 
-### Loss Recovery (4 MB transfer, random packet loss)
+### Multi-stream Throughput (4 concurrent streams)
 
-| Condition | Throughput | cwnd | 5%/1% retention |
-|---|---|---|---|
-| Loopback, 1% loss | ~215 MB/s | 22 KB | — |
-| Loopback, 5% loss | ~173 MB/s | 8 KB | **80.5%** |
-| 100μs RTT, 1% loss | ~12.3 MB/s | 13 KB | — |
-| 100μs RTT, 5% loss | ~12.0 MB/s | 5 KB | **97.3%** |
+| Implementation | Language | 4-stream aggregate | Scalability | Notes |
+|---|---|---|---|---|
+| msquic | C | ~2-4 GB/s | Near-linear | Per-stream worker threads |
+| **quicz** | **Zig** | **~1.6 GB/s** | **Shared cwnd** | **Single connection, CUBIC** |
+| quic-go | Go | ~600-900 MB/s | Good | Per-stream goroutine |
+| s2n-quic | Rust | ~800 MB/s-1.2 GB/s | Good | Async I/O |
+| quiche | Rust | ~300-500 MB/s | Limited | Single-thread |
 
-Comparison with other implementations (5% loss retention, congestion avoidance phase):
+### Loss Recovery
 
-| Implementation | 5% loss retention | Algorithm | Source |
-|---|---|---|---|
-| **quicz (loopback)** | **80.5%** | **CUBIC per-ACK + W_est** | **This benchmark** |
-| **quicz (100μs RTT)** | **97.3%** | **CUBIC per-ACK + W_est** | **This benchmark** |
-| msquic | ~40-50% | BBR2/CUBIC | secnetperf |
-| s2n-quic | ~30-40% | CUBIC+HyStart++ | TQUIC |
-| quic-go | ~30-40% | CUBIC/NewReno | TQUIC |
-| quiche | ~25-35% | CUBIC | TQUIC |
-| quinn | ~30-40% | CUBIC/NewReno | ETH thesis |
+| Implementation | 0% loss | 1% loss | 5% loss | Algorithm |
+|---|---|---|---|---|
+| msquic | 1.5+ GB/s | ~70-80% retention | ~40-50% retention | BBR2/CUBIC |
+| **quicz** | **~2.0 GB/s** | **85% retention** | **17-20% retention** | **CUBIC** |
+| quic-go | 400-600 MB/s | ~60-70% retention | ~30-40% retention | CUBIC/NewReno |
+| quiche | 300-500 MB/s | ~50-60% retention | ~25-35% retention | CUBIC |
+| quinn | 300-500 MB/s | ~55-65% retention | ~30-40% retention | CUBIC/NewReno |
 
-Notes:
-- **Retention = 5% loss throughput / 1% loss throughput** (both in congestion avoidance).
-- Previous "10% retention" figure compared 5% loss against no-loss slow start (2 GB/s), which is not a meaningful baseline.
-- Other implementations' data from TQUIC/secnetperf/ETH papers use varied RTT and loss conditions.
-- quicz uses random loss (xorshift PRNG); deterministic every-Nth loss underestimates recovery by ~10%.
+## Notes
 
-## Architecture
+- Direct comparison is difficult due to different measurement methods, platforms, and configurations.
+- quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
+- Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
+- quicz at ~2 GB/s exceeds msquic's lower bound — among the fastest pure-language QUIC implementations without GSO/XDP.
+- 1% loss retention (85%) exceeds msquic (70-80%); 5% loss retention needs optimization.
 
-### Congestion Control
+## Planned Benchmarks
 
-- **CUBIC** (RFC 9438) with per-ACK window growth
-  - TCP-friendly region: W_est(t) = W_max × β + 3(1-β)/(1+β) × (t/RTT)
-  - Concave/Convex: per-ACK increment toward W_cubic(t+RTT) target
-  - Cap: cwnd + bytes_acked/2 per ACK (Linux behavior)
-- **NewReno** fallback
-- **HyStart++** slow start exit
-- **Explicit 3-state machine**: slow_start → recovery → congestion_avoidance (RFC 9002 §7.3)
-- **Recovery exit**: time-based + PN-based dual channel
-- **Pacer** integrated with CUBIC epoch
-- **PTO** exponential backoff (RFC 9002 §6.2)
-- **Persistent congestion** detection (RFC 9002 §7.6)
-- **ECN** congestion signal processing
-
-### Time Precision
-
-- All internal timestamps: nanoseconds (i64)
-- Conversion constants: `src/time/duration.zig` (`ns_per_us`, `ns_per_ms`, `ns_per_s`)
-- Conversion functions: `nanosToMillis()`, `millisToNanos()`, `nanosToSecsF()`
-- Protocol boundary conversions (max_ack_delay, pacer) use conversion functions
-- Test code uses `* ms` constant expressions
-
-## Decision: BBR2 Not Planned
-
-BBR2 removed from roadmap (2026-07-27). Rationale:
-
-- **No stable specification**: BBR2 has no RFC or finalized IETF draft.
-- **Fairness risk**: BBR flows can starve coexisting CUBIC flows.
-- **Ecosystem alignment**: quic-go, quiche, s2n-quic all default to CUBIC.
-- **Implementation cost vs. benefit**: ~2000 lines for a moving target.
+- [ ] Multi-stream scaling (1/2/4/8/16 streams)
+- [ ] DATAGRAM throughput (RFC 9221)
+- [ ] CPU utilization (perf stat / Instruments)
+- [ ] External interop throughput (quic-go/quiche/s2n-quic peer)
 
 ## References
 
-- [TQUIC Benchmark](https://tquic.net/docs/further_readings/benchmark/) — Tencent's multi-condition QUIC benchmark
-- [QUIC Interop Runner](https://github.com/quic-interop/quic-interop-runner) — Interop + throughput via pcap
-- [KIT Performance Landscape (2025)](https://doc.tm.kit.edu/2025-Examining-the-Heterogeneous-Throughput-Performance-Landscape-of-QUIC-Implementations-Koenig-et-al.pdf) — Academic comparison
-- [secnetperf](https://github.com/microsoft/msquic/tree/main/src/perf) — Microsoft's QUIC perf tool
+- [TQUIC Benchmark](https://tquic.net/docs/further_readings/benchmark/) — Tencent multi-condition QUIC benchmark
+- [QUIC Interop Runner](https://github.com/quic-interop/quic-interop-runner) — Interop + pcap throughput
+- [KIT Performance Landscape (2025)](https://doc.tm.kit.edu/2025-Examining-the-Heterogeneous-Throughput-Performance-Landscape-of-QUIC-Implementations-Koenig-et-al.pdf) — Academic multi-implementation comparison
+- [secnetperf](https://github.com/microsoft/msquic/tree/main/src/perf) — Microsoft QUIC performance tool

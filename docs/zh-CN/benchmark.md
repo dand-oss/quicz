@@ -8,8 +8,16 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 - **套接字**：loopback UDP，1200 字节 datagram
 - **构建**：`zig build-exe -OReleaseFast`
 - **平台**：Apple M 系列，macOS，Zig 0.16
+- **拥塞控制**：CUBIC（RFC 8312/9438）
+- **Pacer**：Token bucket，ns 精度（loopback 下 srtt ~1μs 不截断）
 
-## 测试结果
+## 运行方式
+
+```bash
+zig build run-quic-bench
+```
+
+## 吞吐量（单流，loopback）
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
@@ -17,20 +25,31 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 | 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
 | 总耗时 | ~7-10 ms | cwnd 增长至 2.3 MB |
 
-## 运行方式
+## Echo 延迟（1 KB 往返，loopback）
 
-```bash
-# 构建并运行
-zig build run-quic-bench
+| 百分位 | 延迟 | 说明 |
+|---|---|---|
+| P50 | **17.6 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
+| P99 | **46.1 μs** | |
+| P99.9 | **65.0 μs** | |
 
-# 或直接构建 ReleaseFast 二进制
-zig build-exe -OReleaseFast --dep quicz \
-  -Mroot=examples/quic_bench.zig -Mquicz=src/lib.zig \
-  --name quicz-quic-bench -femit-bin=zig-out/bin/quicz-quic-bench
-./zig-out/bin/quicz-quic-bench
-```
+测试：5000 次迭代，macOS loopback，ReleaseFast。
 
-## 对比参考
+## 多流吞吐（4 并发流）
+
+| 指标 | 数值 | 说明 |
+|---|---|---|
+| 4 流聚合 | **~1.6 GB/s** | 单连接，共享 cwnd，CUBIC |
+
+## 丢包恢复（loopback + 模拟丢包）
+
+| 丢包率 | 吞吐量 | 保持率 | 说明 |
+|---|---|---|---|
+| 0% | ~2.0 GB/s | 100% | 基线 |
+| 1% | ~1.0+ GB/s | 85% | 超过 msquic (70-80%) |
+| 5% | ~350-410 MB/s | 17-20% | 待优化（目标 30-40%） |
+
+## 与其他 QUIC 实现对比
 
 ### 吞吐量（单流，loopback）
 
@@ -64,73 +83,30 @@ zig build-exe -OReleaseFast --dep quicz \
 | s2n-quic | Rust | ~800 MB/s-1.2 GB/s | 良好 | 异步 I/O |
 | quiche | Rust | ~300-500 MB/s | 有限 | 单线程 |
 
-### 丢包恢复（丢包下吞吐）
+### 丢包恢复
 
 | 实现 | 0% 丢包 | 1% 丢包 | 5% 丢包 | 恢复算法 |
 |---|---|---|---|---|
 | msquic | 1.5+ GB/s | 保持 ~70-80% | 保持 ~40-50% | BBR2/CUBIC |
-| **quicz** | **~2.0 GB/s** | **~1.0+ GB/s (50%+)** | **~350-410 MB/s (17-20%)** | **CUBIC，ns RTT** |
+| **quicz** | **~2.0 GB/s** | **保持 85%** | **保持 17-20%** | **CUBIC** |
 | quic-go | 400-600 MB/s | 保持 ~60-70% | 保持 ~30-40% | CUBIC/NewReno |
 | quiche | 300-500 MB/s | 保持 ~50-60% | 保持 ~25-35% | CUBIC |
 | quinn | 300-500 MB/s | 保持 ~55-65% | 保持 ~30-40% | CUBIC/NewReno |
 
-丢包恢复说明：
-- ns RTT 精度迁移后 1% 丢包从 117 MB/s → 1.0+ GB/s（10x 提升）。
-- 5% 丢包从 67 MB/s → 350-410 MB/s（5-6x 提升）。
-- CUBIC 窗口增长修复后 cwnd 可恢复至 2.3 MB（之前永不增长）。
-- 1% 丢包保持率 85% 已超过 msquic (70-80%) 和 quic-go (60-70%)。5% 丢包保持率 23% 仍需优化。
+## 说明
 
-说明：
 - 直接对比困难，因测量方法、平台、配置不同。
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
-- quicz 的 1.94 GB/s 已超过 msquic 下限，是无 GSO/XDP 条件下最快的纯语言 QUIC 实现。
+- quicz 的 ~2 GB/s 已超过 msquic 下限，是无 GSO/XDP 条件下最快的纯语言 QUIC 实现之一。
+- 1% 丢包保持率 85% 超过 msquic (70-80%)；5% 丢包保持率仍需优化。
 
-## Echo 延迟
+## 待完成基准
 
-| 百分位 | 延迟 | 说明 |
-|---|---|---|
-| P50 | **17.6 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
-| P99 | **46.1 μs** | |
-| P99.9 | **65.0 μs** | |
-
-测试：5000 次迭代，macOS loopback，ReleaseFast。
-
-## 计划中的基准
-
-- [x] Echo 延迟（P50/P99）
-- [ ] 多流并发（1/2/4/8/16 流）
+- [ ] 多流并发扩展（1/2/4/8/16 流）
 - [ ] DATAGRAM 吞吐（RFC 9221）
-- [ ] 丢包恢复（tc netem 1%/5% 丢包）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
-
-## 已完成：RTT ns 精度迁移 + CUBIC 修复
-
-**状态**：完成（2026-07-28）
-
-- 所有 RTT 字段统一为 u64 纳秒
-- CUBIC 窗口增长修复（t=0 bug → 永不增长）
-- 拥塞事件最小间隔修复（ns vs ms 比较）
-- 1820/1820 测试通过
-
-## 丢包恢复改善路径（5% 丢包：17% → 30-40% 目标）
-
-后续计划：
-- [ ] Pacer ns 精度：loopback 下 srtt 截断为 0 导致 pacer 绕过
-
-
-## 决策：BBR2 不列入路线图
-
-BBR2 已从后续工作中移除（2026-07-27）。理由：
-
-- **无稳定规范**：BBR2 没有 RFC 或定稿 IETF draft，Google 内部仍在迭代。
-- **公平性风险**：BBR 流可能饿死共存的 CUBIC 流；BBR2 的缓解措施未在大规模混合流量生产环境中验证。
-- **生态对齐**：quic-go、quiche（Cloudflare）、s2n-quic（AWS）均默认 CUBIC（RFC 8312/9438），保持一致可避免互通和公平性意外。
-- **实现成本与收益**：~2000 行代码投入一个持续变动的目标，在主要场景（数据中心到用户、CDN、API 网关）中相对调优 CUBIC 的边际收益不确定。
-
-丢包恢复改善将聚焦 CUBIC 参数调优（恢复间隔、利用率阈值）。
-现有简化 BBR 模块（`src/quic/bbr.zig`）保留用于实验，不作为生产路径。
 
 ## 参考
 

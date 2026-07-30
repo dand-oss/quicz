@@ -4,6 +4,8 @@
 //! burst-induced loss on low-RTT paths. Budget replenishes at
 //! pacing_rate = congestion_window / smoothed_rtt × 1.25.
 //! Max burst = 10 packets (allows initial window to send immediately).
+//!
+//! All timestamps and RTT values are in nanoseconds for loopback precision.
 
 const std = @import("std");
 
@@ -14,8 +16,8 @@ pub const max_burst_packets: usize = 10;
 pub const Pacer = struct {
     /// Available send budget in bytes.
     budget: usize = 0,
-    /// Timestamp (ms) of last packet send.
-    last_sent_ms: ?i64 = null,
+    /// Timestamp (ns) of last packet send.
+    last_sent_ns: ?i64 = null,
     /// Maximum datagram size in bytes.
     max_datagram_size: usize,
 
@@ -27,50 +29,48 @@ pub const Pacer = struct {
         return p;
     }
 
-    /// Maximum burst size in bytes (10 packets or 1ms worth of bandwidth).
+    /// Maximum burst size in bytes (10 packets).
     pub fn maxBurstSize(self: *const Pacer) usize {
         return max_burst_packets * self.max_datagram_size;
     }
 
-    /// Calculate pacing rate in bytes/ms from cwnd and smoothed RTT.
-    /// pacing_rate = cwnd / smoothed_rtt × 1.25 (25% overhead for RTT variation).
-    pub fn pacingRateBytesPerMs(cwnd: usize, smoothed_rtt_ms: u64) usize {
-        if (smoothed_rtt_ms == 0) return std.math.maxInt(usize); // no pacing at RTT=0
-        // cwnd / rtt × 1.25 = cwnd × 5 / (rtt × 4)
-        const rate = (@as(u128, cwnd) * 5) / (@as(u128, smoothed_rtt_ms) * 4);
-        return @intCast(@min(rate, std.math.maxInt(usize)));
-    }
-
     /// Get current send budget in bytes, replenished since last send.
-    pub fn budgetAt(self: *const Pacer, now_ms: i64, cwnd: usize, smoothed_rtt_ms: u64) usize {
-        // RTT=0 means no pacing (loopback): always allow full burst.
-        if (smoothed_rtt_ms == 0) return self.maxBurstSize();
-        const last = self.last_sent_ms orelse return self.maxBurstSize();
-        const delta_ms: u64 = if (now_ms > last) @intCast(now_ms - last) else 0;
-        if (delta_ms == 0) return self.budget;
+    ///
+    /// Replenishment formula (all in nanoseconds):
+    ///   added = cwnd × 5 × delta_ns / (srtt_ns × 4)
+    /// This equals pacing_rate (cwnd/srtt × 1.25) × delta_time.
+    pub fn budgetAt(self: *const Pacer, now_ns: i64, cwnd: usize, smoothed_rtt_ns: u64) usize {
+        // No RTT sample yet: no pacing, allow full burst.
+        if (smoothed_rtt_ns == 0) return self.maxBurstSize();
+        const last = self.last_sent_ns orelse return self.maxBurstSize();
+        const delta_ns: u64 = if (now_ns > last) @intCast(now_ns - last) else 0;
+        if (delta_ns == 0) return self.budget;
 
-        const rate = pacingRateBytesPerMs(cwnd, smoothed_rtt_ms);
-        const added = rate * delta_ms;
+        // added = cwnd * 1.25 * delta_ns / srtt_ns = cwnd * 5 * delta_ns / (srtt_ns * 4)
+        const numerator: u128 = @as(u128, cwnd) * 5 * delta_ns;
+        const denominator: u128 = @as(u128, smoothed_rtt_ns) * 4;
+        const added: usize = @intCast(@min(numerator / denominator, std.math.maxInt(usize)));
+
         const new_budget = self.budget + added;
         return @min(self.maxBurstSize(), new_budget);
     }
 
     /// Check if a packet of the given size can be sent now.
-    pub fn canSend(self: *const Pacer, now_ms: i64, packet_size: usize, cwnd: usize, smoothed_rtt_ms: u64) bool {
-        return self.budgetAt(now_ms, cwnd, smoothed_rtt_ms) >= packet_size;
+    pub fn canSend(self: *const Pacer, now_ns: i64, packet_size: usize, cwnd: usize, smoothed_rtt_ns: u64) bool {
+        return self.budgetAt(now_ns, cwnd, smoothed_rtt_ns) >= packet_size;
     }
 
     /// Record that a packet was sent, deducting from budget.
-    pub fn onPacketSent(self: *Pacer, now_ms: i64, packet_size: usize, cwnd: usize, smoothed_rtt_ms: u64) void {
-        const current_budget = self.budgetAt(now_ms, cwnd, smoothed_rtt_ms);
+    pub fn onPacketSent(self: *Pacer, now_ns: i64, packet_size: usize, cwnd: usize, smoothed_rtt_ns: u64) void {
+        const current_budget = self.budgetAt(now_ns, cwnd, smoothed_rtt_ns);
         self.budget = if (packet_size >= current_budget) 0 else current_budget - packet_size;
-        self.last_sent_ms = now_ms;
+        self.last_sent_ns = now_ns;
     }
 
     /// Reset pacer state (e.g., after persistent congestion).
     pub fn reset(self: *Pacer) void {
         self.budget = self.maxBurstSize();
-        self.last_sent_ms = null;
+        self.last_sent_ns = null;
     }
 };
 
@@ -80,14 +80,14 @@ pub const Pacer = struct {
 
 test "pacer initial budget allows max burst" {
     var p = Pacer.init(1200);
-    // Initial budget = 10 * 1200 = 12000
     try std.testing.expectEqual(@as(usize, 12000), p.budget);
-    try std.testing.expect(p.canSend(0, 1200, 43200, 333));
+    // srtt=1ms=1_000_000ns
+    try std.testing.expect(p.canSend(0, 1200, 43200, 1_000_000));
 }
 
 test "pacer deducts budget on send" {
     var p = Pacer.init(1200);
-    p.onPacketSent(0, 1200, 43200, 333);
+    p.onPacketSent(0, 1200, 43200, 1_000_000);
     try std.testing.expectEqual(@as(usize, 10800), p.budget); // 12000 - 1200
 }
 
@@ -96,14 +96,13 @@ test "pacer budget replenishes over time" {
     // Drain budget
     var i: usize = 0;
     while (i < 10) : (i += 1) {
-        p.onPacketSent(0, 1200, 43200, 333);
+        p.onPacketSent(0, 1200, 43200, 1_000_000);
     }
     try std.testing.expectEqual(@as(usize, 0), p.budget);
 
-    // After 100ms with cwnd=43200, rtt=100ms:
-    // rate = 43200 * 5 / (100 * 4) = 540 bytes/ms
-    // added = 540 * 100 = 54000, capped at max_burst = 12000
-    const budget = p.budgetAt(100, 43200, 100);
+    // After 100ms=100_000_000ns with cwnd=43200, srtt=100ms=100_000_000ns:
+    // added = 43200 * 5 * 100_000_000 / (100_000_000 * 4) = 54000, capped at 12000
+    const budget = p.budgetAt(100_000_000, 43200, 100_000_000);
     try std.testing.expectEqual(@as(usize, 12000), budget); // capped at max burst
 }
 
@@ -112,14 +111,15 @@ test "pacer blocks send when budget exhausted" {
     // Drain all budget at time 0
     var i: usize = 0;
     while (i < 10) : (i += 1) {
-        p.onPacketSent(0, 1200, 43200, 333);
+        p.onPacketSent(0, 1200, 43200, 1_000_000);
     }
     // At time 0, no replenishment, can't send
-    try std.testing.expect(!p.canSend(0, 1200, 43200, 333));
-    // At time 1ms, rate=540 bytes/ms, budget=540 < 1200, still can't
-    try std.testing.expect(!p.canSend(1, 1200, 43200, 100));
-    // At time 3ms, budget=1620 >= 1200, can send
-    try std.testing.expect(p.canSend(3, 1200, 43200, 100));
+    try std.testing.expect(!p.canSend(0, 1200, 43200, 1_000_000));
+    // srtt=100ms=100_000_000ns, rate = 43200*5/(100_000_000*4) bytes/ns
+    // After 1ms=1_000_000ns: added = 43200*5*1_000_000/(100_000_000*4) = 540 bytes < 1200
+    try std.testing.expect(!p.canSend(1_000_000, 1200, 43200, 100_000_000));
+    // After 3ms=3_000_000ns: added = 43200*5*3_000_000/(100_000_000*4) = 1620 >= 1200
+    try std.testing.expect(p.canSend(3_000_000, 1200, 43200, 100_000_000));
 }
 
 test "pacer zero RTT means no pacing" {
@@ -128,23 +128,30 @@ test "pacer zero RTT means no pacing" {
     while (i < 10) : (i += 1) {
         p.onPacketSent(0, 1200, 43200, 0);
     }
-    // With RTT=0, pacingRate = maxInt, budget replenishes instantly
+    // With RTT=0, budget always full (no pacing estimate yet)
     try std.testing.expect(p.canSend(0, 1200, 43200, 0));
+}
+
+test "pacer loopback precision (1us RTT)" {
+    var p = Pacer.init(1200);
+    const srtt_ns: u64 = 1000; // 1 μs loopback RTT
+    // Drain budget
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        p.onPacketSent(0, 1200, 43200, srtt_ns);
+    }
+    try std.testing.expectEqual(@as(usize, 0), p.budget);
+    // After 1μs with cwnd=43200, srtt=1000ns:
+    // added = 43200 * 5 * 1000 / (1000 * 4) = 54000, capped at 12000
+    const budget = p.budgetAt(1000, 43200, srtt_ns);
+    try std.testing.expectEqual(@as(usize, 12000), budget);
+    try std.testing.expect(p.canSend(1000, 1200, 43200, srtt_ns));
 }
 
 test "pacer reset restores full burst" {
     var p = Pacer.init(1200);
-    p.onPacketSent(0, 1200, 43200, 333);
+    p.onPacketSent(0, 1200, 43200, 1_000_000);
     p.reset();
     try std.testing.expectEqual(@as(usize, 12000), p.budget);
-    try std.testing.expect(p.last_sent_ms == null);
-}
-
-test "pacing rate calculation" {
-    // cwnd=43200, rtt=100ms: rate = 43200*5/(100*4) = 540 bytes/ms
-    try std.testing.expectEqual(@as(usize, 540), Pacer.pacingRateBytesPerMs(43200, 100));
-    // cwnd=12000, rtt=333ms: rate = 12000*5/(333*4) = 45 bytes/ms
-    try std.testing.expectEqual(@as(usize, 45), Pacer.pacingRateBytesPerMs(12000, 333));
-    // rtt=0: no pacing
-    try std.testing.expectEqual(std.math.maxInt(usize), Pacer.pacingRateBytesPerMs(43200, 0));
+    try std.testing.expect(p.last_sent_ns == null);
 }

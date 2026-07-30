@@ -4243,7 +4243,7 @@ pub const Connection = struct {
             (self.send_queue.items.len != 0 or self.crypto_send_queue.items.len != 0))
         {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt: u64 = @intCast(duration_mod.nanosToMillis(@intCast(self.recovery_state.smoothed_rtt_ns)));
+            const srtt: u64 = self.recovery_state.smoothed_rtt_ns;
             if (!self.tx_pacer.canSend(now_nanos, self.maxTxDatagramSize(), cwnd, srtt)) {
                 return null;
             }
@@ -4275,7 +4275,7 @@ pub const Connection = struct {
         self.commitBuiltProtectedShortPacket(built, now_nanos);
         if (built.ack_eliciting) {
             const cwnd = self.recovery_state.congestion_window;
-            const srtt: u64 = @intCast(duration_mod.nanosToMillis(@intCast(self.recovery_state.smoothed_rtt_ns)));
+            const srtt: u64 = self.recovery_state.smoothed_rtt_ns;
             self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
         return built.datagram;
