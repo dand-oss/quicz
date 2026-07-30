@@ -1,4 +1,6 @@
 //! quiche QUIC echo server for interop testing.
+//! Properly routes packets using quiche's header parsing for both
+//! long-header (Initial/Handshake) and short-header (1-RTT) packets.
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
@@ -33,6 +35,7 @@ fn main() {
         .expect("load cert");
     config.load_priv_key_from_pem_file(&key).expect("load key");
 
+    // Map from server-local SCID bytes -> connection
     let mut conns: HashMap<Vec<u8>, quiche::Connection> = HashMap::new();
     let mut buf = [0u8; 65535];
 
@@ -47,17 +50,30 @@ fn main() {
             to: addr,
         };
 
-        // Extract connection ID from packet header
-        let conn_id = buf[6..14].to_vec();
+        // Parse the packet header to extract the DCID (which is our SCID for routing)
+        let hdr = match quiche::Header::from_slice(&mut buf[..n], 8) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let conn_id = hdr.dcid.to_vec();
 
         // Get or create connection
         if !conns.contains_key(&conn_id) {
+            // Only create connections for Initial packets (long header with Initial type)
+            if !matches!(hdr.ty, quiche::Type::Initial) {
+                continue;
+            }
             let scid = quiche::ConnectionId::from_ref(&conn_id);
             match quiche::accept(&scid, None, addr, peer, &mut config) {
                 Ok(conn) => {
+                    println!("new connection (dcid={:x?})", &conn_id);
                     conns.insert(conn_id.clone(), conn);
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!("accept error: {e:?}");
+                    continue;
+                }
             }
         }
 
@@ -67,11 +83,12 @@ fn main() {
         };
 
         // Process incoming packet
-        if conn.recv(&mut buf[..n], recv_info).is_err() {
-            continue;
+        if let Err(e) = conn.recv(&mut buf[..n], recv_info) {
+            eprintln!("recv error: {e:?}");
+            // Don't remove connection on transient errors
         }
 
-        // Collect readable stream IDs first to avoid borrow conflict
+        // Echo readable streams
         let readable: Vec<u64> = conn.readable().collect();
         for sid in readable {
             let mut sbuf = [0u8; 65535];
@@ -106,6 +123,7 @@ fn main() {
         }
 
         if conn.is_closed() {
+            println!("connection closed (dcid={:x?})", &conn_id);
             conns.remove(&conn_id);
         }
     }
