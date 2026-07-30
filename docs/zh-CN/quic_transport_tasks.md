@@ -3,6 +3,8 @@
 `quicz` 的目标是在 Zig 中实现 IETF QUIC 传输协议。本文把该目标拆成
 可逐步实现、可验证、可回滚的任务。
 
+> **注意**：本文档中引用的许多 `EndpointConnectionLifecycle` wrapper 方法名（如 `feedDatagramWithInstalledKeys*`、`processRoutedProtected*`、`driveCryptoBackend*` 等变体）已在 API 精简中合并为统一方法（如 `feedStepWithPendingWorkCrypto*`、`feedStepWithCrypto*`、`driveCryptoBackendStep*` 等）。lifecycle pub fn 已从 ~523 精简至 339。文中旧方法名保留作为历史任务记录。
+
 ## 范围
 
 `quicz` 会追踪 IETF QUIC 标准，但实际实现目标不是覆盖所有可选协议特性。对成熟

@@ -4,6 +4,8 @@
 plan converts that goal into verifiable work items that can be implemented and
 tested incrementally.
 
+> **Note**: Many `EndpointConnectionLifecycle` wrapper method names referenced in this document (e.g. `feedDatagramWithInstalledKeys*`, `processRoutedProtected*`, `driveCryptoBackend*` variants) have been consolidated into unified methods (e.g. `feedStepWithPendingWorkCrypto*`, `feedStepWithCrypto*`, `driveCryptoBackendStep*`). Lifecycle pub fn count has been reduced from ~523 to 339. Old method names are preserved as historical task records.
+
 ## Scope
 
 `quicz` tracks the IETF QUIC standards, but the practical implementation target
