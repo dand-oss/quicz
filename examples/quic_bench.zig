@@ -10,7 +10,7 @@
 const std = @import("std");
 const quicz = @import("quicz");
 
-const max_datagram_size: usize = 8000;
+const max_datagram_size: usize = 8900;
 /// Stream payload per chunk: leave room for QUIC header + AEAD tag + stream frame header.
 const stream_chunk_size: usize = max_datagram_size - 64;
 const transfer_size: usize = 16 * 1024 * 1024; // 16 MB
@@ -588,7 +588,7 @@ pub fn main() !void {
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "s2n-quic", "Rust", "~800 MB/s", "Linux GSO/GRO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux, no GSO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quinn", "Rust", "300-500 MB/s", "Linux tokio" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~268 MB/s", "macOS loopback, 8KB dgram" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~280 MB/s", "macOS loopback, 8.9KB dgram" });
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }
