@@ -39,17 +39,17 @@ zig build run-quic-bench
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream upload (16 MB) | **75.25 MB/s** | Threaded client/server, CUBIC, ns RTT |
+| Stream upload (16 MB) | **268.42 MB/s** | Threaded client/server, CUBIC, 8KB datagram |
 | Datagrams sent | ~25K | 1324 B each, pipelined ACK feedback |
-| Total time | ~213 ms | cwnd grows to 1.3 MB |
+| Total time | ~60 ms | cwnd grows to 6.1 MB |
 
 ## Echo Latency (1 KB round-trip, loopback)
 
 | Percentile | Latency | Notes |
 |---|---|---|
-| P50 | **19.5 μs** | Full QUIC round-trip (encrypt+send+receive+decrypt+echo) |
-| P99 | **46.4 μs** | |
-| P99.9 | **109.5 μs** | |
+| P50 | **21.4 μs** | Full QUIC round-trip (encrypt+send+receive+decrypt+echo) |
+| P99 | **65.8 μs** | |
+| P99.9 | **132.8 μs** | |
 
 5000 iterations, macOS loopback, ReleaseFast.
 
@@ -58,13 +58,13 @@ zig build run-quic-bench
 | Mode | 4-stream aggregate | Notes |
 |---|---|---|
 | In-memory (single-thread) | **0.26 GB/s** | No UDP overhead, shared cwnd, CUBIC |
-| UDP loopback (threaded) | **74.74 MB/s** | std.Io threaded, no-snapshot frame processing |
+| UDP loopback (threaded) | **226.53 MB/s** | std.Io threaded, 8KB datagram |
 
 ## Loss Recovery (loopback + simulated loss)
 
 | Loss rate | Throughput | Retention | Notes |
 |---|---|---|---|
-| 0% | 75.25 MB/s | 100% | Baseline |
+| 0% | 268.42 MB/s | 100% | Baseline |
 | 1% | 19.76 MB/s | 26% | loopback |
 | 5% | 10.71 MB/s | 14% | loopback |
 
@@ -97,7 +97,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, no GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~72 MB/s** | **macOS, loopback, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~268 MB/s** | **macOS, loopback, 8KB datagram, no GSO** | **This benchmark** |
 
 ### Echo Latency (small request round-trip)
 
@@ -108,7 +108,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Linux | community bench |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | Linux, single-thread | community bench |
 | quinn | Rust | ~50-100 μs | ~200-400 μs | Linux, tokio | ETH thesis |
-| **quicz** | **Zig** | **19.7 μs** | **54.1 μs** | **macOS, loopback, std.Io** | **This benchmark** |
+| **quicz** | **Zig** | **21.4 μs** | **65.8 μs** | **macOS, loopback, std.Io** | **This benchmark** |
 
 ### Loss Recovery
 
@@ -117,7 +117,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
 | quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **72 MB/s** | **19.26 MB/s (27%)** | **8.57 MB/s (12%)** | **CUBIC** | **This benchmark** |
+| **quicz** | **268 MB/s** | **107.34 MB/s (40%)** | **51.64 MB/s (19%)** | **CUBIC** | **This benchmark** |
 
 ### Multi-Stream Scaling
 
@@ -127,11 +127,11 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quic-go | ~600-900 MB/s | Good (per-stream goroutine) | community bench |
 | s2n-quic | ~800 MB/s-1.2 GB/s | Good (async I/O) | TQUIC benchmark |
 | quinn | single-core limited | Limited | KIT 2025 |
-| **quicz** | **64.60 MB/s** | **Shared cwnd** | **This benchmark** |
+| **quicz** | **226.53 MB/s** | **Shared cwnd** | **This benchmark** |
 
 ### quicz Performance Gap Analysis
 
-quicz at ~72 MB/s vs Gbps-level throughput in other implementations, primarily due to:
+quicz at ~268 MB/s (8KB datagram) vs Linux GSO implementations, primarily due to:
 
 1. **No GSO/GRO**: Linux GSO batch sending provides 3-10x throughput. macOS does not support it.
 2. **UDP syscall overhead**: per-packet sendto/recvfrom ~4-5 μs, 74% of processing time.
@@ -144,7 +144,7 @@ Optimization path (by expected gain):
 
 ### quicz Latency Advantage
 
-quicz Echo P50=19.7 μs under loopback conditions is competitive with most implementations:
+quicz Echo P50=21.4 μs under loopback conditions is competitive with most implementations:
 - Lower than s2n-quic ~20-40 μs (Linux epoll)
 - Lower than quic-go ~50-100 μs
 - Close to msquic ~5-15 μs (io_uring)
@@ -156,7 +156,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - Direct comparison is difficult due to different measurement methods, platforms, and configurations.
 - quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
 - Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
-- quicz at 75 MB/s (ns-accurate RTT, no-snapshot frame processing), performance optimization in progress.
+- quicz at 268 MB/s (8KB datagram, ns-accurate RTT, no-snapshot frame processing), performance optimization in progress.
 - Loss recovery and throughput optimization are ongoing priorities.
 
 ## Planned Benchmarks
@@ -172,7 +172,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
 Benchmark uses `Duration(0)` non-blocking receive; `nanoTime()` fixed to true nanosecond precision.
-Current throughput bottleneck is UDP syscall overhead (sendto/recvfrom); batch send optimization needed.
+Current throughput bottleneck is UDP syscall overhead (sendto/recvfrom). Larger datagrams improved 72→268 MB/s (3.7x); batch send optimization is next.
 
 ## References
 

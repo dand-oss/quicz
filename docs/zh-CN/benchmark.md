@@ -39,17 +39,17 @@ zig build run-quic-bench
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（16 MB） | **75.25 MB/s** | 线程化 client/server，CUBIC，ns RTT |
+| 流上传（16 MB） | **268.42 MB/s** | 线程化 client/server，CUBIC，8KB datagram |
 | 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
-| 总耗时 | ~213 ms | cwnd 增长至 1.3 MB |
+| 总耗时 | ~60 ms | cwnd 增长至 6.1 MB |
 
 ## Echo 延迟（1 KB 往返，loopback）
 
 | 百分位 | 延迟 | 说明 |
 |---|---|---|
-| P50 | **19.5 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
-| P99 | **46.4 μs** | |
-| P99.9 | **109.5 μs** | |
+| P50 | **21.4 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
+| P99 | **65.8 μs** | |
+| P99.9 | **132.8 μs** | |
 
 测试：5000 次迭代，macOS loopback，ReleaseFast。
 
@@ -58,13 +58,13 @@ zig build run-quic-bench
 | 模式 | 4 流聚合 | 说明 |
 |---|---|---|
 | 内存直连（单线程） | **0.26 GB/s** | 无 UDP 开销，共享 cwnd，CUBIC |
-| UDP loopback（线程化） | **74.74 MB/s** | std.Io 线程化，无快照帧处理 |
+| UDP loopback（线程化） | **226.53 MB/s** | std.Io 线程化，8KB datagram |
 
 ## 丢包恢复（loopback + 模拟丢包）
 
 | 丢包率 | 吞吐量 | 保持率 | 说明 |
 |---|---|---|---|
-| 0% | 75.25 MB/s | 100% | 基线 |
+| 0% | 268.42 MB/s | 100% | 基线 |
 | 1% | 19.76 MB/s | 26% | loopback |
 | 5% | 10.71 MB/s | 14% | loopback |
 
@@ -97,7 +97,7 @@ zig build run-quic-bench
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, 无 GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, 单核受限 | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~72 MB/s** | **macOS, loopback, 无 GSO** | **本基准** |
+| **quicz** | **Zig** | **~268 MB/s** | **macOS, loopback, 8KB datagram, 无 GSO** | **本基准** |
 
 ### Echo 延迟（小请求往返）
 
@@ -108,7 +108,7 @@ zig build run-quic-bench
 | quic-go | Go | ~50-100 μs | ~200-500 μs | Linux | 社区基准 |
 | quiche | Rust | ~30-80 μs | ~100-200 μs | Linux, 单线程 | 社区基准 |
 | quinn | Rust | ~50-100 μs | ~200-400 μs | Linux, tokio | ETH thesis |
-| **quicz** | **Zig** | **19.7 μs** | **54.1 μs** | **macOS, loopback, std.Io** | **本基准** |
+| **quicz** | **Zig** | **21.4 μs** | **65.8 μs** | **macOS, loopback, std.Io** | **本基准** |
 
 ### 丢包恢复
 
@@ -117,7 +117,7 @@ zig build run-quic-bench
 | msquic | ~3 Gbps | 保持 ~70-80% | 保持 ~40-50% | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | 保持 ~60-70% | 保持 ~30-40% | CUBIC | 社区基准 |
 | quinn | ~300-500 MB/s | msquic 领先 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **72 MB/s** | **19.26 MB/s (27%)** | **8.57 MB/s (12%)** | **CUBIC** | **本基准** |
+| **quicz** | **268 MB/s** | **107.34 MB/s (40%)** | **51.64 MB/s (19%)** | **CUBIC** | **本基准** |
 
 ### 多流扩展
 
@@ -127,11 +127,11 @@ zig build run-quic-bench
 | quic-go | ~600-900 MB/s | 良好（每流 goroutine） | 社区基准 |
 | s2n-quic | ~800 MB/s-1.2 GB/s | 良好（异步 I/O） | TQUIC benchmark |
 | quinn | 单核受限 | 有限 | KIT 2025 |
-| **quicz** | **64.60 MB/s** | **共享 cwnd** | **本基准** |
+| **quicz** | **226.53 MB/s** | **共享 cwnd** | **本基准** |
 
 ### quicz 性能差距分析
 
-quicz 当前 ~72 MB/s 与其他实现的 Gbps 级吞吐存在差距，主要原因：
+quicz 当前 ~268 MB/s（8KB datagram），与 Linux GSO 实现仍有差距，主要原因：
 
 1. **无 GSO/GRO**：Linux 实现的 GSO 批量发送可提升 3-10x 吞吐。macOS 不支持。
 2. **UDP 系统调用开销**：每包 sendto/recvfrom ~4-5 μs，占 74% 处理时间。
@@ -144,7 +144,7 @@ quicz 当前 ~72 MB/s 与其他实现的 Gbps 级吞吐存在差距，主要原�
 
 ### quicz 延迟优势
 
-quicz 的 Echo P50=19.7 μs 在 loopback 条件下优于多数实现的公开数据：
+quicz 的 Echo P50=21.4 μs 在 loopback 条件下优于多数实现的公开数据：
 - 低于 s2n-quic 的 ~20-40 μs（Linux epoll）
 - 低于 quic-go 的 ~50-100 μs
 - 接近 msquic 的 ~5-15 μs（io_uring）
@@ -156,7 +156,7 @@ quicz 的 Echo P50=19.7 μs 在 loopback 条件下优于多数实现的公开数
 - 直接对比困难，因测量方法、平台、配置不同。
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
-- quicz 当前 75 MB/s（ns 精度 RTT，无快照帧处理），性能优化进行中。
+- quicz 当前 268 MB/s（8KB datagram，ns 精度 RTT，无快照帧处理），性能优化进行中。
 - 丢包恢复和吞吐量优化是后续重点。
 
 ## 待完成基准
@@ -172,7 +172,7 @@ quicz 的 Echo P50=19.7 μs 在 loopback 条件下优于多数实现的公开数
 
 Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 使用 `poll(timeout_ms=0)` 实现非阻塞接收。
 Benchmark 使用 `Duration(0)` 非阻塞接收，`nanoTime()` 已修复为真正的纳秒精度。
-当前吞吐量瓶颈在 UDP 系统调用开销（sendto/recvfrom），需批量发送优化。
+当前吞吐量瓶颈在 UDP 系统调用开销（sendto/recvfrom），增大 datagram 已从 72→268 MB/s（3.7x），下一步批量发送优化。
 
 ## 参考
 
