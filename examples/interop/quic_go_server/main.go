@@ -18,6 +18,19 @@ import (
 )
 
 func generateTLSConfig() *tls.Config {
+	// Support loading certs from CERT/KEY env vars for interop testing
+	certFile := os.Getenv("CERT")
+	keyFile := os.Getenv("KEY")
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err == nil {
+			return &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				NextProtos:   []string{"hq-interop"},
+			}
+		}
+		fmt.Printf("failed to load cert/key from %s/%s: %v, generating self-signed\n", certFile, keyFile, err)
+	}
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
