@@ -570,7 +570,7 @@ pub fn main() !void {
     std.debug.print("\n  --- Comparison (loopback, single stream) ---\n", .{});
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "Implementation", "Lang", "Throughput", "Notes" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "msquic", "C", "1.5-2.5 GB/s", "Linux XDP/GSO" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~8 MB/s*", "macOS, *1ms timeout limit" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~53 MB/s", "macOS, ns RTT, CUBIC" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "s2n-quic", "Rust", "~800 MB/s", "Linux GSO/GRO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quic-go", "Go", "400-600 MB/s", "Linux GSO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux" });
