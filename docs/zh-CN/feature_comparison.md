@@ -90,7 +90,7 @@
 | msquic | C | ~7-8 Gbps | Windows, XDP | secnetperf dashboard |
 | msquic | C | ~3 Gbps | Linux, 无 XDP | Aalto 2025 thesis |
 | msquic | C | ~1 Gbps | macOS, loopback | secnetperf |
-| **quicz** | **Zig** | **75 MB/s (0.6 Gbps)** | **macOS, loopback** | **std.Io 线程化，CUBIC，无快照帧处理，无 GSO** |
+| **quicz** | **Zig** | **442 MB/s** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, 无 GSO** |
 | quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
 | quic-go | Go | ~4 Gbps | Linux, GSO, 多流 | KIT 2025 |
 | s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
@@ -101,10 +101,11 @@
 | picoquic | C | ~1-2 Gbps | Linux | KIT 2025 |
 
 说明：
-- quicz 当前 75 MB/s，瓶颈在 UDP 系统调用开销（sendto/recvfrom），无 GSO 批量发送。
+- quicz 当前 442 MB/s（8.9KB datagram, 100μs timeout），多流 536 MB/s，瓶颈在 UDP 系统调用开销，无 GSO 批量发送。
 - 其他实现的高吞吐依赖 Linux GSO/GRO（3-10x 提升）或 XDP 内核旁路。
 - macOS 不支持 GSO/XDP，msquic 在 macOS loopback 下约 1 Gbps。
 - 优化路径：sendmmsg 批量发送（2-3x）→ Linux GSO（3-10x）→ 多连接并行。
+- 外部互通：quic-go 握手+证书验证+ALPN+echo 已通过。
 - 详细对比见 [benchmark.md](benchmark.md)。
 
 ## 生产环境调优
