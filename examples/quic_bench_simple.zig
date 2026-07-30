@@ -179,5 +179,70 @@ pub fn main() !void {
         std.debug.print("  P99.9 = {d:.1} us\n", .{@as(f64, @floatFromInt(latencies[echo_iters * 999 / 1000])) / 1000.0});
     }
 
+
+    // --- Benchmark 3: Multi-stream throughput ---
+    {
+        std.debug.print("  --- Multi-stream Upload (4 streams x 4 MB, in-memory) ---\n", .{});
+        const num_streams: usize = 4;
+        const per_stream: usize = 4 * 1024 * 1024;
+        var ms_ids: [num_streams]u64 = undefined;
+        for (0..num_streams) |si| {
+            ms_ids[si] = try client.openStream();
+        }
+        var ms_payload: [1200]u8 = undefined;
+        @memset(&ms_payload, 'M');
+        var ms_read: [65536]u8 = undefined;
+        var ms_queued: [num_streams]usize = .{0} ** num_streams;
+        var ms_total_recv: usize = 0;
+        const ms_target = per_stream * num_streams;
+
+        const ms_start = nanoTime();
+        while (ms_total_recv < ms_target) {
+            for (0..num_streams) |si| {
+                var fed: usize = 0;
+                while (ms_queued[si] < per_stream and fed < 16) : (fed += 1) {
+                    const ch = @min(ms_payload.len, per_stream - ms_queued[si]);
+                    const fin = ms_queued[si] + ch >= per_stream;
+                    client.sendOnStream(ms_ids[si], ms_payload[0..ch], fin) catch break;
+                    ms_queued[si] += ch;
+                }
+            }
+            while (true) {
+                const dg = client.pollProtectedShortDatagramWithInstalledKeys(
+                    @intCast(nanoTime()), &server_dcid,
+                ) catch break orelse break;
+                defer allocator.free(dg);
+                _ = server.processProtectedShortDatagramWithInstalledKeys(
+                    @intCast(nanoTime()), client_dcid.len, dg,
+                ) catch {};
+            }
+            for (0..num_streams) |si| {
+                while (true) {
+                    const n = server.recvOnStream(ms_ids[si], &ms_read) catch break orelse break;
+                    if (n == 0) break;
+                    ms_total_recv += n;
+                }
+            }
+            while (true) {
+                const ack = server.pollProtectedShortDatagramWithInstalledKeys(
+                    @intCast(nanoTime()), &client_dcid,
+                ) catch break orelse break;
+                defer allocator.free(ack);
+                _ = client.processProtectedShortDatagramWithInstalledKeys(
+                    @intCast(nanoTime()), server_dcid.len, ack,
+                ) catch {};
+            }
+        }
+        const ms_elapsed = nanoTime() - ms_start;
+        const ms_seconds = @as(f64, @floatFromInt(ms_elapsed)) / 1e9;
+        const ms_gbps = @as(f64, @floatFromInt(ms_total_recv)) / 1e9 / ms_seconds;
+        std.debug.print("  {s:20} {d:.2} GB/s  ({d} MB in {d:.3} ms)\n", .{
+            "4-stream aggregate",
+            ms_gbps,
+            ms_total_recv / (1024 * 1024),
+            @as(f64, @floatFromInt(ms_elapsed)) / 1e6,
+        });
+    }
+
     std.debug.print("\n  Done.\n", .{});
 }
