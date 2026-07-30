@@ -8450,33 +8450,12 @@ pub const Connection = struct {
             self.allocator.free(removed.data);
         }
     }
-
-    fn rollbackCryptoFrameQueueFromSnapshots(
-        self: *Connection,
-        queue: *std.ArrayList(PendingCryptoFrame),
-        snapshots: []const PendingCryptoFrame,
-    ) void {
-        deinitPendingCryptoFrameSlice(self.allocator, queue.items);
-        queue.items.len = snapshots.len;
-        @memcpy(queue.items[0..snapshots.len], snapshots);
-    }
-
     fn rollbackSendQueue(self: *Connection, original_len: usize) void {
         while (self.send_queue.items.len > original_len) {
             const removed = self.send_queue.orderedRemove(self.send_queue.items.len - 1);
             self.allocator.free(removed.data);
         }
     }
-
-    fn rollbackSendQueueFromSnapshots(
-        self: *Connection,
-        snapshots: []const PendingStreamFrame,
-    ) void {
-        deinitPendingStreamFrameSlice(self.allocator, self.send_queue.items);
-        self.send_queue.items.len = snapshots.len;
-        @memcpy(self.send_queue.items[0..snapshots.len], snapshots);
-    }
-
     fn clonePendingStreamFrame(self: *Connection, pending: PendingStreamFrame) Error!PendingStreamFrame {
         const data = self.allocator.dupe(u8, pending.data) catch return error.OutOfMemory;
         return .{
@@ -8486,25 +8465,6 @@ pub const Connection = struct {
             .data = data,
         };
     }
-
-    fn clonePendingStreamFrames(
-        self: *Connection,
-        frames: []const PendingStreamFrame,
-    ) Error![]PendingStreamFrame {
-        const snapshots = self.allocator.alloc(PendingStreamFrame, frames.len) catch return error.OutOfMemory;
-        var cloned_count: usize = 0;
-        errdefer {
-            deinitPendingStreamFrameSlice(self.allocator, snapshots[0..cloned_count]);
-            self.allocator.free(snapshots);
-        }
-
-        for (frames, 0..) |pending, i| {
-            snapshots[i] = try self.clonePendingStreamFrame(pending);
-            cloned_count += 1;
-        }
-        return snapshots;
-    }
-
     fn clonePendingCryptoFrame(self: *Connection, pending: PendingCryptoFrame) Error!PendingCryptoFrame {
         const data = self.allocator.dupe(u8, pending.data) catch return error.OutOfMemory;
         return .{
@@ -8512,25 +8472,6 @@ pub const Connection = struct {
             .data = data,
         };
     }
-
-    fn clonePendingCryptoFrames(
-        self: *Connection,
-        frames: []const PendingCryptoFrame,
-    ) Error![]PendingCryptoFrame {
-        const snapshots = self.allocator.alloc(PendingCryptoFrame, frames.len) catch return error.OutOfMemory;
-        var cloned_count: usize = 0;
-        errdefer {
-            deinitPendingCryptoFrameSlice(self.allocator, snapshots[0..cloned_count]);
-            self.allocator.free(snapshots);
-        }
-
-        for (frames, 0..) |pending, i| {
-            snapshots[i] = try self.clonePendingCryptoFrame(pending);
-            cloned_count += 1;
-        }
-        return snapshots;
-    }
-
     fn cloneSentPacket(self: *Connection, sent_packet: SentPacket) Error!SentPacket {
         var cloned = sent_packet;
         cloned.stream_frame = null;
@@ -8545,99 +8486,6 @@ pub const Connection = struct {
         else
             null;
         return cloned;
-    }
-
-    fn cloneSentPackets(self: *Connection, sent_packets: []const SentPacket) Error![]SentPacket {
-        const snapshots = self.allocator.alloc(SentPacket, sent_packets.len) catch return error.OutOfMemory;
-        var cloned_count: usize = 0;
-        errdefer {
-            deinitSentPacketSlice(self.allocator, snapshots[0..cloned_count]);
-            self.allocator.free(snapshots);
-        }
-
-        for (sent_packets, 0..) |sent_packet, i| {
-            snapshots[i] = try self.cloneSentPacket(sent_packet);
-            cloned_count += 1;
-        }
-        return snapshots;
-    }
-
-    fn rollbackStoredNewTokens(self: *Connection, original_len: usize) void {
-        while (self.stored_new_tokens.items.len > original_len) {
-            const removed = self.stored_new_tokens.orderedRemove(self.stored_new_tokens.items.len - 1);
-            self.allocator.free(removed);
-        }
-    }
-
-    fn rollbackPeerStreamDataBlockedLimits(
-        self: *Connection,
-        original_len: usize,
-        snapshots: []const PeerStreamDataBlockedState,
-    ) void {
-        self.peer_stream_data_blocked_limits.items.len = original_len;
-        @memcpy(self.peer_stream_data_blocked_limits.items[0..original_len], snapshots);
-    }
-
-    fn rollbackRecvStreams(
-        self: *Connection,
-        original_len: usize,
-        snapshots: []const RecvStreamSnapshot,
-    ) void {
-        while (self.recv_streams.items.len > original_len) {
-            var removed = self.recv_streams.orderedRemove(self.recv_streams.items.len - 1);
-            removed.deinit(self.allocator);
-        }
-
-        for (snapshots, 0..) |snapshot, i| {
-            var stream = &self.recv_streams.items[i];
-            while (stream.pending.items.len > snapshot.pending_count) {
-                const removed = stream.pending.orderedRemove(stream.pending.items.len - 1);
-                self.allocator.free(removed.data);
-            }
-            stream.max_data = snapshot.max_data;
-            stream.data.items.len = snapshot.data_len;
-            stream.read_offset = snapshot.read_offset;
-            stream.final_size = snapshot.final_size;
-            stream.reset_error_code = snapshot.reset_error_code;
-            stream.data_read_observed = snapshot.data_read_observed;
-            stream.reset_read_observed = snapshot.reset_read_observed;
-            stream.stop_sending_sent = snapshot.stop_sending_sent;
-            stream.stream_count_credit_released = snapshot.stream_count_credit_released;
-        }
-    }
-
-    fn rollbackSendStreams(
-        self: *Connection,
-        original_len: usize,
-        snapshots: []const SendStreamState,
-    ) void {
-        self.send_streams.items.len = original_len;
-        @memcpy(self.send_streams.items[0..original_len], snapshots);
-    }
-
-    fn rollbackSentPackets(
-        self: *Connection,
-        sent_packets: *std.ArrayList(SentPacket),
-        snapshots: []const SentPacket,
-    ) void {
-        clearSentPacketList(self.allocator, sent_packets);
-        sent_packets.items.len = snapshots.len;
-        @memcpy(sent_packets.items[0..snapshots.len], snapshots);
-    }
-
-    fn rollbackActiveConnectionIds(
-        self: *Connection,
-        original_len: usize,
-        snapshots: []const ActiveConnectionIdSnapshot,
-    ) void {
-        while (self.active_connection_ids.items.len > original_len) {
-            const removed = self.active_connection_ids.orderedRemove(self.active_connection_ids.items.len - 1);
-            self.allocator.free(removed.connection_id);
-        }
-
-        for (snapshots, 0..) |snapshot, i| {
-            self.active_connection_ids.items[i].retired = snapshot.retired;
-        }
     }
 
     fn streamDataBlockedFrameIsObsolete(self: *Connection, stream_data: frame.StreamDataBlockedFrame) bool {
@@ -10395,18 +10243,6 @@ pub const Connection = struct {
         }
         return null;
     }
-
-    fn rollbackLocalConnectionIds(
-        self: *Connection,
-        original_len: usize,
-        snapshots: []const LocalConnectionIdSnapshot,
-    ) void {
-        self.local_connection_ids.items.len = original_len;
-        for (self.local_connection_ids.items, snapshots[0..original_len]) |*local_id, snapshot| {
-            local_id.retired = snapshot.retired;
-        }
-    }
-
     pub fn rollbackIssuedConnectionIds(
         self: *Connection,
         original_len: usize,
