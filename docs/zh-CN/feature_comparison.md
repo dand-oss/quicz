@@ -1,6 +1,6 @@
 ## 与其它 QUIC 实现的功能对比
 
-更新时间：2026-07-28。来源：各项目 README、源码审查、RFC 合规追踪。
+更新时间：2026-07-30。来源：各项目 README、源码审查、RFC 合规追踪。
 
 | 功能 | RFC | quic-go | quiche | s2n-quic | quicz | 差距 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -30,7 +30,7 @@
 | PTO jitter | 9002 | ❌ | ❌ | ✅ | ✅ | 防止超时同步化 |
 | 快速重传 | 9002 | ✅ | ✅ | ✅ | ✅ | — |
 | App-limited (RFC 8312 §5.8) | 8312 | ✅ | ✅ | ✅ | ✅ | 3×MTU 阈值 |
-| 报文 pacing | 9002 | ✅ | ✅ | ✅ | ✅ | — |
+| 报文 pacing | 9002 | ✅ | ✅ | ✅ | ✅ | ns 精度 token bucket |
 | AES-128-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
@@ -88,7 +88,7 @@
 | 实现 | 语言 | 吞吐量 | 平台 | 备注 |
 | --- | --- | --- | --- | --- |
 | msquic | C | 1.5-2.5 GB/s | Linux | XDP/GSO，内核旁路 |
-| **quicz** | **Zig** | **1.94 GB/s** | **macOS** | **线程化 std.Io，CUBIC，无 GSO** |
+| **quicz** | **Zig** | **~1.6-2.3 GB/s** | **macOS** | **线程化 std.Io，CUBIC，ns pacer，无 GSO** |
 | s2n-quic | Rust | ~800 MB/s | Linux | GSO/GRO |
 | quic-go | Go | ~400-600 MB/s | Linux | GSO |
 | quiche | Rust | ~300-500 MB/s | Linux | — |
@@ -98,7 +98,7 @@
 - quicz 在 macOS loopback（无 GSO/XDP）下达到 1.94 GB/s，超过 msquic 下限（1.5 GB/s）。
 - msquic 的 2.5 GB/s 依赖 Linux XDP 内核旁路 + UDP_SEGMENT (GSO)，macOS 无此能力。
 - 在 Linux + GSO 条件下，quicz 预期可进一步提升（sendmmsg + UDP_SEGMENT）。
-- 测试方法：64 MB 单流上传，client/server 分线程，CUBIC 拥塞控制，cwnd 增长至 1.2 MB。
+- 测试方法：16 MB 单流上传，client/server 分线程，CUBIC 拥塞控制，cwnd 增长至 2.3 MB。
 - 运行：`zig build run-quic-bench`
 
 ## 生产环境调优
