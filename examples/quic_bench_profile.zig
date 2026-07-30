@@ -4,7 +4,8 @@
 const std = @import("std");
 const quicz = @import("quicz");
 
-const max_datagram_size: usize = 1324;
+const max_datagram_size: usize = 8900;
+const stream_chunk_size: usize = max_datagram_size - 128;
 const transfer_size: usize = 16 * 1024 * 1024;
 const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
 const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
@@ -39,7 +40,7 @@ const ServerContext = struct {
 };
 
 fn serverThread(ctx: *ServerContext) void {
-    var recv_buf: [1500]u8 = undefined;
+    var recv_buf: [10000]u8 = undefined;
     var read_buf: [65536]u8 = undefined;
     const stream_id: u64 = 0;
     var have_client_addr = false;
@@ -112,10 +113,12 @@ pub fn main() !void {
         .initial_max_data = 256 * 1024 * 1024,
         .initial_max_stream_data = 256 * 1024 * 1024,
         .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
     });
     var server = try quicz.Connection.init(allocator, .server, .{
         .initial_max_data = 256 * 1024 * 1024,
         .initial_max_stream_data = 256 * 1024 * 1024,
+        .max_datagram_size = max_datagram_size,
     });
 
     try client.installOneRttTrafficSecrets(.{ .local = secrets.client.secret, .peer = secrets.server.secret });
@@ -144,9 +147,9 @@ pub fn main() !void {
     const srv_thread = try std.Thread.spawn(.{}, serverThread, .{&server_ctx});
 
     const stream_id = try client.openStream();
-    var payload: [max_datagram_size]u8 = undefined;
+    var payload: [stream_chunk_size]u8 = undefined;
     @memset(&payload, 'X');
-    var recv_buf: [1500]u8 = undefined;
+    var recv_buf: [10000]u8 = undefined;
 
     var total_queued: usize = 0;
     var pn: i64 = 0;
