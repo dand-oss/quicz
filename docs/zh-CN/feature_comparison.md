@@ -105,7 +105,7 @@
 - 其他实现的高吞吐依赖 Linux GSO/GRO（3-10x 提升）或 XDP 内核旁路。
 - macOS 不支持 GSO/XDP，msquic 在 macOS loopback 下约 1 Gbps。
 - 优化路径：sendmmsg 批量发送（2-3x）→ Linux GSO（3-10x）→ 多连接并行。
-- 外部互通：quic-go 握手+证书验证+ALPN+echo 已通过。
+- 外部互通：quic-go + s2n-quic 握手+证书验证+ALPN+echo 均已通过。
 - 详细对比见 [benchmark.md](benchmark.md)。
 
 ## 生产环境调优

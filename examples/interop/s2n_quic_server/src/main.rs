@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::spawn(async move {
                     if let Ok(Some(data)) = stream.receive().await {
                         println!("request: {:?}", String::from_utf8_lossy(&data));
-                        let response = Bytes::from_static(b"Hello from s2n-quic!");
+                        let response = Bytes::copy_from_slice(&data);
                         let _ = stream.send(response).await;
                         let _ = stream.finish();
                     }

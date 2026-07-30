@@ -104,7 +104,7 @@ Notes:
 - quicz achieves 442 MB/s single-stream / 536 MB/s multi-stream on macOS loopback (no GSO/XDP).
 - quicz multi-stream (536 MB/s) exceeds quiche/quinn (300-500 MB/s on Linux).
 - Other implementations rely on Linux GSO/GRO (3-10x improvement) or XDP kernel bypass.
-- External interop: quic-go handshake + cert verify + ALPN + echo PASS.
+- External interop: quic-go + s2n-quic handshake + cert verify + ALPN + echo PASS.
 - Optimization path: sendmmsg batch send (2-3x) → Linux GSO (3-10x) → multi-connection parallel.
 - Detailed benchmarks: [benchmark.md](benchmark.md)
 

@@ -166,6 +166,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - [x] DATAGRAM throughput (RFC 9221, installed keys): **168.78 MB/s** (1200B payload, loopback)
 - [x] CPU utilization (/usr/bin/time -l, single-thread in-memory: 12.5% user, 2.5% sys)
 - [x] External interop (quic-go): handshake + cert verify + ALPN + 2-stream echo PASS
+- [x] External interop (s2n-quic): handshake + cert verify + ALPN + 2-stream echo PASS
 - [x] Non-blocking receive (Duration(0) verified working)
 
 ## Known Limitations

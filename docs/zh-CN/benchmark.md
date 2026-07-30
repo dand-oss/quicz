@@ -177,6 +177,7 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 - [x] DATAGRAM 吞吐（RFC 9221，installed keys）：**168.78 MB/s**（1200B payload，loopback）
 - [x] CPU 占用（/usr/bin/time -l，单线程内存直连）
 - [x] 外部互通（quic-go）：握手 + 证书验证 + ALPN + 双流 echo 通过
+- [x] 外部互通（s2n-quic）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 非阻塞 receive（Duration(0) 已验证可用）
 
 ## 已知限制
