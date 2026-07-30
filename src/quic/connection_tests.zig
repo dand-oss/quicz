@@ -44883,14 +44883,17 @@ test "EndpointConnectionLifecycle compatible-version backend drive selects next 
     _ = try close_connection.recordPacketSentInSpace(.application, 20 * ms, 100);
 
     var close_backend = Backend{ .peer_transport_parameters = peer_params };
-    const close_result = try lifecycle.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        162,
-        &close_connection,
-        .handshake,
-        close_backend.backend(),
-        &scratch,
-        &compatibilities,
-    );
+    const close_drive_views = [_]EndpointCryptoBackendDriveView{.{
+        .connection_id = 162,
+        .connection = &close_connection,
+        .backend = close_backend.backend(),
+        .scratch = &scratch,
+    }};
+    const close_deadline_connections = [_]EndpointConnectionView{.{
+        .connection_id = 162,
+        .connection = &close_connection,
+    }};
+    const close_result = try lifecycle.driveCryptoBackendStep(&.{PacketNumberSpace.handshake}, &close_drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, &compatibilities, &close_deadline_connections);
     try std.testing.expectEqual(@as(usize, 1), close_result.backend.connections_driven);
     try std.testing.expectEqual(peer_params.len, close_result.backend.progress.peer_transport_parameters_bytes);
     try std.testing.expectEqual(@as(?packet.Version, packet.Version.v2), close_result.backend.progress.peer_compatible_version_selected);

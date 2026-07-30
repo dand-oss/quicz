@@ -4531,36 +4531,6 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space);
     }
-    /// Drive one backend, then drain installed-key output.
-    ///
-    /// This is the single-connection bounded-output backend-drive step for
-    /// simple socket loops that do not need to manually build drive and poll
-    /// view slices.
-    pub fn driveCryptoBackendInSpaceAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{}, &.{}, &poll_views, now_nanos, poll_options.space, out);
-    }
     /// Drive crypto backends across caller-owned connections with close propagation.
     ///
     /// This is the sweep form of
@@ -4662,38 +4632,6 @@ pub const EndpointConnectionLifecycle = struct {
     ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
         return self.driveCryptoBackendStepWithDrain(&.{space}, drive_views, .{ .close_on_error = true }, &.{}, poll_views, now_nanos, poll_space, out);
     
-    }
-
-
-
-    /// Drive one close-propagating backend, then drain installed-key output.
-    ///
-    /// Peer transport-parameter errors queue CONNECTION_CLOSE and return before
-    /// any output slot is initialized.
-    pub fn driveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, now_nanos, poll_options.space, out);
     }
     /// Drive a crypto backend and queue transport close on peer-parameter errors.
     ///
@@ -4800,97 +4738,6 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.driveCryptoBackendStep(spaces, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
     }
-
-
-
-
-    /// Drive one compatible-version backend, then select the next deadline.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const deadline_connections = [_]EndpointConnectionView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
-    }
-
-
-
-    /// Drive one compatible-version backend, then poll one installed-key datagram.
-    ///
-    /// This is the single-connection form of
-    /// `driveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram()`.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointCryptoBackendDriveDatagramResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{ .compatible_version = true }, compatibilities, &poll_views, now_nanos, poll_options.space);
-    }
-    /// Drive one compatible-version backend, then drain installed-key output.
-    ///
-    /// This is the single-connection form of
-    /// `driveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams()`.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{ .compatible_version = true }, compatibilities, &poll_views, now_nanos, poll_options.space, out);
-    }
-    /// Drive a compatible-version backend and queue transport close on errors.
-    ///
-    /// This wraps `Connection.driveCryptoBackendInSpaceWithCompatibleVersionOrClose()`
     /// and refreshes endpoint recovery scheduling after both success and
     /// close-propagating peer Version Information errors.
     pub fn driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndArmConnection(
@@ -4997,94 +4844,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-
-
-
-
-    /// Drive one compatible-version close path, then select the next deadline.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-    ) Error!EndpointCryptoBackendDriveNextDeadlineResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const deadline_connections = [_]EndpointConnectionView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-        }};
-        return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
-    }
-
-
-
-    /// Drive one compatible-version close path, then poll one installed-key datagram.
-    ///
-    /// Peer Version Information errors that move the connection into closing
-    /// return the protected close datagram in the same step.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-    ) Error!EndpointCryptoBackendDriveDatagramResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithPoll(&.{space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, &poll_views, now_nanos, poll_options.space);
-    }
-    /// Drive one compatible-version close path, then drain installed-key output.
-    ///
-    /// Peer Version Information errors that move the connection into closing
-    /// drain the protected close datagram in the same step.
-    pub fn driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        space: PacketNumberSpace,
-        backend: CryptoBackend,
-        scratch: []u8,
-        compatibilities: []const VersionCompatibility,
-        now_nanos: i64,
-        poll_options: EndpointPollInstalledKeyDatagramOptions,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointCryptoBackendDriveDatagramDrainResult {
-        const drive_views = [_]EndpointCryptoBackendDriveView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .backend = backend,
-            .scratch = scratch,
-        }};
-        const poll_views = [_]EndpointConnectionPollView{.{
-            .connection_id = connection_id,
-            .connection = connection,
-            .destination_connection_id = poll_options.destination_connection_id,
-            .source_connection_id = poll_options.source_connection_id,
-        }};
-        return self.driveCryptoBackendStepWithDrain(&.{space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, &poll_views, now_nanos, poll_options.space, out);
-    }
     /// Service one connection's due loss/PTO timer and refresh endpoint state.
     pub fn serviceRecoveryTimer(
         self: *EndpointConnectionLifecycle,
@@ -5619,14 +5378,19 @@ pub const EndpointConnectionLifecycle = struct {
 
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-                connection_id,
-                connection,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
+            .backend = blk: {
+                const drive_views = [_]EndpointCryptoBackendDriveView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                    .backend = backend,
+                    .scratch = scratch,
+                }};
+                const deadline_connections = [_]EndpointConnectionView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                }};
+                break :blk try self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
+            },
         };
     }
 
@@ -5701,14 +5465,19 @@ pub const EndpointConnectionLifecycle = struct {
 
         return .{
             .pending_work = pending_sweep,
-            .backend = try self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-                connection_id,
-                connection,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
+            .backend = blk: {
+                const drive_views = [_]EndpointCryptoBackendDriveView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                    .backend = backend,
+                    .scratch = scratch,
+                }};
+                const deadline_connections = [_]EndpointConnectionView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                }};
+                break :blk try self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
+            },
         };
     }
     /// Process pending work, drive one backend, then poll installed-key output.
@@ -7080,14 +6849,19 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-                connection_id,
-                connection,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
+            .backend = blk: {
+                const drive_views = [_]EndpointCryptoBackendDriveView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                    .backend = backend,
+                    .scratch = scratch,
+                }};
+                const deadline_connections = [_]EndpointConnectionView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                }};
+                break :blk try self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
+            },
         };
     }
 
@@ -7170,14 +6944,19 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return .{
             .due_work = due_work,
-            .backend = try self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-                connection_id,
-                connection,
-                backend_space,
-                backend,
-                scratch,
-                compatibilities,
-            ),
+            .backend = blk: {
+                const drive_views = [_]EndpointCryptoBackendDriveView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                    .backend = backend,
+                    .scratch = scratch,
+                }};
+                const deadline_connections = [_]EndpointConnectionView{.{
+                    .connection_id = connection_id,
+                    .connection = connection,
+                }};
+                break :blk try self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
+            },
         };
     }
 
@@ -12315,14 +12094,17 @@ pub const EndpointConnectionLifecycle = struct {
             dcid_len,
             datagram,
         );
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionAndSelectNextDeadline(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-        );
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+        }};
+        return self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections);
     }
 
     /// Process installed-key 1-RTT input through compatible-version close propagation.
@@ -12355,14 +12137,17 @@ pub const EndpointConnectionLifecycle = struct {
                 .next_deadline = self.nextDeadline(connection_id, connection),
             };
         };
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndSelectNextDeadline(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-        ) catch |err| {
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const deadline_connections = [_]EndpointConnectionView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+        }};
+        return self.driveCryptoBackendStep(&.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true, .output = .select_deadline }, compatibilities, &deadline_connections) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             return .{
                 .backend = .{},
@@ -12503,16 +12288,19 @@ pub const EndpointConnectionLifecycle = struct {
             dcid_len,
             datagram,
         );
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionAndPollDatagram(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-            poll_now_nanos,
-            poll_options,
-        );
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{ .compatible_version = true }, compatibilities, &poll_views, poll_now_nanos, poll_options.space);
     }
 
     /// Process installed-key 1-RTT input through compatible-version close propagation and poll output.
@@ -12557,16 +12345,19 @@ pub const EndpointConnectionLifecycle = struct {
                 } else null,
             };
         };
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-            poll_now_nanos,
-            poll_options,
-        ) catch |err| {
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithPoll(&.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, &poll_views, poll_now_nanos, poll_options.space) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             const polled = try self.pollDatagram(
                 connection_id,
@@ -12611,16 +12402,19 @@ pub const EndpointConnectionLifecycle = struct {
             dcid_len,
             datagram,
         );
-        return self.driveCryptoBackendInSpaceAndDrainDatagrams(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            drain_now_nanos,
-            poll_options,
-            out,
-        );
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{}, &.{}, &poll_views, drain_now_nanos, poll_options.space, out);
     }
 
     /// Process installed-key 1-RTT input through close propagation, drive a backend, and drain output.
@@ -12662,16 +12456,19 @@ pub const EndpointConnectionLifecycle = struct {
                 ),
             };
         };
-        return self.driveCryptoBackendInSpaceOrCloseAndDrainDatagrams(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            drain_now_nanos,
-            poll_options,
-            out,
-        ) catch |err| {
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{ .close_on_error = true }, &.{}, &poll_views, drain_now_nanos, poll_options.space, out) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             return .{
                 .backend = .{},
@@ -12713,17 +12510,19 @@ pub const EndpointConnectionLifecycle = struct {
             dcid_len,
             datagram,
         );
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionAndDrainDatagrams(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-            drain_now_nanos,
-            poll_options,
-            out,
-        );
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{ .compatible_version = true }, compatibilities, &poll_views, drain_now_nanos, poll_options.space, out);
     }
 
     /// Process installed-key 1-RTT input through compatible-version close propagation and drain output.
@@ -12766,17 +12565,19 @@ pub const EndpointConnectionLifecycle = struct {
                 ),
             };
         };
-        return self.driveCryptoBackendInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
-            connection_id,
-            connection,
-            backend_space,
-            backend,
-            scratch,
-            compatibilities,
-            drain_now_nanos,
-            poll_options,
-            out,
-        ) catch |err| {
+        const drive_views = [_]EndpointCryptoBackendDriveView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .backend = backend,
+            .scratch = scratch,
+        }};
+        const poll_views = [_]EndpointConnectionPollView{.{
+            .connection_id = connection_id,
+            .connection = connection,
+            .destination_connection_id = poll_options.destination_connection_id,
+            .source_connection_id = poll_options.source_connection_id,
+        }};
+        return self.driveCryptoBackendStepWithDrain(&.{backend_space}, &drive_views, .{ .close_on_error = true, .compatible_version = true }, compatibilities, &poll_views, drain_now_nanos, poll_options.space, out) catch |err| {
             if (err != error.InvalidPacket or connection.connectionState() != .closing) return err;
             return .{
                 .backend = .{},

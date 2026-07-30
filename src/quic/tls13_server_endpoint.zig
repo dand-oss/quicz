@@ -2818,20 +2818,20 @@ pub fn Tls13ServerEndpoint(
             out: []root.EndpointPolledDatagramResult,
         ) (root.Error || error{UnknownConnectionId})!root.EndpointCryptoBackendDriveDatagramDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            return self.lifecycle.driveCryptoBackendInSpaceAndDrainDatagrams(
-                connection_id,
-                connection_of(record),
-                packetNumberSpace(space),
-                crypto_backend_of(record),
-                scratch,
-                now_nanos,
-                .{
-                    .space = space,
-                    .destination_connection_id = destination_connection_id_of(record),
-                    .source_connection_id = source_connection_id_of(record),
-                },
-                out,
-            );
+            const conn = connection_of(record);
+            const drive_views = [_]root.EndpointCryptoBackendDriveView{.{
+                .connection_id = connection_id,
+                .connection = conn,
+                .backend = crypto_backend_of(record),
+                .scratch = scratch,
+            }};
+            const poll_views = [_]root.EndpointConnectionPollView{.{
+                .connection_id = connection_id,
+                .connection = conn,
+                .destination_connection_id = destination_connection_id_of(record),
+                .source_connection_id = source_connection_id_of(record),
+            }};
+            return self.lifecycle.driveCryptoBackendStepWithDrain(&.{packetNumberSpace(space)}, &drive_views, .{}, &.{}, &poll_views, now_nanos, space, out);
         }
 
         /// Drive one TLS space and return the output drain with its UDP route.
