@@ -122,10 +122,19 @@ zig build run-quic-bench
 
 ## 待完成基准
 
-- [x] 多流并发（4 流，内存直连）
-- [ ] DATAGRAM 吞吐（RFC 9221）
+- [x] 多流并发（4 流，内存直连 + UDP 线程化）
+- [x] 丢包恢复（1%/5%，loopback + 100μs RTT）
+- [ ] DATAGRAM 吞吐（RFC 9221，需完整握手）
 - [ ] CPU 占用（perf stat / Instruments）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
+- [ ] 恢复非阻塞 receive（Zig 0.16 std.Io Duration(0)=永久等待，需 POSIX MSG_DONTWAIT）
+
+## 已知限制
+
+Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 表示永久等待而非非阻塞。
+当前使用 `fromMilliseconds(1)` 作为最小工作超时，引入 ~1ms/次 的等待开销。
+历史数据（~2 GB/s）在 Duration(0) 作为非阻塞时测得。
+恢复全性能需要绕过 std.Io 使用 POSIX `recvfrom(MSG_DONTWAIT)` 或 kqueue 非阻塞模式。
 
 ## 参考
 

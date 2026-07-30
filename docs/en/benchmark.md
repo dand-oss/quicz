@@ -122,10 +122,19 @@ zig build run-quic-bench
 
 ## Planned Benchmarks
 
-- [x] Multi-stream (4 streams, in-memory)
-- [ ] DATAGRAM throughput (RFC 9221)
+- [x] Multi-stream (4 streams, in-memory + UDP threaded)
+- [x] Loss recovery (1%/5%, loopback + 100us RTT)
+- [ ] DATAGRAM throughput (RFC 9221, requires full handshake)
 - [ ] CPU utilization (perf stat / Instruments)
 - [ ] External interop throughput (quic-go/quiche/s2n-quic peer)
+- [ ] Restore non-blocking receive (Zig 0.16 std.Io Duration(0)=infinite, needs POSIX MSG_DONTWAIT)
+
+## Known Limitations
+
+Zig 0.16 `std.Io.Threaded` treats `receiveTimeout(Duration(0))` as infinite wait, not non-blocking.
+Currently using `fromMilliseconds(1)` as minimum working timeout, adding ~1ms/call overhead.
+Historical data (~2 GB/s) was measured when Duration(0) acted as non-blocking.
+Restoring full performance requires bypassing std.Io with POSIX `recvfrom(MSG_DONTWAIT)` or kqueue non-blocking mode.
 
 ## References
 
