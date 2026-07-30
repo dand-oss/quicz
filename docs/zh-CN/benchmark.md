@@ -35,6 +35,17 @@ zig build run-quic-bench
 | Echo P99.9 | **182.1 μs** | |
 | 4 流聚合（4×4 MB） | **0.26 GB/s** | 共享 cwnd |
 
+
+### CPU 占用（单线程内存直连，/usr/bin/time -l）
+
+| 指标 | 数值 |
+|---|---|
+| Real time | 0.80s |
+| User CPU | 0.10s (12.5%) |
+| Sys CPU | 0.02s (2.5%) |
+| Peak RSS | 346 MB |
+
+CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU 计算。
 ## 吞吐量（单流，loopback）
 
 | 指标 | 数值 | 说明 |
@@ -164,7 +175,7 @@ quicz 的 Echo P50=21.0 μs 在 loopback 条件下优于多数实现的公开数
 - [x] 多流并发（4 流，内存直连 + UDP 线程化）
 - [x] 丢包恢复（1%/5%，loopback + 100μs RTT）
 - [ ] DATAGRAM 吞吐（RFC 9221，需完整握手）
-- [ ] CPU 占用（perf stat / Instruments）
+- [x] CPU 占用（/usr/bin/time -l，单线程内存直连）
 - [ ] 外部互通吞吐（quic-go/quiche/s2n-quic peer）
 - [x] 非阻塞 receive（Duration(0) 已验证可用）
 
