@@ -9194,7 +9194,7 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// This keeps the single-space protected long success behavior while
     /// queueing CONNECTION_CLOSE for authenticated plaintext frame errors.
-    pub fn processProtectedLongDatagramInSpaceOrClose(
+    fn processProtectedLongDatagramInSpaceOrClose(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
@@ -10128,7 +10128,7 @@ pub const EndpointConnectionLifecycle = struct {
     /// Key selection and success behavior match
     /// `processProtectedShortDatagramWithKeyUpdate()`, while authenticated
     /// frame payload errors queue CONNECTION_CLOSE.
-    pub fn processProtectedShortDatagramWithKeyUpdateOrClose(
+    fn processProtectedShortDatagramWithKeyUpdateOrClose(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
