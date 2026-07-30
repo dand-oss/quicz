@@ -10437,7 +10437,7 @@ pub const EndpointConnectionLifecycle = struct {
     /// The key-phase state advances only after authenticated frame processing
     /// succeeds. Classified plaintext frame errors queue CONNECTION_CLOSE and
     /// leave caller-owned key state unchanged.
-    pub fn processProtectedShortDatagramWithKeyPhaseStateOrClose(
+    fn processProtectedShortDatagramWithKeyPhaseStateOrClose(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
@@ -11327,7 +11327,7 @@ pub const EndpointConnectionLifecycle = struct {
     ///
     /// Explicit 0-RTT acceptance remains enforced by `Connection`; accepted
     /// packets with authenticated plaintext frame errors queue CONNECTION_CLOSE.
-    pub fn processProtectedZeroRttDatagramWithInstalledKeysOrClose(
+    fn processProtectedZeroRttDatagramWithInstalledKeysOrClose(
         self: *EndpointConnectionLifecycle,
         connection_id: u64,
         connection: *Connection,
@@ -11441,78 +11441,6 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return result;
     }
-
-    /// Process installed-key 0-RTT input with close propagation, then poll output.
-    ///
-    /// Authenticated 0-RTT frame errors queue CONNECTION_CLOSE and return
-    /// before polling ordinary installed-key 1-RTT output.
-    pub fn processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndPollShortDatagram(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-    ) Error!?EndpointPolledDatagramResult {
-        try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-        const output = try self.pollProtectedShortDatagramWithInstalledKeys(
-            connection_id,
-            connection,
-            now_nanos,
-            dcid,
-        );
-        return if (output) |bytes| .{
-            .connection_id = connection_id,
-            .datagram = bytes,
-        } else null;
-    }
-
-    /// Process installed-key 0-RTT input with close propagation, then drain output.
-    ///
-    /// Authenticated 0-RTT frame errors queue CONNECTION_CLOSE and return
-    /// before any ordinary installed-key 1-RTT output is drained.
-    pub fn processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndDrainShortDatagrams(
-        self: *EndpointConnectionLifecycle,
-        connection_id: u64,
-        connection: *Connection,
-        now_nanos: i64,
-        datagram: []const u8,
-        dcid: []const u8,
-        out: []EndpointPolledDatagramResult,
-    ) Error!EndpointDatagramDrainResult {
-        try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
-            connection_id,
-            connection,
-            now_nanos,
-            datagram,
-        );
-        var result = EndpointDatagramDrainResult{};
-        while (result.datagrams_written < out.len) {
-            const output = self.pollProtectedShortDatagramWithInstalledKeys(
-                connection_id,
-                connection,
-                now_nanos,
-                dcid,
-            ) catch |err| {
-                result.first_error = err;
-                return result;
-            };
-            out[result.datagrams_written] = .{
-                .connection_id = connection_id,
-                .datagram = output orelse return result,
-            };
-            result.datagrams_written += 1;
-        }
-        return result;
-    }
-
-
-    /// Route installed-key 0-RTT input through close propagation, then poll output.
     ///
     /// This keeps TLS-owned early-data receive on the endpoint route boundary
     /// while ensuring authenticated frame errors stop before ordinary output
@@ -11530,13 +11458,24 @@ pub const EndpointConnectionLifecycle = struct {
         if (route.connection_id != connection_id) return error.InvalidPacket;
         return .{
             .route = route,
-            .datagram = try self.processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndPollShortDatagram(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-            ),
+            .datagram = blk: {
+                try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
+                    connection_id,
+                    connection,
+                    now_nanos,
+                    datagram,
+                );
+                const output = try self.pollProtectedShortDatagramWithInstalledKeys(
+                    connection_id,
+                    connection,
+                    now_nanos,
+                    dcid,
+                );
+                break :blk if (output) |bytes| .{
+                    .connection_id = connection_id,
+                    .datagram = bytes,
+                } else null;
+            },
         };
     }
 
@@ -11559,14 +11498,32 @@ pub const EndpointConnectionLifecycle = struct {
         if (route.connection_id != connection_id) return error.InvalidPacket;
         return .{
             .route = route,
-            .drain = try self.processProtectedZeroRttDatagramWithInstalledKeysOrCloseAndDrainShortDatagrams(
-                connection_id,
-                connection,
-                now_nanos,
-                datagram,
-                dcid,
-                out,
-            ),
+            .drain = blk: {
+                try self.processProtectedZeroRttDatagramWithInstalledKeysOrClose(
+                    connection_id,
+                    connection,
+                    now_nanos,
+                    datagram,
+                );
+                var result = EndpointDatagramDrainResult{};
+                while (result.datagrams_written < out.len) {
+                    const output = self.pollProtectedShortDatagramWithInstalledKeys(
+                        connection_id,
+                        connection,
+                        now_nanos,
+                        dcid,
+                    ) catch |err| {
+                        result.first_error = err;
+                        break :blk result;
+                    };
+                    out[result.datagrams_written] = .{
+                        .connection_id = connection_id,
+                        .datagram = output orelse break :blk result,
+                    };
+                    result.datagrams_written += 1;
+                }
+                break :blk result;
+            },
         };
     }
 
