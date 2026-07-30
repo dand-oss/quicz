@@ -92,7 +92,7 @@ func handleConn(conn *quic.Conn) {
 			n, _ := s.Read(buf)
 			path := string(buf[:n])
 			fmt.Printf("request: %s\n", path)
-			s.Write([]byte("Hello from quic-go!"))
+			s.Write(buf[:n])
 			s.Close()
 		}(stream)
 	}
