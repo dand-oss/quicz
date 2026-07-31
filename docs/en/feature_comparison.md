@@ -93,7 +93,7 @@ Test conditions: loopback UDP, single stream upload, ReleaseFast build, 8.9KB da
 | quic-go | Go | ~4 Gbps | Linux, GSO, multi-stream | KIT 2025 |
 | quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
 | s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
-| **quicz** | **Zig** | **442 MB/s (single) / 536 MB/s (4-stream)** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, no GSO** |
+| **quicz** | **Zig** | **~480 MB/s (single) / ~470 MB/s (4-stream)** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, no GSO** |
 | quiche | Rust | ~300-500 MB/s | Linux, no GSO | TQUIC benchmark |
 | quinn | Rust | ~300-500 MB/s | Linux, tokio | KIT 2025 / ETH thesis |
 | TQUIC | Rust | ~1-2 Gbps | Linux, GSO | TQUIC benchmark |
@@ -101,11 +101,11 @@ Test conditions: loopback UDP, single stream upload, ReleaseFast build, 8.9KB da
 | picoquic | C | ~1-2 Gbps | Linux | KIT 2025 |
 
 Notes:
-- quicz achieves 442 MB/s single-stream / 536 MB/s multi-stream on macOS loopback (no GSO/XDP).
-- quicz multi-stream (536 MB/s) exceeds quiche/quinn (300-500 MB/s on Linux).
+- quicz reaches ~480 MB/s single-stream / ~470 MB/s 4-stream aggregate on macOS loopback (no GSO/XDP).
+- The throughput bottleneck is per-packet QUIC processing CPU (AES-128-GCM + framing/parsing); UDP `sendto` measures ~3.5–4.7 μs/packet, ~23% of wall time, not dominant.
+- quicz multi-stream (~470 MB/s) is comparable to quiche/quinn (300-500 MB/s on Linux).
 - Other implementations rely on Linux GSO/GRO (3-10x improvement) or XDP kernel bypass.
 - External interop: quic-go + s2n-quic + quiche handshake + cert verify + ALPN + echo PASS.
-- Optimization path: sendmmsg batch send (2-3x) → Linux GSO (3-10x) → multi-connection parallel.
 - Detailed benchmarks: [benchmark.md](benchmark.md)
 
 ## Production Tuning

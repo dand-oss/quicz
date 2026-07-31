@@ -40,17 +40,19 @@ zig build run-quic-bench
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream upload (16 MB) | **484.74 MB/s** | Threaded client/server, CUBIC, 8.9KB datagram, 100μs timeout |
-| Datagrams sent | ~25K | 1324 B each, pipelined ACK feedback |
-| Total time | ~36 ms | cwnd grows to 3.9 MB |
+| Stream upload (16 MB) | **~480 MB/s** (measured range 362–592) | Threaded client/server, CUBIC, 8.9KB datagram, 100μs timeout |
+| Datagrams sent | ~2K | 8900 B each, pipelined ACK feedback |
+| Total time | ~28–44 ms | cwnd grows to ~2.5 MB |
+
+> Single-run variance is ~±40% from loopback scheduling and CUBIC slow-start jitter; values below are representative across multiple runs.
 
 
 ## Linux Cross-platform Test (Docker OrbStack VM)
 
 | Metric | macOS native | Linux Docker VM | Notes |
 |---|---|---|---|
-| Single stream | **484.74 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
-| Multi-stream (4x) | 419.11 MB/s | 61.99 MB/s | |
+| Single stream | **~480 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
+| Multi-stream (4x) | ~470 MB/s | 61.99 MB/s | |
 | Echo P50 | 18.3 μs | 34.7 μs | |
 | Echo P99 | 57.9 μs | 64.1 μs | |
 
@@ -80,15 +82,15 @@ zig build run-quic-bench
 | Mode | 4-stream aggregate | Notes |
 |---|---|---|
 | In-memory (single-thread) | **0.26 GB/s** | No UDP overhead, shared cwnd, CUBIC |
-| UDP loopback (threaded) | **536.06 MB/s** | std.Io threaded, 8.9KB datagram, 100μs timeout |
+| UDP loopback (threaded) | **~470 MB/s** (measured range 266–532) | std.Io threaded, 8.9KB datagram, 100μs timeout |
 
 ## Loss Recovery (loopback + simulated loss)
 
 | Loss rate | Throughput | Retention | Notes |
 |---|---|---|---|
-| 0% | 484.74 MB/s | 100% | Baseline |
-| 1% | 19.76 MB/s | 26% | loopback |
-| 5% | 10.71 MB/s | 14% | loopback |
+| 0% | ~480 MB/s | 100% | Baseline |
+| 1% | ~455 MB/s | ~95% | loopback, CUBIC fast recovery |
+| 5% | ~108 MB/s | ~22% | loopback |
 
 ## Comparison with Other QUIC Implementations
 
@@ -119,28 +121,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, no GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~442 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
-
-#
-## Linux Cross-platform Test (Docker OrbStack VM)
-
-| Metric | macOS native | Linux Docker VM | Notes |
-|---|---|---|---|
-| Single stream | **484.74 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
-| Multi-stream (4x) | 419.11 MB/s | 61.99 MB/s | |
-| Echo P50 | 18.3 μs | 34.7 μs | |
-| Echo P99 | 57.9 μs | 64.1 μs | |
-
-> Linux Docker data is limited by OrbStack VM virtual networking, not representative of bare-metal performance.
-> Cross-compile: `zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
-> Run: `docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
-
-## Cross-platform Architecture
-
-- **No custom Linux GSO layer**: Zig `std.Io.Threaded` already has `sendmmsg` batching on Linux (`Threaded.zig:1971`)
-- **std.Io defaults to io_uring on Linux** (`Io.zig:32`); Threaded is the explicitly chosen backend
-- **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
-- **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
+| **quicz** | **Zig** | **~480 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
 
 ## Echo Latency (small request round-trip)
 
@@ -160,7 +141,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
 | quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **442 MB/s** | **497.71 MB/s (113%)** | **102.08 MB/s (23%)** | **CUBIC** | **This benchmark** |
+| **quicz** | **~480 MB/s** | **~455 MB/s (~95%)** | **~108 MB/s (~22%)** | **CUBIC** | **This benchmark** |
 
 ### Multi-Stream Scaling
 
@@ -170,20 +151,16 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quic-go | ~600-900 MB/s | Good (per-stream goroutine) | community bench |
 | s2n-quic | ~800 MB/s-1.2 GB/s | Good (async I/O) | TQUIC benchmark |
 | quinn | single-core limited | Limited | KIT 2025 |
-| **quicz** | **536.06 MB/s** | **Shared cwnd** | **This benchmark** |
+| **quicz** | **~470 MB/s** | **Shared cwnd (single cwnd per connection, RFC 9000)** | **This benchmark** |
 
-### quicz Performance Gap Analysis
+### quicz Performance Bottleneck Analysis (measured)
 
-quicz at ~442 MB/s (8.9KB datagram, 100μs timeout) vs Linux GSO implementations, primarily due to:
+quicz currently reaches ~480 MB/s single-stream on macOS loopback (8.9KB datagram, 100μs timeout). The following bottlenecks are verified by measurement:
 
-1. **No GSO/GRO**: Linux GSO batch sending provides 3-10x throughput. macOS does not support it.
-2. **UDP syscall overhead**: per-packet sendto/recvfrom ~4-5 μs, 74% of processing time.
-3. **Single connection shared cwnd**: multi-stream shares one congestion window, limiting parallelism.
-
-Optimization path (by expected gain):
-1. Batch sending (sendmmsg / packet coalescing) → expected 2-3x
-2. Linux GSO support → expected 3-10x
-3. Multi-connection / multi-path parallelism → expected linear scaling
+1. **UDP syscall overhead (measured, not dominant)**: raw UDP loopback `sendto` measures ~3.5–4.7 μs/packet (3 runs: 3.48 / 3.61 / 4.67 μs). 480 MB/s ÷ 8900 B ≈ 56K pkts/s × ~4 μs ≈ 23% of wall time.
+2. **Per-packet QUIC processing CPU (dominant)**: raw UDP loopback reaches 1.8–2.4 GB/s, quicz only ~480 MB/s. This 4–5x gap is mainly per-packet AES-128-GCM encrypt/decrypt plus QUIC framing/parsing, not syscalls.
+3. **Multi-stream shared cwnd (not a bottleneck)**: a single congestion window per connection conforms to RFC 9000 (one cwnd per path). Measured 4-stream aggregate ~470 MB/s is comparable to single-stream ~480 MB/s, so cwnd does not limit parallelism.
+4. **GSO/GRO (platform difference)**: Linux GSO batch sending yields 3–10x throughput; macOS has no equivalent. This is a platform limitation, not a quicz implementation defect. On Linux, `std.Io.Threaded` already provides `sendmmsg` batching.
 
 ### quicz Latency Advantage
 
@@ -199,8 +176,8 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - Direct comparison is difficult due to different measurement methods, platforms, and configurations.
 - quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
 - Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
-- quicz at 442 MB/s (8.9KB datagram, 100μs timeout, ns-accurate RTT, no-snapshot frame processing), performance optimization in progress.
-- Loss recovery and throughput optimization are ongoing priorities.
+- quicz currently reaches ~480 MB/s single-stream on macOS loopback (8.9KB datagram, 100μs timeout, ns-accurate RTT).
+- The throughput bottleneck is per-packet QUIC processing CPU (AES-128-GCM + framing/parsing); UDP syscalls account for ~23% of wall time.
 
 ## Planned Benchmarks
 
@@ -216,8 +193,8 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 ## Known Limitations
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
-Benchmark uses `Duration(0)` non-blocking receive; `nanoTime()` fixed to true nanosecond precision.
-Current throughput bottleneck is UDP syscall overhead (sendto/recvfrom). Larger datagrams + 100μs timeout improved 72→442 MB/s (6.1x), multi-stream 536 MB/s; batch send optimization is next.
+Benchmark uses a 100μs `receiveTimeout`; `nanoTime()` is nanosecond-precision (macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`).
+Current throughput bottleneck is per-packet QUIC processing CPU (AES-128-GCM + framing/parsing); UDP `sendto` measures ~3.5–4.7 μs/packet, ~23% of wall time.
 
 ## References
 

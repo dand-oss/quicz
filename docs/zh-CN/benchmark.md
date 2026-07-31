@@ -51,17 +51,19 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（16 MB） | **484.74 MB/s** | 线程化 client/server，CUBIC，8.9KB datagram，100μs timeout |
-| 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
-| 总耗时 | ~36 ms | cwnd 增长至 3.9 MB |
+| 流上传（16 MB） | **~480 MB/s**（实测区间 362–592） | 线程化 client/server，CUBIC，8.9KB datagram，100μs timeout |
+| 发送 datagram 数 | ~2K | 每个 8900 B，流水线 ACK 反馈 |
+| 总耗时 | ~28–44 ms | cwnd 增长至 ~2.5 MB |
+
+> 单次运行波动约 ±40%，来自 loopback 调度与 CUBIC 慢启动抖动；下文取多次运行的代表值。
 
 
 ## Linux 跨平台测试（Docker OrbStack VM）
 
 | 指标 | macOS native | Linux Docker VM | 说明 |
 |---|---|---|---|
-| 单流吞吐 | **484.74 MB/s** | 44.16 MB/s | VM 虚拟网络开销 ~10x |
-| 多流吞吐（4流） | 419.11 MB/s | 61.99 MB/s | |
+| 单流吞吐 | **~480 MB/s** | 44.16 MB/s | VM 虚拟网络开销 ~10x |
+| 多流吞吐（4流） | ~470 MB/s | 61.99 MB/s | |
 | Echo P50 | 18.3 μs | 34.7 μs | |
 | Echo P99 | 57.9 μs | 64.1 μs | |
 
@@ -91,15 +93,15 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | 模式 | 4 流聚合 | 说明 |
 |---|---|---|
 | 内存直连（单线程） | **0.26 GB/s** | 无 UDP 开销，共享 cwnd，CUBIC |
-| UDP loopback（线程化） | **536.06 MB/s** | std.Io 线程化，8.9KB datagram，100μs timeout |
+| UDP loopback（线程化） | **~470 MB/s**（实测区间 266–532） | std.Io 线程化，8.9KB datagram，100μs timeout |
 
 ## 丢包恢复（loopback + 模拟丢包）
 
 | 丢包率 | 吞吐量 | 保持率 | 说明 |
 |---|---|---|---|
-| 0% | 484.74 MB/s | 100% | 基线 |
-| 1% | 19.76 MB/s | 26% | loopback |
-| 5% | 10.71 MB/s | 14% | loopback |
+| 0% | ~480 MB/s | 100% | 基线 |
+| 1% | ~455 MB/s | ~95% | loopback，CUBIC 快速恢复 |
+| 5% | ~108 MB/s | ~22% | loopback |
 
 ## 与其他 QUIC 实现对比
 
@@ -130,28 +132,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, 无 GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, 单核受限 | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~442 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, 无 GSO** | **本基准** |
-
-#
-## Linux 跨平台测试（Docker OrbStack VM）
-
-| 指标 | macOS native | Linux Docker VM | 说明 |
-|---|---|---|---|
-| 单流吞吐 | **484.74 MB/s** | 44.16 MB/s | VM 虚拟网络开销 ~10x |
-| 多流吞吐（4流） | 419.11 MB/s | 61.99 MB/s | |
-| Echo P50 | 18.3 μs | 34.7 μs | |
-| Echo P99 | 57.9 μs | 64.1 μs | |
-
-> Linux Docker 数据受 OrbStack VM 虚拟网络限制，不代表 bare-metal 性能。
-> 交叉编译：`zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
-> 运行：`docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
-
-## 跨平台架构说明
-
-- **不自建 Linux GSO 层**：Zig `std.Io.Threaded` 在 Linux 已内置 `sendmmsg` 批量发送（`Threaded.zig:1971`）
-- **std.Io 在 Linux 默认用 io_uring**（`Io.zig:32`），Threaded 是显式选择的后端
-- **sendMany API 仅在 Linux 有收益**（sendmmsg），macOS 下反而增加数组构建开销
-- **nanoTime 跨平台**：comptime 条件编译，macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
+| **quicz** | **Zig** | **~480 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, 无 GSO** | **本基准** |
 
 ## Echo 延迟（小请求往返）
 
@@ -171,7 +152,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | msquic | ~3 Gbps | 保持 ~70-80% | 保持 ~40-50% | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | 保持 ~60-70% | 保持 ~30-40% | CUBIC | 社区基准 |
 | quinn | ~300-500 MB/s | msquic 领先 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **442 MB/s** | **497.71 MB/s (113%)** | **102.08 MB/s (23%)** | **CUBIC** | **本基准** |
+| **quicz** | **~480 MB/s** | **~455 MB/s (~95%)** | **~108 MB/s (~22%)** | **CUBIC** | **本基准** |
 
 ### 多流扩展
 
@@ -181,20 +162,16 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | quic-go | ~600-900 MB/s | 良好（每流 goroutine） | 社区基准 |
 | s2n-quic | ~800 MB/s-1.2 GB/s | 良好（异步 I/O） | TQUIC benchmark |
 | quinn | 单核受限 | 有限 | KIT 2025 |
-| **quicz** | **536.06 MB/s** | **共享 cwnd** | **本基准** |
+| **quicz** | **~470 MB/s** | **共享 cwnd（每连接单一 cwnd，RFC 9000）** | **本基准** |
 
-### quicz 性能差距分析
+### quicz 性能瓶颈分析（实测）
 
-quicz 当前 ~442 MB/s（8.9KB datagram，100μs timeout），与 Linux GSO 实现仍有差距，主要原因：
+quicz 当前 macOS loopback 单流 ~480 MB/s（8.9KB datagram，100μs timeout）。以下为实测核实的瓶颈结论：
 
-1. **无 GSO/GRO**：Linux 实现的 GSO 批量发送可提升 3-10x 吞吐。macOS 不支持。
-2. **UDP 系统调用开销**：每包 sendto/recvfrom ~4-5 μs，占 74% 处理时间。
-3. **单连接共享 cwnd**：多流共享一个拥塞窗口，限制并行度。
-
-优化路径（按预期收益排序）：
-1. 批量发送（sendmmsg / 多包合并）→ 预期 2-3x
-2. Linux GSO 支持 → 预期 3-10x
-3. 多连接/多路径并行 → 预期线性扩展
+1. **UDP 系统调用开销（实测，非主因）**：原始 UDP loopback `sendto` 实测 ~3.5–4.7 μs/包（3 次：3.48 / 3.61 / 4.67 μs）。480 MB/s ÷ 8900 B ≈ 56K 包/s × ~4 μs ≈ 23% 墙钟。
+2. **每包 QUIC 处理 CPU 开销（主因）**：原始 UDP loopback 可达 1.8–2.4 GB/s，quicz 仅 ~480 MB/s。这 4–5x 差距主要来自每包 AES-128-GCM 加解密与 QUIC 成帧/解析，而非系统调用。
+3. **多流共享 cwnd（非瓶颈）**：每连接单一拥塞窗口符合 RFC 9000（每路径一个 cwnd）。实测 4 流聚合 ~470 MB/s 与单流 ~480 MB/s 相当，cwnd 未限制并行度。
+4. **GSO/GRO（平台差异）**：Linux GSO 批量发送可带来 3–10x 吞吐提升，macOS 无等价机制；此为平台限制，非 quicz 实现缺陷。Linux 上 `std.Io.Threaded` 已内置 `sendmmsg` 批量发送。
 
 ### quicz 延迟优势
 
@@ -210,8 +187,8 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 - 直接对比困难，因测量方法、平台、配置不同。
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
-- quicz 当前 442 MB/s（8.9KB datagram，100μs timeout，ns 精度 RTT，无快照帧处理），性能优化进行中。
-- 丢包恢复和吞吐量优化是后续重点。
+- quicz 当前 macOS loopback 单流 ~480 MB/s（8.9KB datagram，100μs timeout，ns 精度 RTT）。
+- 吞吐瓶颈为每包 QUIC 处理 CPU 开销（AES-128-GCM + 成帧/解析），UDP 系统调用约占 23% 墙钟。
 
 ## 待完成基准
 
@@ -227,8 +204,8 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 ## 已知限制
 
 Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 使用 `poll(timeout_ms=0)` 实现非阻塞接收。
-Benchmark 使用 `Duration(0)` 非阻塞接收，`nanoTime()` 已修复为真正的纳秒精度。
-当前吞吐量瓶颈在 UDP 系统调用开销（sendto/recvfrom），增大 datagram + 100μs timeout 已从 72→442 MB/s（6.1x），多流 536 MB/s，下一步批量发送优化。
+Benchmark 使用 100μs `receiveTimeout`，`nanoTime()` 为纳秒精度（macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`）。
+当前吞吐量瓶颈在每包 QUIC 处理 CPU 开销（AES-128-GCM + 成帧/解析）；UDP 系统调用 `sendto` 实测 ~3.5–4.7 μs/包，约占 23% 墙钟。
 
 ## 参考
 
