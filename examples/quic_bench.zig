@@ -17,18 +17,29 @@ const transfer_size: usize = 16 * 1024 * 1024; // 16 MB
 const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
 const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
 
-const MachTimebaseInfo = extern struct { numer: u32, denom: u32 };
-extern fn mach_timebase_info(info: *MachTimebaseInfo) i32;
-var _tb: MachTimebaseInfo = undefined;
-var _tb_init: bool = false;
-var _t0: u64 = 0;
+const builtin = @import("builtin");
+
 fn nanoTime() u64 {
-    if (!_tb_init) {
-        _ = mach_timebase_info(&_tb);
-        _t0 = std.c.mach_absolute_time();
-        _tb_init = true;
+    if (comptime builtin.os.tag == .macos) {
+        const MachTimebaseInfo = extern struct { numer: u32, denom: u32 };
+        const mt = struct {
+            extern fn mach_timebase_info(info: *MachTimebaseInfo) i32;
+            extern fn mach_absolute_time() u64;
+            var tb: MachTimebaseInfo = undefined;
+            var inited: bool = false;
+            var t0: u64 = 0;
+        };
+        if (!mt.inited) {
+            _ = mt.mach_timebase_info(&mt.tb);
+            mt.t0 = mt.mach_absolute_time();
+            mt.inited = true;
+        }
+        return (mt.mach_absolute_time() - mt.t0) * mt.tb.numer / mt.tb.denom;
+    } else {
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+        return @intCast(@as(i128, ts.sec) * 1_000_000_000 + ts.nsec);
     }
-    return (std.c.mach_absolute_time() - _t0) * _tb.numer / _tb.denom;
 }
 
 const ServerContext = struct {
