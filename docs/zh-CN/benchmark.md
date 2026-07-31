@@ -8,7 +8,7 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 - **套接字**：loopback UDP，8900 字节 datagram（macOS UDP 上限 9000B）
 - **I/O 层**：std.Io.Threaded（跨平台，Linux 自动启用 sendmmsg 批量发送）
 - **构建**：`zig build-exe -OReleaseFast`
-- **平台**：Apple M 系列 macOS / Linux aarch64（Docker），Zig 0.16
+- **平台**：Apple M 系列 macOS，Zig 0.16（std.Io 跨平台，Linux 由 std.Io 自动适配 io_uring/sendmmsg，不另测）
 - **拥塞控制**：CUBIC（RFC 8312/9438）
 - **Pacer**：Token bucket，ns 精度（loopback 下 srtt ~1μs 不截断）
 
@@ -85,19 +85,6 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | 5%（100μs RTT） | 129 MB/s | |
 
 > 以上 Echo/多流/丢包均为真实握手 bench（`quic_bench_hs.zig`）实测。
-
-## Linux 跨平台测试（Docker OrbStack VM）
-
-| 指标 | macOS native | Linux Docker VM | 说明 |
-|---|---|---|---|
-| 单流吞吐 | **~390 MB/s**（真实握手） | 44.16 MB/s | VM 虚拟网络开销 ~10x |
-| 多流吞吐（4流） | ~470 MB/s | 61.99 MB/s | |
-| Echo P50 | 18.3 μs | 34.7 μs | |
-| Echo P99 | 57.9 μs | 64.1 μs | |
-
-> Linux Docker 数据受 OrbStack VM 虚拟网络限制，不代表 bare-metal 性能。
-> 交叉编译：`zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
-> 运行：`docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
 
 ## 跨平台架构说明
 
