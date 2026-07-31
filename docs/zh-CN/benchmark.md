@@ -5,9 +5,10 @@
 secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能。
 
 - **协议**：QUIC v1，安装 1-RTT 密钥（绕过 TLS 握手，仅测传输层）
-- **套接字**：loopback UDP，1200 字节 datagram
+- **套接字**：loopback UDP，8900 字节 datagram（macOS UDP 上限 9000B）
+- **I/O 层**：std.Io.Threaded（跨平台，Linux 自动启用 sendmmsg 批量发送）
 - **构建**：`zig build-exe -OReleaseFast`
-- **平台**：Apple M 系列，macOS，Zig 0.16
+- **平台**：Apple M 系列 macOS / Linux aarch64（Docker），Zig 0.16
 - **拥塞控制**：CUBIC（RFC 8312/9438）
 - **Pacer**：Token bucket，ns 精度（loopback 下 srtt ~1μs 不截断）
 
@@ -50,9 +51,30 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 流上传（16 MB） | **442.33 MB/s** | 线程化 client/server，CUBIC，8.9KB datagram，100μs timeout |
+| 流上传（16 MB） | **484.74 MB/s** | 线程化 client/server，CUBIC，8.9KB datagram，100μs timeout |
 | 发送 datagram 数 | ~25K | 每个 1324 B，流水线 ACK 反馈 |
 | 总耗时 | ~36 ms | cwnd 增长至 3.9 MB |
+
+
+## Linux 跨平台测试（Docker OrbStack VM）
+
+| 指标 | macOS native | Linux Docker VM | 说明 |
+|---|---|---|---|
+| 单流吞吐 | **484.74 MB/s** | 44.16 MB/s | VM 虚拟网络开销 ~10x |
+| 多流吞吐（4流） | 419.11 MB/s | 61.99 MB/s | |
+| Echo P50 | 18.3 μs | 34.7 μs | |
+| Echo P99 | 57.9 μs | 64.1 μs | |
+
+> Linux Docker 数据受 OrbStack VM 虚拟网络限制，不代表 bare-metal 性能。
+> 交叉编译：`zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
+> 运行：`docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
+
+## 跨平台架构说明
+
+- **不自建 Linux GSO 层**：Zig `std.Io.Threaded` 在 Linux 已内置 `sendmmsg` 批量发送（`Threaded.zig:1971`）
+- **std.Io 在 Linux 默认用 io_uring**（`Io.zig:32`），Threaded 是显式选择的后端
+- **sendMany API 仅在 Linux 有收益**（sendmmsg），macOS 下反而增加数组构建开销
+- **nanoTime 跨平台**：comptime 条件编译，macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
 
 ## Echo 延迟（1 KB 往返，loopback）
 
@@ -75,7 +97,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 | 丢包率 | 吞吐量 | 保持率 | 说明 |
 |---|---|---|---|
-| 0% | 442.33 MB/s | 100% | 基线 |
+| 0% | 484.74 MB/s | 100% | 基线 |
 | 1% | 19.76 MB/s | 26% | loopback |
 | 5% | 10.71 MB/s | 14% | loopback |
 
@@ -110,7 +132,28 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, 单核受限 | KIT 2025 / ETH thesis |
 | **quicz** | **Zig** | **~442 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, 无 GSO** | **本基准** |
 
-### Echo 延迟（小请求往返）
+#
+## Linux 跨平台测试（Docker OrbStack VM）
+
+| 指标 | macOS native | Linux Docker VM | 说明 |
+|---|---|---|---|
+| 单流吞吐 | **484.74 MB/s** | 44.16 MB/s | VM 虚拟网络开销 ~10x |
+| 多流吞吐（4流） | 419.11 MB/s | 61.99 MB/s | |
+| Echo P50 | 18.3 μs | 34.7 μs | |
+| Echo P99 | 57.9 μs | 64.1 μs | |
+
+> Linux Docker 数据受 OrbStack VM 虚拟网络限制，不代表 bare-metal 性能。
+> 交叉编译：`zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
+> 运行：`docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
+
+## 跨平台架构说明
+
+- **不自建 Linux GSO 层**：Zig `std.Io.Threaded` 在 Linux 已内置 `sendmmsg` 批量发送（`Threaded.zig:1971`）
+- **std.Io 在 Linux 默认用 io_uring**（`Io.zig:32`），Threaded 是显式选择的后端
+- **sendMany API 仅在 Linux 有收益**（sendmmsg），macOS 下反而增加数组构建开销
+- **nanoTime 跨平台**：comptime 条件编译，macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
+
+## Echo 延迟（小请求往返）
 
 | 实现 | 语言 | P50 | P99 | 条件 | 来源 |
 |---|---|---|---|---|---|

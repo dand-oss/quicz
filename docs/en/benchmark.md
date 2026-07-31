@@ -5,9 +5,10 @@
 secnetperf-style micro-benchmarks measuring raw QUIC transport performance over loopback UDP.
 
 - **Protocol**: QUIC v1, installed 1-RTT keys (bypasses TLS handshake, transport-only)
-- **Socket**: loopback UDP, 1200-byte datagrams
+- **Socket**: loopback UDP, 8900-byte datagrams (macOS UDP limit 9000B)
+- **I/O layer**: std.Io.Threaded (cross-platform, Linux auto-enables sendmmsg batching)
 - **Build**: `zig build-exe -OReleaseFast`
-- **Platform**: Apple M-series, macOS, Zig 0.16
+- **Platform**: Apple M-series macOS / Linux aarch64 (Docker), Zig 0.16
 - **Congestion control**: CUBIC (RFC 8312/9438)
 - **Pacer**: Token bucket, ns precision (loopback srtt ~1μs, no truncation)
 
@@ -39,9 +40,30 @@ zig build run-quic-bench
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream upload (16 MB) | **442.33 MB/s** | Threaded client/server, CUBIC, 8.9KB datagram, 100μs timeout |
+| Stream upload (16 MB) | **484.74 MB/s** | Threaded client/server, CUBIC, 8.9KB datagram, 100μs timeout |
 | Datagrams sent | ~25K | 1324 B each, pipelined ACK feedback |
 | Total time | ~36 ms | cwnd grows to 3.9 MB |
+
+
+## Linux Cross-platform Test (Docker OrbStack VM)
+
+| Metric | macOS native | Linux Docker VM | Notes |
+|---|---|---|---|
+| Single stream | **484.74 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
+| Multi-stream (4x) | 419.11 MB/s | 61.99 MB/s | |
+| Echo P50 | 18.3 μs | 34.7 μs | |
+| Echo P99 | 57.9 μs | 64.1 μs | |
+
+> Linux Docker data is limited by OrbStack VM virtual networking, not representative of bare-metal performance.
+> Cross-compile: `zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
+> Run: `docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
+
+## Cross-platform Architecture
+
+- **No custom Linux GSO layer**: Zig `std.Io.Threaded` already has `sendmmsg` batching on Linux (`Threaded.zig:1971`)
+- **std.Io defaults to io_uring on Linux** (`Io.zig:32`); Threaded is the explicitly chosen backend
+- **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
+- **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
 
 ## Echo Latency (1 KB round-trip, loopback)
 
@@ -64,7 +86,7 @@ zig build run-quic-bench
 
 | Loss rate | Throughput | Retention | Notes |
 |---|---|---|---|
-| 0% | 442.33 MB/s | 100% | Baseline |
+| 0% | 484.74 MB/s | 100% | Baseline |
 | 1% | 19.76 MB/s | 26% | loopback |
 | 5% | 10.71 MB/s | 14% | loopback |
 
@@ -99,7 +121,28 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
 | **quicz** | **Zig** | **~442 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
 
-### Echo Latency (small request round-trip)
+#
+## Linux Cross-platform Test (Docker OrbStack VM)
+
+| Metric | macOS native | Linux Docker VM | Notes |
+|---|---|---|---|
+| Single stream | **484.74 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
+| Multi-stream (4x) | 419.11 MB/s | 61.99 MB/s | |
+| Echo P50 | 18.3 μs | 34.7 μs | |
+| Echo P99 | 57.9 μs | 64.1 μs | |
+
+> Linux Docker data is limited by OrbStack VM virtual networking, not representative of bare-metal performance.
+> Cross-compile: `zig build-exe -target aarch64-linux-musl -OReleaseFast -lc ...`
+> Run: `docker run --rm -v $(pwd):/app -w /app alpine ./zig-out/bin/quicz-quic-bench-linux`
+
+## Cross-platform Architecture
+
+- **No custom Linux GSO layer**: Zig `std.Io.Threaded` already has `sendmmsg` batching on Linux (`Threaded.zig:1971`)
+- **std.Io defaults to io_uring on Linux** (`Io.zig:32`); Threaded is the explicitly chosen backend
+- **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
+- **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
+
+## Echo Latency (small request round-trip)
 
 | Implementation | Language | P50 | P99 | Conditions | Source |
 |---|---|---|---|---|---|
