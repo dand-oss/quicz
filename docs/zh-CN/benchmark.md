@@ -122,20 +122,23 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 ### 单流吞吐量
 
-| 实现 | 语言 | 吞吐量 | 条件 | 来源 |
+> **单位与条件须知**：下表外部数据多来自 KIT 2025 的 **10 Gbit/s 物理测试床 goodput**，单位 **Mbit/s**（兆比特）；quicz 用 **MB/s**（兆字节，1 MB/s = 8 Mbit/s）。测试条件差异（物理链路 vs loopback、MTU、GSO、平台）极大，直接比数字需谨慎。
+
+| 实现 | 语言 | Goodput | 条件 | 来源 |
 |---|---|---|---|---|
-| msquic | C | **~7-8 Gbps** | Windows, XDP, 单连接 | msquic dashboard |
-| msquic | C | **~3 Gbps** | Linux, 无 XDP, 单连接 | Aalto 2025 thesis |
-| msquic | C | **~1 Gbps** | macOS, loopback | secnetperf |
-| quic-go | Go | **~4 Gbps** | Linux, GSO, 多流配对 | KIT 2025 |
-| quic-go | Go | **~1.1 Gbps** | Linux, GSO, 单流 | quic-go#3670 |
-| lsquic | C | **~2-4 Gbps** | Linux, GSO | KIT 2025 |
-| TQUIC | Rust | **~1-2 Gbps** | Linux, GSO | TQUIC benchmark |
-| picoquic | C | **~1-2 Gbps** | Linux | KIT 2025 |
-| s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
-| quiche | Rust | **~300-500 MB/s** | Linux, 无 GSO | TQUIC benchmark |
-| quinn | Rust | **~300-500 MB/s** | Linux, tokio, 单核受限 | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~390 MB/s** | **macOS, loopback, 真实握手, 8.9KB datagram, 100μs timeout, 无 GSO** | **本基准** |
+| ngtcp2（C，最快配对） | C | **4172 Mbit/s（~521 MB/s）** | 10Gb 物理测试床，ngtcp2×ngtcp2 | KIT 2025 |
+| lsquic | C | ~2486 Mbit/s（~311 MB/s） | 10Gb 物理测试床 | KIT 2025 |
+| quic-go | Go | 1220–2233 Mbit/s（~152–279 MB/s） | 10Gb 物理测试床（配对相关） | KIT 2025 |
+| quiche | Rust | ~1220–1335 Mbit/s（~152–167 MB/s） | 10Gb 物理测试床（配对相关） | KIT 2025 |
+| picoquic | C | ~1346–1451 Mbit/s（~168–181 MB/s） | 10Gb 物理测试床 | KIT 2025 |
+| msquic | C | ~1 Gbps | macOS loopback | secnetperf |
+| **quicz** | **Zig** | **~390 MB/s（~3120 Mbit/s）** | **macOS loopback，真实握手，8.9KB datagram，无 GSO** | **本基准** |
+
+**关键结论（均有出处）**：
+- KIT 2025 实测 10Gb 物理测试床 goodput 区间 **1220–4172 Mbit/s（~152–521 MB/s）**；**MTU 1500→9000 可让部分实现打满 10 Gbit/s**。
+- KIT 论文明确：**吞吐瓶颈主要来自单核性能约束**（与 quicz「每包处理 CPU 是主要成本」结论一致）。
+- quicz ~390 MB/s ≈ **3120 Mbit/s**，落在 KIT 区间内、中位以上；条件不同（macOS loopback 无 GSO vs 10Gb 物理链路），但量级与主流实现相当。
+- quic-go #3670 用户自测 ~1100 Mbit/s（~137 MB/s，Ubuntu 双主机 10Gb 物理链路，非 loopback）。
 
 ## Echo 延迟（小请求往返）
 

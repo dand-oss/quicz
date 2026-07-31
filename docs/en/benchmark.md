@@ -111,20 +111,23 @@ Benchmark conditions vary significantly across implementations. Direct number co
 
 ### Single-Stream Throughput
 
-| Implementation | Language | Throughput | Conditions | Source |
+> **Units and conditions**: most external figures below are goodput on KIT 2025's **10 Gbit/s physical testbed**, in **Mbit/s** (megabits); quicz reports **MB/s** (megabytes, 1 MB/s = 8 Mbit/s). Condition differences (physical link vs loopback, MTU, GSO, platform) are large — compare numbers with care.
+
+| Implementation | Language | Goodput | Conditions | Source |
 |---|---|---|---|---|
-| msquic | C | **~7-8 Gbps** | Windows, XDP, single conn | msquic dashboard |
-| msquic | C | **~3 Gbps** | Linux, no XDP, single conn | Aalto 2025 thesis |
-| msquic | C | **~1 Gbps** | macOS, loopback | secnetperf |
-| quic-go | Go | **~4 Gbps** | Linux, GSO, multi-stream | KIT 2025 |
-| quic-go | Go | **~1.1 Gbps** | Linux, GSO, single stream | quic-go#3670 |
-| lsquic | C | **~2-4 Gbps** | Linux, GSO | KIT 2025 |
-| TQUIC | Rust | **~1-2 Gbps** | Linux, GSO | TQUIC benchmark |
-| picoquic | C | **~1-2 Gbps** | Linux | KIT 2025 |
-| s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
-| quiche | Rust | **~300-500 MB/s** | Linux, no GSO | TQUIC benchmark |
-| quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~390 MB/s** | **macOS, loopback, real handshake, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
+| ngtcp2 (C, fastest pairing) | C | **4172 Mbit/s (~521 MB/s)** | 10Gb physical testbed, ngtcp2×ngtcp2 | KIT 2025 |
+| lsquic | C | ~2486 Mbit/s (~311 MB/s) | 10Gb physical testbed | KIT 2025 |
+| quic-go | Go | 1220–2233 Mbit/s (~152–279 MB/s) | 10Gb physical testbed (pairing-dependent) | KIT 2025 |
+| quiche | Rust | ~1220–1335 Mbit/s (~152–167 MB/s) | 10Gb physical testbed (pairing-dependent) | KIT 2025 |
+| picoquic | C | ~1346–1451 Mbit/s (~168–181 MB/s) | 10Gb physical testbed | KIT 2025 |
+| msquic | C | ~1 Gbps | macOS loopback | secnetperf |
+| **quicz** | **Zig** | **~390 MB/s (~3120 Mbit/s)** | **macOS loopback, real handshake, 8.9KB datagram, no GSO** | **This benchmark** |
+
+**Key findings (all sourced)**:
+- KIT 2025 measures 10Gb physical testbed goodput in the range **1220–4172 Mbit/s (~152–521 MB/s)**; **MTU 1500→9000 lets some implementations saturate 10 Gbit/s**.
+- The KIT paper states explicitly: **throughput limitations stem primarily from single-core performance constraints** (consistent with quicz's "per-packet processing CPU is the main cost" finding).
+- quicz ~390 MB/s ≈ **3120 Mbit/s**, within the KIT range and above its midpoint; conditions differ (macOS loopback no-GSO vs 10Gb physical link), but the magnitude is comparable to mainstream implementations.
+- quic-go #3670 user-measured ~1100 Mbit/s (~137 MB/s, Ubuntu two hosts, 10Gb physical link, not loopback).
 
 ## Echo Latency (small request round-trip)
 

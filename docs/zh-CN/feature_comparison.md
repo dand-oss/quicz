@@ -90,7 +90,7 @@
 | msquic | C | ~7-8 Gbps | Windows, XDP | secnetperf dashboard |
 | msquic | C | ~3 Gbps | Linux, 无 XDP | Aalto 2025 thesis |
 | msquic | C | ~1 Gbps | macOS, loopback | secnetperf |
-| **quicz** | **Zig** | **~396 MB/s（单流）/ ~450 MB/s（4流）** | **macOS, loopback** | **真实握手, 8.9KB datagram, 100μs timeout, CUBIC, 无 GSO** |
+| **quicz** | **Zig** | **~390 MB/s（单流）/ ~380 MB/s（4流）** | **macOS, loopback** | **真实握手, 8.9KB datagram, 100μs timeout, CUBIC, 无 GSO** |
 | quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
 | quic-go | Go | ~4 Gbps | Linux, GSO, 多流 | KIT 2025 |
 | s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
