@@ -483,21 +483,19 @@ fn runClient(io: anytype, allocator: std.mem.Allocator) !void {
 
 // ─── Entry point ────────────────────────────────────────────────────
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
     // Parse --server / --client from command-line arguments.
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args_iter.next(); // skip program name
 
     var mode: enum { server, client } = .client;
-    for (args[1..]) |arg| {
+    while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--server")) {
             mode = .server;
         } else if (std.mem.eql(u8, arg, "--client")) {

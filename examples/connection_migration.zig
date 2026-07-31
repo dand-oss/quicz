@@ -35,7 +35,7 @@ pub fn main() !void {
 
     // 1. Client sends PATH_CHALLENGE
     std.debug.print("1. Client sends PATH_CHALLENGE\n", .{});
-    try client.sendPathChallenge();
+    try client.sendPathChallenge([_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 });
     std.debug.print("   outstanding path challenges: {d}\n", .{client.outstandingPathChallengeCount()});
 
     // 2. Relay client datagram to server

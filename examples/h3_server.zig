@@ -126,7 +126,8 @@ fn sendH3Settings(record: *ServerRecord) void {
 
     // SETTINGS payload: max_field_section_size = 8192.
     var settings_payload: [16]u8 = undefined;
-    const sp_len = h3_connection.H3Connection.encodeSettings(&settings_payload, 8192) catch return;
+    const settings = h3_connection.Settings{ .max_field_section_size = 8192 };
+    const sp_len = settings.encodePayload(&settings_payload) catch return;
 
     // SETTINGS frame: type varint + length varint + payload.
     buf[pos] = @intCast(@intFromEnum(h3_frame.FrameType.settings));

@@ -313,7 +313,7 @@ fn runClient(allocator: std.mem.Allocator, io: std.Io) !void {
 
     // Send DATAGRAM
     const msg = "hello datagram";
-    try client.transport.sendDatagram(msg);
+    try client.transport.connectionRef().sendDatagram(msg);
     var send_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
     const drain = try client.drainApplicationDatagramsWithRoutePath(0, &send_out);
     for (send_out[0..drain.datagrams_written]) |o| {
@@ -333,7 +333,7 @@ fn runClient(allocator: std.mem.Allocator, io: std.Io) !void {
         const received = socket.receiveTimeout(io, &recv_buf, timeout) catch continue;
         _ = client.receiveWithRoutePath(0, &scratch, received.data) catch continue;
         var dgram_buf: [1200]u8 = undefined;
-        if (client.transport.recvDatagram(&dgram_buf) catch null) |n| {
+        if (client.transport.connectionRef().recvDatagram(&dgram_buf) catch null) |n| {
             if (n > 0) {
                 std.debug.print("datagram echo received: '{s}'\n", .{dgram_buf[0..n]});
                 got_echo = true;
@@ -348,17 +348,15 @@ fn runClient(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
     // Parse --server / --client
-    var args = std.process.args();
+    var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // skip program name
     const mode = args.next() orelse {
         std.debug.print("Usage: datagram_echo --server | --client\n", .{});

@@ -835,7 +835,7 @@ pub fn main(init: std.process.Init) !void {
         try server_socket.send(io, &migrated_client_socket.address, challenge);
 
         const challenge_received = try migrated_client_socket.receiveTimeout(io, &recv_buf, shortTimeout());
-        const client_result = try client_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
+        const client_result = try client_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeys(
             client_handle,
             &client,
             migrated_client_path,
@@ -881,7 +881,7 @@ pub fn main(init: std.process.Init) !void {
         try server_socket.send(io, &migrated_client_socket.address, post_migration_output);
 
         const post_migration_received = try migrated_client_socket.receiveTimeout(io, &recv_buf, shortTimeout());
-        const post_migration_client_result = try client_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
+        const post_migration_client_result = try client_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeys(
             client_handle,
             &client,
             migrated_client_path,

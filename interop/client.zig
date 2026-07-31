@@ -36,92 +36,31 @@ fn parseUrl(url: []const u8) !struct { host: []const u8, port: u16, path: []cons
 }
 
 /// Resolve hostname to IPv4 address using getaddrinfo.
+/// Resolve hostname to IPv4 address (IP literal or DNS) via std.Io.net.
 fn resolveHost(hostname: []const u8) !u32 {
-    // Try parsing as IP address first
-    if (std.net.Ip4Address.parse(hostname, 0)) |addr| {
-        return std.mem.readInt(u32, &addr.sa.addr, .big);
-    } else |_| {}
-
-    // DNS resolution
-    var hints: posix.addrinfo = .{
-        .family = posix.AF.INET,
-        .socktype = posix.SOCK.DGRAM,
-    };
-    var result: ?*posix.addrinfo = null;
-    const rc = posix.getaddrinfo(hostname, null, &hints, &result);
-    if (rc != 0) return error.DnsResolutionFailed;
-    defer posix.freeaddrinfo(result);
-
-    if (result) |info| {
-        if (info.addr.len >= 8) {
-            // sockaddr_in: family(2) + port(2) + addr(4)
-            return std.mem.readInt(u32, info.addr[4..8], .big);
-        }
-    }
-    return error.DnsResolutionFailed;
-}
-
-/// Create a UDP socket and bind to 0.0.0.0:0.
-/// Create a UDP socket with IPv6 dual-stack support.
-fn createUdpSocket() !posix.socket_t {
-    const fd = try posix.socket(posix.AF.INET6, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
-    // Enable dual-stack: accept both IPv4 and IPv6 traffic
-    const v6only: c_int = 0;
-    posix.setsockopt(fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, &std.mem.toBytes(v6only)) catch {};
-    var addr: posix.sockaddr_in6 = .{
-        .port = 0,
-        .flowinfo = 0,
-        .addr = [_]u8{0} ** 16,
-        .scope_id = 0,
-    };
-    posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr_in6)) catch |err| {
-        posix.close(fd);
-        return err;
-    };
-    return fd;
-}
-
-/// Convert IPv4 address to IPv4-mapped IPv6 sockaddr.
-fn ipv4ToIpv6Mapped(ip: u32, port: u16) posix.sockaddr_in6 {
-    var mapped: [16]u8 = [_]u8{0} ** 16;
-    mapped[10] = 0xff;
-    mapped[11] = 0xff;
-    std.mem.writeInt(u32, mapped[12..16], ip, .big);
-    return .{
-        .port = std.mem.nativeToBig(u16, port),
-        .flowinfo = 0,
-        .addr = mapped,
-        .scope_id = 0,
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const address = std.Io.net.IpAddress.resolve(io, hostname, 0) catch return error.DnsResolutionFailed;
+    return switch (address) {
+        .ip4 => |ip4| std.mem.readInt(u32, &ip4.bytes, .big),
+        .ip6 => error.DnsResolutionFailed,
     };
 }
 
 /// Send a UDP datagram to the server.
-fn sendTo(fd: posix.socket_t, server_ip: u32, server_port: u16, data: []const u8) !void {
-    var addr = ipv4ToIpv6Mapped(server_ip, server_port);
-    _ = try posix.sendto(fd, data, 0, @ptrCast(&addr), @sizeOf(posix.sockaddr_in6));
+fn sendTo(io: std.Io, sock: *std.Io.net.Socket, server_addr: *const std.Io.net.IpAddress, data: []const u8) !void {
+    try sock.send(io, server_addr, data);
 }
 
-/// Receive a UDP datagram with timeout. Returns bytes received, or null on timeout.
-fn recvFromTimeout(fd: posix.socket_t, buf: []u8, timeout_ms: i32) !?usize {
-    var fds = [1]posix.pollfd{.{
-        .fd = fd,
-        .events = posix.POLL.IN,
-        .revents = 0,
-    }};
-    const ready = posix.poll(&fds, timeout_ms) catch return null;
-    if (ready == 0) return null;
-    if (fds[0].revents & posix.POLL.IN == 0) return null;
-    var addr: posix.sockaddr_in6 = undefined;
-    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr_in6);
-    const n = posix.recvfrom(fd, buf, 0, @ptrCast(&addr), &addr_len) catch |err| switch (err) {
-        error.WouldBlock => return null,
-        else => return null,
-    };
-    return n;
+/// Receive a UDP datagram with timeout. Returns the received slice, or null on timeout.
+fn recvFromTimeout(io: std.Io, sock: *std.Io.net.Socket, buf: []u8, timeout_ms: i32) ?std.Io.net.IncomingMessage {
+    const timeout: std.Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(@intCast(timeout_ms)) } };
+    return sock.receiveTimeout(io, buf, timeout) catch return null;
 }
 
 /// Save downloaded data to a file in the downloads directory.
-fn saveFile(path: []const u8, data: []const u8) !void {
+fn saveFile(io: std.Io, path: []const u8, data: []const u8) !void {
     const filename = if (std.mem.lastIndexOf(u8, path, "/")) |slash|
         path[slash + 1 ..]
     else
@@ -130,19 +69,17 @@ fn saveFile(path: []const u8, data: []const u8) !void {
     var buf: [512]u8 = undefined;
     const full_path = std.fmt.bufPrint(&buf, "{s}/{s}", .{ downloads_dir, filename }) catch return;
 
-    const file = std.fs.createFileAbsolute(full_path, .{}) catch return;
-    defer file.close();
-    file.writeAll(data) catch return;
+    const file = std.Io.Dir.createFileAbsolute(io, full_path, .{}) catch return;
+    defer file.close(io);
+    file.writeStreamingAll(io, data) catch return;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     // Read environment variables
-    const testcase = std.posix.getenv("TESTCASE") orelse "handshake";
-    const requests_env = std.posix.getenv("REQUESTS") orelse "";
+    const testcase = init.environ_map.get("TESTCASE") orelse "handshake";
+    const requests_env = init.environ_map.get("REQUESTS") orelse "";
     std.debug.print("quicz interop client: testcase={s}\n", .{testcase});
 
     if (requests_env.len == 0) {
@@ -174,30 +111,27 @@ pub fn main() !void {
         break :blk @as(u32, 193) << 24 | @as(u32, 167) << 16 | @as(u32, 100) << 8 | @as(u32, 100);
     };
 
-    // Create UDP socket
-    const fd = createUdpSocket() catch {
+    // Create UDP socket (std.Io.net, 0.16)
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var client_bind_addr = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
+    var client_socket = client_bind_addr.bind(io, .{ .mode = .dgram, .protocol = .udp }) catch {
         std.debug.print("failed to create UDP socket\n", .{});
         return error.SocketFailed;
     };
-    defer posix.close(fd);
+    defer client_socket.close(io);
+    var server_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = std.mem.toBytes(server_ip), .port = server_port } };
 
-    // Get local address
-    var local_addr: posix.sockaddr_in = undefined;
-    var local_len: posix.socklen_t = @sizeOf(posix.sockaddr_in);
-    _ = posix.getsockname(fd, @ptrCast(&local_addr), &local_len) catch {};
-    const local_ip = std.mem.bigToNative(u32, local_addr.addr);
-    const local_port = std.mem.bigToNative(u16, local_addr.port);
+    // Local address (from the bound client socket)
+    const local_ip_bytes = client_socket.address.ip4.bytes;
+    const local_port = client_socket.address.ip4.port;
 
     // Create client endpoint
     const client_handle: u64 = 1;
-    var local_bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &local_bytes, local_ip, .big);
-    var remote_bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &remote_bytes, server_ip, .big);
-
     const client_path = endpoint.Udp4Tuple{
-        .local = endpoint.Udp4Address.init(local_bytes, local_port),
-        .remote = endpoint.Udp4Address.init(remote_bytes, server_port),
+        .local = endpoint.Udp4Address.init(local_ip_bytes, local_port),
+        .remote = endpoint.Udp4Address.init(std.mem.toBytes(server_ip), server_port),
     };
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
@@ -236,7 +170,7 @@ pub fn main() !void {
     };
 
     // Send Initial to server
-    sendTo(fd, server_ip, server_port, begin_result.datagram) catch {
+    sendTo(io, &client_socket, &server_address, begin_result.datagram) catch {
         std.debug.print("failed to send Initial\n", .{});
         return error.SendFailed;
     };
@@ -249,22 +183,22 @@ pub fn main() !void {
     var attempts: usize = 0;
 
     while (!handshake_done and attempts < 20) : (attempts += 1) {
-        const n = recvFromTimeout(fd, &recv_buf, recv_timeout_ms) orelse {
+        const received = recvFromTimeout(io, &client_socket, &recv_buf, recv_timeout_ms) orelse {
             std.debug.print("receive timeout during handshake\n", .{});
             continue;
         };
 
-        const result = client.receiveWithRoutePath(0, &scratch, recv_buf[0..n]) catch {
+        const result = client.receiveWithRoutePath(0, &scratch, received.data) catch {
             std.debug.print("failed to process server datagram\n", .{});
             continue;
         };
 
         if (result.outbound_initial) |o| {
-            sendTo(fd, server_ip, server_port, o.datagram) catch {};
+            sendTo(io, &client_socket, &server_address, o.datagram) catch {};
             allocator.free(o.datagram);
         }
         if (result.outbound_handshake) |o| {
-            sendTo(fd, server_ip, server_port, o.datagram) catch {};
+            sendTo(io, &client_socket, &server_address, o.datagram) catch {};
             allocator.free(o.datagram);
         }
 
@@ -296,7 +230,7 @@ pub fn main() !void {
         ) catch continue;
 
         for (send_out[0..send_result.drain.datagrams_written]) |o| {
-            sendTo(fd, server_ip, server_port, o.datagram) catch {};
+            sendTo(io, &client_socket, &server_address, o.datagram) catch {};
             allocator.free(o.datagram);
         }
 
@@ -306,20 +240,20 @@ pub fn main() !void {
         var recv_attempts: usize = 0;
 
         while (recv_attempts < 50) : (recv_attempts += 1) {
-            const n = recvFromTimeout(fd, &recv_buf, recv_timeout_ms) orelse break;
+            const received = recvFromTimeout(io, &client_socket, &recv_buf, recv_timeout_ms) orelse break;
 
             var recv_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
             var due_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
             _ = client.receiveDatagramStepWithRoutePath(
                 0,
                 &scratch,
-                recv_buf[0..n],
+                received.data,
                 &recv_out,
                 &due_out,
             ) catch continue;
 
             for (recv_out[0..0]) |o| {
-                sendTo(fd, server_ip, server_port, o.datagram) catch {};
+                sendTo(io, &client_socket, &server_address, o.datagram) catch {};
                 allocator.free(o.datagram);
             }
 
@@ -335,7 +269,7 @@ pub fn main() !void {
         }
 
         if (response_len > 0) {
-            saveFile(parsed.path, response_buf[0..response_len]) catch {
+            saveFile(io, parsed.path, response_buf[0..response_len]) catch {
                 std.debug.print("failed to save {s}\n", .{parsed.path});
             };
             std.debug.print("quicz interop client: saved {s} ({d} bytes)\n", .{ parsed.path, response_len });
@@ -347,7 +281,7 @@ pub fn main() !void {
     const close_result = client.closeApplicationWithRoutePathAndDrainDatagrams(0, "done", 0, &close_out) catch null;
     if (close_result) |result| {
         for (close_out[0..result.drain.datagrams_written]) |o| {
-            sendTo(fd, server_ip, server_port, o.datagram) catch {};
+            sendTo(io, &client_socket, &server_address, o.datagram) catch {};
             allocator.free(o.datagram);
         }
     }

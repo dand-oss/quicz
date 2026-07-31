@@ -227,7 +227,7 @@ pub fn main() !void {
     try require(old_path.remote.port != new_path.remote.port);
 
     // installed-key 路径处理：只返回 RouteResult（含 path_changed），不 commit。
-    const ping_route = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysOrClose(
+    const ping_route = try server_lifecycle.processRoutedProtectedShortDatagramWithInstalledKeys(
         server_handle,
         &server,
         new_path,

@@ -37,10 +37,9 @@ const AlgoResult = struct {
 };
 
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
 
-    try stdout.print("=== Congestion Control Comparison Benchmark ===\n", .{});
-    try stdout.print("Path: RTT={d}ms, MDS={d}B, loss every {d}ms, duration={d}ms\n\n", .{
+    std.debug.print("=== Congestion Control Comparison Benchmark ===\n", .{});
+    std.debug.print("Path: RTT={d}ms, MDS={d}B, loss every {d}ms, duration={d}ms\n\n", .{
         initial_rtt_ns,
         max_datagram_size,
         loss_interval_ms,
@@ -55,24 +54,24 @@ pub fn main() !void {
     var results: [2]AlgoResult = undefined;
 
     for (algos, 0..) |entry, idx| {
-        results[idx] = runSimulation(entry.name, entry.config, stdout) catch |err| {
-            try stdout.print("  ERROR: {s}\n", .{@errorName(err)});
+        results[idx] = runSimulation(entry.name, entry.config) catch |err| {
+            std.debug.print("  ERROR: {s}\n", .{@errorName(err)});
             results[idx] = .{ .name = entry.name, .peak_cwnd = 0, .final_cwnd = 0, .loss_events = 0, .min_cwnd_after_loss = 0 };
         };
     }
 
     // Summary table
-    try stdout.print("\n=== Summary ===\n", .{});
-    try stdout.print("{s:<10} {s:>12} {s:>12} {s:>6} {s:>14}\n", .{
+    std.debug.print("\n=== Summary ===\n", .{});
+    std.debug.print("{s:<10} {s:>12} {s:>12} {s:>6} {s:>14}\n", .{
         "Algorithm",
         "Peak cwnd",
         "Final cwnd",
         "Losses",
         "Min after loss",
     });
-    try stdout.print("{s}\n", .{"-" ** 58});
+    std.debug.print("{s}\n", .{"-" ** 58});
     for (results) |r| {
-        try stdout.print("{s:<10} {d:>10} B {d:>10} B {d:>6} {d:>12} B\n", .{
+        std.debug.print("{s:<10} {d:>10} B {d:>10} B {d:>6} {d:>12} B\n", .{
             r.name,
             r.peak_cwnd,
             r.final_cwnd,
@@ -80,19 +79,18 @@ pub fn main() !void {
             r.min_cwnd_after_loss,
         });
     }
-    try stdout.print("\nDone.\n", .{});
+    std.debug.print("\nDone.\n", .{});
 }
 
 fn runSimulation(
     name: []const u8,
     config: RecoveryConfig,
-    writer: anytype,
 ) !AlgoResult {
-    try writer.print("[{s}]\n", .{name});
+    std.debug.print("[{s}]\n", .{name});
 
     var recovery = Recovery.init(config);
     const initial_cwnd = recovery.congestion_window;
-    try writer.print("  Initial cwnd: {d} B ({d} segments)\n", .{
+    std.debug.print("  Initial cwnd: {d} B ({d} segments)\n", .{
         initial_cwnd,
         initial_cwnd / max_datagram_size,
     });
@@ -105,7 +103,7 @@ fn runSimulation(
     const print_interval_ms: i64 = 500;
     var next_print_ms: i64 = print_interval_ms;
 
-    try writer.print("  {s:>8} {s:>12} {s:>10} {s}\n", .{ "t(ms)", "cwnd(B)", "segs", "event" });
+    std.debug.print("  {s:>8} {s:>12} {s:>10} {s}\n", .{ "t(ms)", "cwnd(B)", "segs", "event" });
 
     while (now_ms < sim_duration_ms) {
         // Simulate sending a batch of packets up to available window.
@@ -133,7 +131,7 @@ fn runSimulation(
             if (recovery.congestion_window < min_cwnd_after_loss) {
                 min_cwnd_after_loss = recovery.congestion_window;
             }
-            try writer.print("  {d:>8} {d:>12} {d:>10} LOSS -> cwnd={d}B\n", .{
+            std.debug.print("  {d:>8} {d:>12} {d:>10} LOSS -> cwnd={d}B\n", .{
                 now_ms,
                 recovery.congestion_window,
                 recovery.congestion_window / max_datagram_size,
@@ -141,7 +139,7 @@ fn runSimulation(
             });
             next_loss_ms += loss_interval_ms;
         } else if (now_ms >= next_print_ms) {
-            try writer.print("  {d:>8} {d:>12} {d:>10}\n", .{
+            std.debug.print("  {d:>8} {d:>12} {d:>10}\n", .{
                 now_ms,
                 recovery.congestion_window,
                 recovery.congestion_window / max_datagram_size,
@@ -153,7 +151,7 @@ fn runSimulation(
     }
 
     const final_cwnd = recovery.congestion_window;
-    try writer.print("  Final cwnd: {d} B ({d} segments), peak: {d} B, losses: {d}\n\n", .{
+    std.debug.print("  Final cwnd: {d} B ({d} segments), peak: {d} B, losses: {d}\n\n", .{
         final_cwnd,
         final_cwnd / max_datagram_size,
         peak_cwnd,

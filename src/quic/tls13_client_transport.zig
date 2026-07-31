@@ -76,6 +76,11 @@ pub const Tls13ClientTransport = struct {
         self.connection.deinit();
     }
 
+    /// Borrow the underlying connection (mirrors Tls13ServerTransport.connectionRef).
+    pub fn connectionRef(self: *Tls13ClientTransport) *Connection {
+        return &self.connection;
+    }
+
     /// Report whether the TLS-owned handshake reached confirmed 1-RTT state.
     pub fn handshakeConfirmed(self: *const Tls13ClientTransport) bool {
         return self.connection.handshakeConfirmed();
