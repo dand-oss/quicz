@@ -36,22 +36,22 @@ zig build run-quic-bench
 | Echo P99.9 | **182.1 μs** | |
 | 4-stream aggregate (4×4 MB) | **0.26 GB/s** | Shared cwnd |
 
-## Throughput (single stream, loopback)
+## Throughput (single stream, loopback, real handshake)
 
 | Metric | Value | Notes |
 |---|---|---|
-| Stream upload (16 MB) | **~480 MB/s** (measured range 362–592) | Threaded client/server, CUBIC, 8.9KB datagram, 100μs timeout |
-| Datagrams sent | ~2K | 8900 B each, pipelined ACK feedback |
-| Total time | ~28–44 ms | cwnd grows to ~2.5 MB |
+| Single-stream throughput | **390 MB/s** (stddev 4.3%, min 364 / max 412) | Real TLS 1.3 handshake, quic-go style 5 iterations, mean |
+| Handshake time | ~0.6–1.0 ms/iter | TLS 1.3, transport parameters negotiated (RFC 9000 §7.4) |
+| Transfer | 16 MB/iter | 8900 B datagram, CUBIC, 100μs receiveTimeout |
 
-> Single-run variance is ~±40% from loopback scheduling and CUBIC slow-start jitter; values below are representative across multiple runs.
-
+> Methodology (`examples/quic_bench_hs.zig`): each iteration creates a fresh connection and performs a real TLS 1.3 handshake (RFC 9000 §7 / RFC 9001 §4, same flow as `examples/interop_client.zig`), measures the end-to-end time to transfer 16 MB until the peer receives it all, and reports mean/stddev across iterations (quic-go `BenchmarkTransfer` model).
+> The real handshake ensures transport parameters are negotiated correctly; the installed-keys bypass skips the handshake and thus that negotiation (RFC 9000 §7.4), so it is only used for point latency micro-benchmarks, not throughput.
 
 ## Linux Cross-platform Test (Docker OrbStack VM)
 
 | Metric | macOS native | Linux Docker VM | Notes |
 |---|---|---|---|
-| Single stream | **~480 MB/s** | 44.16 MB/s | VM virtual network overhead ~10x |
+| Single stream | **~390 MB/s** (real handshake) | 44.16 MB/s | VM virtual network overhead ~10x |
 | Multi-stream (4x) | ~470 MB/s | 61.99 MB/s | |
 | Echo P50 | 18.3 μs | 34.7 μs | |
 | Echo P99 | 57.9 μs | 64.1 μs | |
@@ -79,6 +79,8 @@ zig build run-quic-bench
 
 ## Multi-stream Throughput (4 concurrent streams)
 
+> Below uses the installed-keys bypass; pending re-measurement with the real-handshake bench.
+
 | Mode | 4-stream aggregate | Notes |
 |---|---|---|
 | In-memory (single-thread) | **0.26 GB/s** | No UDP overhead, shared cwnd, CUBIC |
@@ -86,9 +88,11 @@ zig build run-quic-bench
 
 ## Loss Recovery (loopback + simulated loss)
 
+> Below uses the installed-keys bypass; pending re-measurement with the real-handshake bench.
+
 | Loss rate | Throughput | Retention | Notes |
 |---|---|---|---|
-| 0% | ~480 MB/s | 100% | Baseline |
+| 0% | ~390 MB/s | 100% | Baseline (real handshake) |
 | 1% | ~455 MB/s | ~95% | loopback, CUBIC fast recovery |
 | 5% | ~108 MB/s | ~22% | loopback |
 
@@ -121,7 +125,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | s2n-quic | Rust | **~800 MB/s** | Linux, GSO/GRO | TQUIC benchmark |
 | quiche | Rust | **~300-500 MB/s** | Linux, no GSO | TQUIC benchmark |
 | quinn | Rust | **~300-500 MB/s** | Linux, tokio, single-core | KIT 2025 / ETH thesis |
-| **quicz** | **Zig** | **~480 MB/s** | **macOS, loopback, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~390 MB/s** | **macOS, loopback, real handshake, 8.9KB datagram, 100μs timeout, no GSO** | **This benchmark** |
 
 ## Echo Latency (small request round-trip)
 
@@ -141,7 +145,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
 | quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **~480 MB/s** | **~455 MB/s (~95%)** | **~108 MB/s (~22%)** | **CUBIC** | **This benchmark** |
+| **quicz** | **~390 MB/s** | **pending real-handshake re-measure** | **pending real-handshake re-measure** | **CUBIC** | **This benchmark** |
 
 ### Multi-Stream Scaling
 
@@ -155,12 +159,12 @@ Benchmark conditions vary significantly across implementations. Direct number co
 
 ### quicz Performance Bottleneck Analysis (measured)
 
-quicz currently reaches ~480 MB/s single-stream on macOS loopback (8.9KB datagram, 100μs timeout). The following bottlenecks are verified by measurement:
+The real-handshake bench (`quic_bench_hs.zig`) measures **~390 MB/s** single-stream on macOS loopback (stddev 4.3%). The following are verified by measurement:
 
-1. **UDP syscall overhead (measured, not dominant)**: raw UDP loopback `sendto` measures ~3.5–4.7 μs/packet (3 runs: 3.48 / 3.61 / 4.67 μs). 480 MB/s ÷ 8900 B ≈ 56K pkts/s × ~4 μs ≈ 23% of wall time.
-2. **Per-packet QUIC processing CPU (dominant)**: raw UDP loopback reaches 1.8–2.4 GB/s, quicz only ~480 MB/s. This 4–5x gap is mainly per-packet AES-128-GCM encrypt/decrypt plus QUIC framing/parsing, not syscalls.
-3. **Multi-stream shared cwnd (not a bottleneck)**: a single congestion window per connection conforms to RFC 9000 (one cwnd per path). Measured 4-stream aggregate ~470 MB/s is comparable to single-stream ~480 MB/s, so cwnd does not limit parallelism.
-4. **GSO/GRO (platform difference)**: Linux GSO batch sending yields 3–10x throughput; macOS has no equivalent. This is a platform limitation, not a quicz implementation defect. On Linux, `std.Io.Threaded` already provides `sendmmsg` batching.
+1. **Handshake is not a bottleneck**: a real TLS 1.3 handshake takes ~0.6–1.0 ms/iter, negligible vs the ~40 ms 16 MB transfer; transport parameters are negotiated correctly (RFC 9000 §7.4).
+2. **Per-packet processing CPU is the main cost**: AES-128-GCM measures 3.5–3.7 GB/s (ARM PMULL hardware accelerated), ~4.9 μs encrypt+decrypt per packet, plus QUIC framing/parsing and per-packet heap allocation. Raw UDP loopback reaches 1.8–2.4 GB/s; QUIC processing brings it to ~390 MB/s.
+3. **UDP syscalls are not dominant**: raw UDP loopback `sendto` measures ~3.5–4.7 μs/packet (3 runs: 3.48 / 3.61 / 4.67 μs).
+4. **GSO/GRO platform difference**: Linux GSO batch sending yields 3–10x throughput; macOS has no equivalent (no `UDP_SEGMENT`/`sendmmsg`). This is a platform limitation, not a quicz defect. On Linux, `std.Io.Threaded` already provides `sendmmsg`.
 
 ### quicz Latency Advantage
 
@@ -176,8 +180,8 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - Direct comparison is difficult due to different measurement methods, platforms, and configurations.
 - quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
 - Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
-- quicz currently reaches ~480 MB/s single-stream on macOS loopback (8.9KB datagram, 100μs timeout, ns-accurate RTT).
-- The throughput bottleneck is per-packet QUIC processing CPU (AES-128-GCM + framing/parsing); UDP syscalls account for ~23% of wall time.
+- quicz currently reaches ~390 MB/s single-stream on macOS loopback (real handshake, quic-go style multi-iteration, stddev 4.3%; 8.9KB datagram, 100μs timeout).
+- The main throughput cost is per-packet QUIC processing CPU (AES-128-GCM hardware accelerated + framing/parsing); UDP syscalls are not dominant.
 
 ## Planned Benchmarks
 
@@ -194,7 +198,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
 Benchmark uses a 100μs `receiveTimeout`; `nanoTime()` is nanosecond-precision (macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`).
-Current throughput bottleneck is per-packet QUIC processing CPU (AES-128-GCM + framing/parsing); UDP `sendto` measures ~3.5–4.7 μs/packet, ~23% of wall time.
+The main throughput cost is per-packet QUIC processing CPU (AES-128-GCM ~4.9 μs/packet, hardware accelerated, plus framing/parsing); UDP `sendto` measures ~3.5–4.7 μs/packet and is not dominant.
 
 ## References
 

@@ -90,7 +90,7 @@
 | msquic | C | ~7-8 Gbps | Windows, XDP | secnetperf dashboard |
 | msquic | C | ~3 Gbps | Linux, 无 XDP | Aalto 2025 thesis |
 | msquic | C | ~1 Gbps | macOS, loopback | secnetperf |
-| **quicz** | **Zig** | **~480 MB/s（单流）/ ~470 MB/s（4流）** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, 无 GSO** |
+| **quicz** | **Zig** | **~390 MB/s（单流，真实握手）/ 多流待重测** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, 无 GSO** |
 | quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
 | quic-go | Go | ~4 Gbps | Linux, GSO, 多流 | KIT 2025 |
 | s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
@@ -101,8 +101,8 @@
 | picoquic | C | ~1-2 Gbps | Linux | KIT 2025 |
 
 说明：
-- quicz 当前 macOS loopback 单流 ~480 MB/s、4 流聚合 ~470 MB/s（8.9KB datagram, 100μs timeout）。
-- 吞吐瓶颈为每包 QUIC 处理 CPU 开销（AES-128-GCM + 成帧/解析）；UDP `sendto` 实测 ~3.5–4.7 μs/包，约占 23% 墙钟，非主因。
+- quicz 当前 macOS loopback 单流 ~390 MB/s（真实握手，quic-go 式多次迭代，stddev 4.3%；8.9KB datagram, 100μs timeout）。
+- 吞吐主要成本为每包 QUIC 处理 CPU（AES-128-GCM 硬件加速 ~4.9 μs/包 + 成帧/解析）；UDP `sendto` ~3.5–4.7 μs/包，非主因。
 - 其他实现的高吞吐依赖 Linux GSO/GRO（3-10x 提升）或 XDP 内核旁路。
 - macOS 不支持 GSO/XDP，msquic 在 macOS loopback 下约 1 Gbps。
 - 外部互通：quic-go + s2n-quic + quiche 握手+证书验证+ALPN+echo 均已通过。
