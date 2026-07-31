@@ -20,7 +20,7 @@ const server_scid = [_]u8{ 0x31, 0x32, 0x33, 0x34 };
 
 const max_datagram_size: usize = 8900;
 const stream_chunk_size: usize = max_datagram_size - 128;
-const transfer_size: usize = 16 * 1024 * 1024;
+const transfer_size: usize = 64 * 1024 * 1024;
 const bench_iters: usize = 5;
 
 fn nanoTime() u64 {
@@ -412,7 +412,7 @@ fn measureEcho(allocator: std.mem.Allocator, io: std.Io) !void {
 fn measureMultiStream(allocator: std.mem.Allocator, io: std.Io) !void {
     std.debug.print("\n  --- Multi-Stream Throughput (4 streams, real handshake) ---\n", .{});
     const num_streams: usize = 4;
-    const ms_size: usize = 16 * 1024 * 1024;
+    const ms_size: usize = 64 * 1024 * 1024;
     const per_stream: usize = ms_size / num_streams;
     var tp_samples: [bench_iters]f64 = undefined;
     var it: usize = 0;

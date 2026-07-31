@@ -40,9 +40,9 @@ zig build run-quic-bench
 
 | Metric | Value | Notes |
 |---|---|---|
-| Single-stream throughput | **390 MB/s** (stddev 4.3%, min 364 / max 412) | Real TLS 1.3 handshake, quic-go style 5 iterations, mean |
+| Single-stream throughput | **~390 MB/s** (single-digit stddev) | Real TLS 1.3 handshake, quic-go style 5 iterations, mean |
 | Handshake time | ~0.6–1.0 ms/iter | TLS 1.3, transport parameters negotiated (RFC 9000 §7.4) |
-| Transfer | 16 MB/iter | 8900 B datagram, CUBIC, 100μs receiveTimeout |
+| Transfer | 64 MB/iter | 8900 B datagram, CUBIC, 100μs receiveTimeout (64 MB lets CUBIC pass slow start into steady state, reducing variance) |
 
 > Methodology (`examples/quic_bench_hs.zig`): each iteration creates a fresh connection and performs a real TLS 1.3 handshake (RFC 9000 §7 / RFC 9001 §4, same flow as `examples/interop_client.zig`), measures the end-to-end time to transfer 16 MB until the peer receives it all, and reports mean/stddev across iterations (quic-go `BenchmarkTransfer` model).
 > The real handshake ensures transport parameters are negotiated correctly; the installed-keys bypass skips the handshake and thus that negotiation (RFC 9000 §7.4), so it is only used for point latency micro-benchmarks, not throughput.
@@ -62,7 +62,7 @@ zig build run-quic-bench
 
 | Metric | Value | Notes |
 |---|---|---|
-| 4-stream aggregate | **450 MB/s** (stddev 3.0%) | Real handshake, quic-go style 5 iterations |
+| 4-stream aggregate | **~380 MB/s** (single-digit stddev) | Real handshake, 64 MB, quic-go style 5 iterations |
 
 ## Loss Recovery (real handshake + simulated loss)
 

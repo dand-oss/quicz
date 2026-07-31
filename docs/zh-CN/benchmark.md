@@ -51,9 +51,9 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 单流吞吐 | **390 MB/s**（stddev 4.3%，min 364 / max 412） | 真实 TLS 1.3 握手，quic-go 式 5 次迭代取均值 |
+| 单流吞吐 | **~390 MB/s**（stddev 单位数） | 真实 TLS 1.3 握手，quic-go 式 5 次迭代取均值 |
 | 握手耗时 | ~0.6–1.0 ms/轮 | TLS 1.3，transport parameters 经握手协商（RFC 9000 §7.4） |
-| 传输 | 16 MB/轮 | 8900 B datagram，CUBIC，100μs receiveTimeout |
+| 传输 | 64 MB/轮 | 8900 B datagram，CUBIC，100μs receiveTimeout（64 MB 让 CUBIC 过慢启动进稳态，降低波动） |
 
 > 测量方法（`examples/quic_bench_hs.zig`）：每次迭代新建连接并做真实 TLS 1.3 握手（RFC 9000 §7 / RFC 9001 §4，流程同 `examples/interop_client.zig`），测「握手后传输 16 MB 到对端收齐」的整段时间，多次迭代取均值/标准差（quic-go `BenchmarkTransfer` 模型）。
 > 真实握手确保 transport parameters 正确协商；installed-keys bypass 跳过握手即跳过该协商（RFC 9000 §7.4），仅用于单点延迟微基准，不作吞吐口径。
@@ -73,7 +73,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 | 指标 | 数值 | 说明 |
 |---|---|---|
-| 4 流聚合 | **450 MB/s**（stddev 3.0%） | 真实握手，quic-go 式 5 次迭代 |
+| 4 流聚合 | **~380 MB/s**（stddev 单位数） | 真实握手，64 MB，quic-go 式 5 次迭代 |
 
 ## 丢包恢复（真实握手 + 模拟丢包）
 
