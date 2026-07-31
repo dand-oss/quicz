@@ -93,7 +93,7 @@ Test conditions: loopback UDP, single stream upload, ReleaseFast build, 8.9KB da
 | quic-go | Go | ~4 Gbps | Linux, GSO, multi-stream | KIT 2025 |
 | quic-go | Go | ~1.1 Gbps | Linux, GSO | quic-go#3670 |
 | s2n-quic | Rust | ~800 MB/s | Linux, GSO/GRO | TQUIC benchmark |
-| **quicz** | **Zig** | **~390 MB/s (single, real handshake) / multi-stream pending** | **macOS, loopback** | **8.9KB datagram, 100μs timeout, CUBIC, no GSO** |
+| **quicz** | **Zig** | **~396 MB/s (single) / ~450 MB/s (4-stream)** | **macOS, loopback** | **real handshake, 8.9KB datagram, 100μs timeout, CUBIC, no GSO** |
 | quiche | Rust | ~300-500 MB/s | Linux, no GSO | TQUIC benchmark |
 | quinn | Rust | ~300-500 MB/s | Linux, tokio | KIT 2025 / ETH thesis |
 | TQUIC | Rust | ~1-2 Gbps | Linux, GSO | TQUIC benchmark |

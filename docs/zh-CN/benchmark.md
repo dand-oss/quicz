@@ -58,6 +58,33 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 > 测量方法（`examples/quic_bench_hs.zig`）：每次迭代新建连接并做真实 TLS 1.3 握手（RFC 9000 §7 / RFC 9001 §4，流程同 `examples/interop_client.zig`），测「握手后传输 16 MB 到对端收齐」的整段时间，多次迭代取均值/标准差（quic-go `BenchmarkTransfer` 模型）。
 > 真实握手确保 transport parameters 正确协商；installed-keys bypass 跳过握手即跳过该协商（RFC 9000 §7.4），仅用于单点延迟微基准，不作吞吐口径。
 
+## Echo 延迟（1 KB 往返，真实握手）
+
+| 百分位 | 延迟 |
+|---|---|
+| P50 | **19.4 μs** |
+| P99 | **99.8 μs** |
+| P99.9 | **153.0 μs** |
+
+5000 次迭代，真实握手后 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显）。
+
+## 多流吞吐（4 并发流，真实握手）
+
+| 指标 | 数值 | 说明 |
+|---|---|---|
+| 4 流聚合 | **450 MB/s**（stddev 3.0%） | 真实握手，quic-go 式 5 次迭代 |
+
+## 丢包恢复（真实握手 + 模拟丢包）
+
+| 丢包率 | 吞吐量 | 说明 |
+|---|---|---|
+| 1%（loopback） | 509 MB/s | CUBIC 快速恢复 |
+| 5%（loopback） | 454 MB/s | |
+| 1%（100μs RTT） | 130 MB/s | |
+| 5%（100μs RTT） | 129 MB/s | |
+
+> 以上 Echo/多流/丢包均为真实握手 bench（`quic_bench_hs.zig`）实测。
+
 ## Linux 跨平台测试（Docker OrbStack VM）
 
 | 指标 | macOS native | Linux Docker VM | 说明 |
@@ -77,35 +104,6 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 - **std.Io 在 Linux 默认用 io_uring**（`Io.zig:32`），Threaded 是显式选择的后端
 - **sendMany API 仅在 Linux 有收益**（sendmmsg），macOS 下反而增加数组构建开销
 - **nanoTime 跨平台**：comptime 条件编译，macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
-
-## Echo 延迟（1 KB 往返，loopback）
-
-| 百分位 | 延迟 | 说明 |
-|---|---|---|
-| P50 | **17.8 μs** | 1 KB 完整 QUIC 往返（加密+发送+接收+解密+回显） |
-| P99 | **65.7 μs** | |
-| P99.9 | **109.9 μs** | |
-
-测试：5000 次迭代，macOS loopback，ReleaseFast。
-
-## 多流吞吐（4 并发流）
-
-> 以下为 installed-keys bypass 口径，待迁移到真实握手 bench 重测。
-
-| 模式 | 4 流聚合 | 说明 |
-|---|---|---|
-| 内存直连（单线程） | **0.26 GB/s** | 无 UDP 开销，共享 cwnd，CUBIC |
-| UDP loopback（线程化） | **~470 MB/s**（实测区间 266–532） | std.Io 线程化，8.9KB datagram，100μs timeout |
-
-## 丢包恢复（loopback + 模拟丢包）
-
-> 以下为 installed-keys bypass 口径，待迁移到真实握手 bench 重测。
-
-| 丢包率 | 吞吐量 | 保持率 | 说明 |
-|---|---|---|---|
-| 0% | ~390 MB/s | 100% | 基线（真实握手） |
-| 1% | ~455 MB/s | ~95% | loopback，CUBIC 快速恢复 |
-| 5% | ~108 MB/s | ~22% | loopback |
 
 ## 与其他 QUIC 实现对比
 
@@ -156,7 +154,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | msquic | ~3 Gbps | 保持 ~70-80% | 保持 ~40-50% | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | 保持 ~60-70% | 保持 ~30-40% | CUBIC | 社区基准 |
 | quinn | ~300-500 MB/s | msquic 领先 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **~390 MB/s** | **待真实握手重测** | **待真实握手重测** | **CUBIC** | **本基准** |
+| **quicz** | **~396 MB/s** | **509 MB/s（1%）** | **454 MB/s（5%）** | **CUBIC** | **本基准（真实握手）** |
 
 ### 多流扩展
 
@@ -166,7 +164,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 | quic-go | ~600-900 MB/s | 良好（每流 goroutine） | 社区基准 |
 | s2n-quic | ~800 MB/s-1.2 GB/s | 良好（异步 I/O） | TQUIC benchmark |
 | quinn | 单核受限 | 有限 | KIT 2025 |
-| **quicz** | **~470 MB/s** | **共享 cwnd（每连接单一 cwnd，RFC 9000）** | **本基准** |
+| **quicz** | **~450 MB/s** | **共享 cwnd（每连接单一 cwnd，RFC 9000）** | **本基准（真实握手）** |
 
 ### quicz 性能瓶颈分析（实测）
 

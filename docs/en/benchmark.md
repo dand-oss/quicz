@@ -47,6 +47,33 @@ zig build run-quic-bench
 > Methodology (`examples/quic_bench_hs.zig`): each iteration creates a fresh connection and performs a real TLS 1.3 handshake (RFC 9000 §7 / RFC 9001 §4, same flow as `examples/interop_client.zig`), measures the end-to-end time to transfer 16 MB until the peer receives it all, and reports mean/stddev across iterations (quic-go `BenchmarkTransfer` model).
 > The real handshake ensures transport parameters are negotiated correctly; the installed-keys bypass skips the handshake and thus that negotiation (RFC 9000 §7.4), so it is only used for point latency micro-benchmarks, not throughput.
 
+## Echo Latency (1 KB round-trip, real handshake)
+
+| Percentile | Latency |
+|---|---|
+| P50 | **19.4 μs** |
+| P99 | **99.8 μs** |
+| P99.9 | **153.0 μs** |
+
+5000 iterations, 1 KB full QUIC round-trip after a real handshake (encrypt+send+receive+decrypt+echo).
+
+## Multi-stream Throughput (4 concurrent streams, real handshake)
+
+| Metric | Value | Notes |
+|---|---|---|
+| 4-stream aggregate | **450 MB/s** (stddev 3.0%) | Real handshake, quic-go style 5 iterations |
+
+## Loss Recovery (real handshake + simulated loss)
+
+| Loss rate | Throughput | Notes |
+|---|---|---|
+| 1% (loopback) | 509 MB/s | CUBIC fast recovery |
+| 5% (loopback) | 454 MB/s | |
+| 1% (100μs RTT) | 130 MB/s | |
+| 5% (100μs RTT) | 129 MB/s | |
+
+> Echo/multi-stream/loss above are all measured with the real-handshake bench (`quic_bench_hs.zig`).
+
 ## Linux Cross-platform Test (Docker OrbStack VM)
 
 | Metric | macOS native | Linux Docker VM | Notes |
@@ -66,35 +93,6 @@ zig build run-quic-bench
 - **std.Io defaults to io_uring on Linux** (`Io.zig:32`); Threaded is the explicitly chosen backend
 - **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
 - **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
-
-## Echo Latency (1 KB round-trip, loopback)
-
-| Percentile | Latency | Notes |
-|---|---|---|
-| P50 | **17.8 μs** | Full QUIC round-trip (encrypt+send+receive+decrypt+echo) |
-| P99 | **65.7 μs** | |
-| P99.9 | **109.9 μs** | |
-
-5000 iterations, macOS loopback, ReleaseFast.
-
-## Multi-stream Throughput (4 concurrent streams)
-
-> Below uses the installed-keys bypass; pending re-measurement with the real-handshake bench.
-
-| Mode | 4-stream aggregate | Notes |
-|---|---|---|
-| In-memory (single-thread) | **0.26 GB/s** | No UDP overhead, shared cwnd, CUBIC |
-| UDP loopback (threaded) | **~470 MB/s** (measured range 266–532) | std.Io threaded, 8.9KB datagram, 100μs timeout |
-
-## Loss Recovery (loopback + simulated loss)
-
-> Below uses the installed-keys bypass; pending re-measurement with the real-handshake bench.
-
-| Loss rate | Throughput | Retention | Notes |
-|---|---|---|---|
-| 0% | ~390 MB/s | 100% | Baseline (real handshake) |
-| 1% | ~455 MB/s | ~95% | loopback, CUBIC fast recovery |
-| 5% | ~108 MB/s | ~22% | loopback |
 
 ## Comparison with Other QUIC Implementations
 
@@ -145,7 +143,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
 | quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **~390 MB/s** | **pending real-handshake re-measure** | **pending real-handshake re-measure** | **CUBIC** | **This benchmark** |
+| **quicz** | **~396 MB/s** | **509 MB/s (1%)** | **454 MB/s (5%)** | **CUBIC** | **This benchmark (real handshake)** |
 
 ### Multi-Stream Scaling
 
@@ -155,7 +153,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quic-go | ~600-900 MB/s | Good (per-stream goroutine) | community bench |
 | s2n-quic | ~800 MB/s-1.2 GB/s | Good (async I/O) | TQUIC benchmark |
 | quinn | single-core limited | Limited | KIT 2025 |
-| **quicz** | **~470 MB/s** | **Shared cwnd (single cwnd per connection, RFC 9000)** | **This benchmark** |
+| **quicz** | **~450 MB/s** | **Shared cwnd (single cwnd per connection, RFC 9000)** | **This benchmark (real handshake)** |
 
 ### quicz Performance Bottleneck Analysis (measured)
 
