@@ -46,6 +46,7 @@ zig build run-quic-bench
 
 > Methodology (`examples/quic_bench_hs.zig`): each iteration creates a fresh connection and performs a real TLS 1.3 handshake (RFC 9000 §7 / RFC 9001 §4, same flow as `examples/interop_client.zig`), measures the end-to-end time to transfer 16 MB until the peer receives it all, and reports mean/stddev across iterations (quic-go `BenchmarkTransfer` model).
 > The real handshake ensures transport parameters are negotiated correctly; the installed-keys bypass skips the handshake and thus that negotiation (RFC 9000 §7.4), so it is only used for point latency micro-benchmarks, not throughput.
+> The transfer loop services the loss detection timer per RFC 9002 §6.2 (`serviceLossDetectionTimer`, PTO retransmission) to avoid stalling on delayed ACKs. Single-stream variance comes from CUBIC window dynamics on loopback (~1μs RTT); multi-stream aggregate is more stable.
 
 ## Echo Latency (1 KB round-trip, real handshake)
 

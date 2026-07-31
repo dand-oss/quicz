@@ -288,6 +288,9 @@ fn runTransfer(
             const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_scid.len, ack.data) catch {};
         }
+        // RFC 9002 §6.2: service the loss detection timer so delayed/lost ACKs
+        // trigger PTO retransmission instead of stalling the transfer.
+        _ = client.serviceLossDetectionTimer(@intCast(nanoTime())) catch {};
     }
     var wait: usize = 0;
     while (bytes_received.load(.monotonic) < size and wait < 10_000_000) : (wait += 1) {
@@ -300,6 +303,7 @@ fn runTransfer(
             const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
             _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_scid.len, ack.data) catch {};
         }
+        _ = client.serviceLossDetectionTimer(@intCast(nanoTime())) catch {};
     }
     const elapsed = nanoTime() - start_ns;
     const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
@@ -332,36 +336,9 @@ fn measureSingleStream(allocator: std.mem.Allocator, io: std.Io) !void {
         var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = pair.server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
         const srv_thread = try std.Thread.spawn(.{}, serverTransferThread, .{&srv_ctx});
         const stream_id = try pair.client.openStream();
-        var tp = runTransfer(allocator, io, pair.client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
+        const tp = runTransfer(allocator, io, pair.client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
         done.store(true, .release);
         srv_thread.join();
-        // Robustness: occasionally a transfer stalls (server ACK race); retry once on a fresh connection.
-        if (tp < 50.0) {
-            var cs2 = try bindLoopback(io);
-            defer cs2.close(io);
-            var ss2 = try bindLoopback(io);
-            defer ss2.close(io);
-            const sa2 = ss2.address;
-            var sc2: [16384]u8 = undefined;
-            var hb2: [16384]u8 = undefined;
-            const p2 = try setupHandshakenPair(allocator, io, &cs2, &ss2, &sc2, &hb2);
-            defer {
-                p2.client.deinit();
-                p2.server.deinit();
-                allocator.destroy(p2.client);
-                allocator.destroy(p2.server);
-                allocator.destroy(p2.client_backend);
-                allocator.destroy(p2.server_backend);
-            }
-            var dn2 = std.atomic.Value(bool).init(false);
-            var br2 = std.atomic.Value(usize).init(0);
-            var sc_ctx2 = SrvCtx{ .socket = &ss2, .io = io, .server = p2.server, .done = &dn2, .bytes_received = &br2, .client_addr = cs2.address, .num_streams = 1 };
-            const st2 = try std.Thread.spawn(.{}, serverTransferThread, .{&sc_ctx2});
-            const sid2 = try p2.client.openStream();
-            tp = runTransfer(allocator, io, p2.client, &cs2, &sa2, &br2, sid2, transfer_size);
-            dn2.store(true, .release);
-            st2.join();
-        }
         tp_samples[it] = tp;
         std.debug.print("  [iter {d}] {d:.2} MB/s\n", .{ it, tp_samples[it] });
     }

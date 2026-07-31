@@ -57,6 +57,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 > 测量方法（`examples/quic_bench_hs.zig`）：每次迭代新建连接并做真实 TLS 1.3 握手（RFC 9000 §7 / RFC 9001 §4，流程同 `examples/interop_client.zig`），测「握手后传输 16 MB 到对端收齐」的整段时间，多次迭代取均值/标准差（quic-go `BenchmarkTransfer` 模型）。
 > 真实握手确保 transport parameters 正确协商；installed-keys bypass 跳过握手即跳过该协商（RFC 9000 §7.4），仅用于单点延迟微基准，不作吞吐口径。
+> 传输循环按 RFC 9002 §6.2 调用 `serviceLossDetectionTimer`（PTO 重传），避免 ACK 延迟时失速。单流波动来自 CUBIC 在 loopback（~1μs RTT）的窗口动态；多流聚合更稳。
 
 ## Echo 延迟（1 KB 往返，真实握手）
 
