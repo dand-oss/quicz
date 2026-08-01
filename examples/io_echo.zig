@@ -1,15 +1,15 @@
-//! quicz I/O runtime echo demo (Phase 0).
+//! quicz I/O runtime — async streaming echo demo (std.Io async, s2n-quic style).
 //!
-//! Spins up the runtime EchoServer on a thread and connects the runtime
-//! EchoClient, performs a real TLS 1.3 handshake, sends a stream payload and
-//! verifies the echo. Validates that the I/O runtime can drive a connection.
+//! The server driving task runs on std.Io Group.concurrent; the application
+//! calls the streaming API accept()/receiveStreamData()/sendStreamData()
+//! concurrently. The client runs the async streaming session.
 //!
 //! Usage: zig build run-io-echo
 
 const std = @import("std");
 const quicz = @import("quicz");
-const EchoServer = quicz.runtime.server.EchoServer;
-const EchoClient = quicz.runtime.client.EchoClient;
+const Server = quicz.runtime.server.AsyncServer;
+const Client = quicz.runtime.client.AsyncClient;
 
 const port: u16 = 4433;
 
@@ -49,8 +49,17 @@ const certificate_der = [_]u8{
     0x20, 0x62, 0x79, 0x20, 0x71, 0x75, 0x69, 0x63, 0x7a,
 };
 
-fn serverThread(server: *EchoServer) void {
-    server.run() catch {};
+const TaskCtx = struct { server: *Server, io: std.Io };
+
+/// Server-side async task: drive the connection (background) + streaming echo.
+fn serverTask(ctx: TaskCtx) std.Io.Cancelable!void {
+    var group: std.Io.Group = .init;
+    group.concurrent(ctx.io, Server.drive, .{ctx.server}) catch {};
+    _ = ctx.server.accept() catch return;
+    var buf: [4096]u8 = undefined;
+    const n = ctx.server.receiveStreamData(&buf) catch return;
+    ctx.server.sendStreamData(0, buf[0..n]) catch {};
+    group.await(ctx.io) catch {};
 }
 
 pub fn main() !void {
@@ -64,43 +73,25 @@ pub fn main() !void {
 
     const alpn = [_][]const u8{"hq-interop"};
 
-    var server = try EchoServer.init(allocator, io, .{
+    var server = try Server.init(allocator, io, .{
         .port = port,
         .alpn = &alpn,
         .cert_der = &certificate_der,
         .private_key = &server_private_key,
     });
     defer server.deinit();
-    std.debug.print("io_runtime echo server listening on 127.0.0.1:{d}\n", .{port});
+    std.debug.print("async streaming server on 127.0.0.1:{d}\n", .{port});
 
-    const sthread = try std.Thread.spawn(.{}, serverThread, .{&server});
+    var server_group: std.Io.Group = .init;
+    const ctx = TaskCtx{ .server = &server, .io = io };
+    server_group.concurrent(io, serverTask, .{ctx}) catch {};
 
-    var client = try EchoClient.init(allocator, io, .{
-        .server_port = port,
-        .server_name = "localhost",
-        .alpn = &alpn,
-    });
+    var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
     defer client.deinit();
 
-    try client.connect();
-    std.debug.print("client handshake confirmed\n", .{});
+    const payload = "hello quicz async streaming";
+    const ok = try client.runEchoSession(payload);
+    std.debug.print("async streaming echo: {s} ('{s}')\n", .{ if (ok) "SUCCESS" else "FAILED", payload });
 
-    const payload = "hello quicz io_runtime";
-    const stream_id = try client.send(payload, true);
-    std.debug.print("client sent '{s}' on stream {d}\n", .{ payload, stream_id });
-
-    var echo_buf: [4096]u8 = undefined;
-    const n = try client.recv(stream_id, &echo_buf);
-    if (n) |len| {
-        const echoed = echo_buf[0..len];
-        std.debug.print("client received echo: '{s}'\n", .{echoed});
-        if (std.mem.eql(u8, echoed, payload)) {
-            std.debug.print("io_runtime echo: SUCCESS\n", .{});
-        } else {
-            std.debug.print("io_runtime echo: MISMATCH\n", .{});
-        }
-    } else {
-        std.debug.print("io_runtime echo: no echo received\n", .{});
-    }
-    _ = sthread;
+    server_group.cancel(io);
 }
