@@ -55,10 +55,11 @@ const TaskCtx = struct { server: *Server, io: std.Io };
 fn serverTask(ctx: TaskCtx) std.Io.Cancelable!void {
     var group: std.Io.Group = .init;
     group.concurrent(ctx.io, Server.drive, .{ctx.server}) catch {};
-    const conn_id = ctx.server.accept() catch return;
+    var conn = ctx.server.accept() catch return;
+    var stream = conn.acceptStream() catch return;
     var buf: [4096]u8 = undefined;
-    const n = ctx.server.receiveStreamData(conn_id, &buf) catch return;
-    ctx.server.sendStreamData(conn_id, 0, buf[0..n]) catch {};
+    const n = stream.receive(&buf) catch return;
+    stream.send(buf[0..n], false) catch {};
     group.await(ctx.io) catch {};
 }
 
