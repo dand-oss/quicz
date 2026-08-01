@@ -82,6 +82,16 @@ zig build run-quic-bench
 - **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
 - **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
 
+## Handshake & Connection Baselines (real handshake)
+
+| Baseline | Value | Notes |
+|---|---|---|
+| Handshake latency | **P50 513.5 μs / P99 794.5 μs** | Full TLS 1.3 handshake, 200 iters |
+| Handshake throughput | **~1280 conn/s** | New connection rate, 100 iters |
+| Stream open rate | **~146M/s** | openStream on one connection, 100k iters |
+
+> All measured with the real-handshake bench (`quic_bench_hs.zig`); handshake throughput is single-threaded serial.
+
 ## Comparison with Other QUIC Implementations
 
 ### Test Condition Differences
@@ -182,6 +192,9 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - [x] External interop (s2n-quic): handshake + cert verify + ALPN + 2-stream echo PASS
 - [x] External interop (quiche): handshake + cert verify + ALPN + 2-stream echo PASS
 - [x] Non-blocking receive (Duration(0) verified working)
+- [x] Handshake latency (real TLS 1.3): P50 513.5 μs / P99 794.5 μs
+- [x] Handshake throughput (new connection rate): ~1280 conn/s (single-threaded serial)
+- [x] Stream open rate (stream churn): ~146M/s
 
 ## Known Limitations
 

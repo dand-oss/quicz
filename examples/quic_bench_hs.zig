@@ -537,6 +537,138 @@ fn measureLoss(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 }
 
+
+/// One real handshake on fresh stack connections; returns elapsed nanoseconds.
+fn measureOneHandshakeNs(allocator: std.mem.Allocator, io: std.Io) !u64 {
+    var client_socket = try bindLoopback(io);
+    defer client_socket.close(io);
+    var server_socket = try bindLoopback(io);
+    defer server_socket.close(io);
+
+    const seed = [_]u8{0x55} ** 32;
+    const server_kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed);
+    const server_priv = server_kp.secret_key.bytes;
+    const cert_der = [_]u8{ 0x30, 0x82, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const alpn = [_][]const u8{"bench"};
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    var client = try Connection.init(allocator, .client, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
+    });
+    defer client.deinit();
+    var server = try Connection.init(allocator, .server, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .max_datagram_size = max_datagram_size,
+    });
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    var client_backend = Tls13Backend.initClient(.{ .alpn = &alpn, .server_name = "example.com", .skip_cert_verify = true });
+    var server_backend = Tls13Backend.initServer(.{ .alpn = &alpn, .cert_chain_der = &.{&cert_der}, .private_key_bytes = &server_priv, .private_key_algorithm = .ecdsa_p256_sha256 });
+
+    var scratch: [16384]u8 = undefined;
+    var hs_buf: [16384]u8 = undefined;
+    try client.setLocalInitialSourceConnectionId(&client_scid);
+    try server.setLocalInitialSourceConnectionId(&server_scid);
+
+    const t0 = nanoTime();
+    try doHandshake(allocator, &client, &server, &client_socket, &server_socket, io, &client_backend, &server_backend, &scratch, &hs_buf, secrets);
+    return nanoTime() - t0;
+}
+
+fn measureHandshakeLatency(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- Handshake Latency (real TLS 1.3) ---\n", .{});
+    const iters: usize = 200;
+    var latencies: [iters]u64 = undefined;
+    for (0..iters) |i| latencies[i] = try measureOneHandshakeNs(allocator, io);
+    std.mem.sort(u64, &latencies, {}, std.sort.asc(u64));
+    std.debug.print("  {s:20} P50={d:.1}us  P99={d:.1}us  ({d} iters)\n", .{
+        "Handshake Latency",
+        @as(f64, @floatFromInt(latencies[iters * 50 / 100])) / 1000.0,
+        @as(f64, @floatFromInt(latencies[iters * 99 / 100])) / 1000.0,
+        iters,
+    });
+}
+
+fn measureHandshakeRate(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- Handshake Throughput (new connections/s) ---\n", .{});
+    const iters: usize = 100;
+    const t0 = nanoTime();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) _ = try measureOneHandshakeNs(allocator, io);
+    const elapsed = nanoTime() - t0;
+    const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
+    std.debug.print("  {s:20} {d:.1} conn/s  ({d} handshakes in {d:.3} s)\n", .{
+        "Handshake Rate",
+        @as(f64, @floatFromInt(iters)) / seconds,
+        iters,
+        seconds,
+    });
+}
+
+fn measureStreamChurn(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- Stream Churn (open rate, real handshake) ---\n", .{});
+    var client_socket = try bindLoopback(io);
+    defer client_socket.close(io);
+    var server_socket = try bindLoopback(io);
+    defer server_socket.close(io);
+
+    const seed = [_]u8{0x55} ** 32;
+    const server_kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed);
+    const server_priv = server_kp.secret_key.bytes;
+    const cert_der = [_]u8{ 0x30, 0x82, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const alpn = [_][]const u8{"bench"};
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    var client = try Connection.init(allocator, .client, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 1_048_576,
+        .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
+    });
+    defer client.deinit();
+    var server = try Connection.init(allocator, .server, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 1_048_576,
+        .max_datagram_size = max_datagram_size,
+    });
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    var client_backend = Tls13Backend.initClient(.{ .alpn = &alpn, .server_name = "example.com", .skip_cert_verify = true });
+    var server_backend = Tls13Backend.initServer(.{ .alpn = &alpn, .cert_chain_der = &.{&cert_der}, .private_key_bytes = &server_priv, .private_key_algorithm = .ecdsa_p256_sha256 });
+
+    var scratch: [16384]u8 = undefined;
+    var hs_buf: [16384]u8 = undefined;
+    try client.setLocalInitialSourceConnectionId(&client_scid);
+    try server.setLocalInitialSourceConnectionId(&server_scid);
+    try doHandshake(allocator, &client, &server, &client_socket, &server_socket, io, &client_backend, &server_backend, &scratch, &hs_buf, secrets);
+
+    const iters: usize = 100_000;
+    const t0 = nanoTime();
+    var i: usize = 0;
+    while (i < iters) : (i += 1) {
+        const stream_id = client.openStream() catch break;
+        _ = stream_id;
+    }
+    const elapsed = nanoTime() - t0;
+    const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
+    std.debug.print("  {s:20} {d:.0} streams/s  ({d} opened in {d:.3} s)\n", .{
+        "Stream Open Rate",
+        @as(f64, @floatFromInt(i)) / seconds,
+        i,
+        seconds,
+    });
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -553,6 +685,9 @@ pub fn main() !void {
     try measureEcho(allocator, io);
     try measureMultiStream(allocator, io);
     try measureLoss(allocator, io);
+    try measureHandshakeLatency(allocator, io);
+    try measureHandshakeRate(allocator, io);
+    try measureStreamChurn(allocator, io);
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }

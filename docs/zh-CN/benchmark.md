@@ -93,6 +93,16 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 - **sendMany API 仅在 Linux 有收益**（sendmmsg），macOS 下反而增加数组构建开销
 - **nanoTime 跨平台**：comptime 条件编译，macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
 
+## 握手与连接基线（真实握手）
+
+| 基线 | 数值 | 说明 |
+|---|---|---|
+| 握手延迟 | **P50 513.5 μs / P99 794.5 μs** | 完整 TLS 1.3 握手，200 次 |
+| 握手吞吐 | **~1280 conn/s** | 新建连接速率，100 次 |
+| 流开启速率 | **~1.46 亿/s** | 单连接 openStream，100k 次 |
+
+> 均为真实握手 bench（`quic_bench_hs.zig`）实测；握手吞吐受单线程串行限制。
+
 ## 与其他 QUIC 实现对比
 
 ### 测试条件差异说明
@@ -193,6 +203,9 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 - [x] 外部互通（s2n-quic）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 外部互通（quiche）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 非阻塞 receive（Duration(0) 已验证可用）
+- [x] 握手延迟（真实 TLS 1.3）：P50 513.5 μs / P99 794.5 μs
+- [x] 握手吞吐（新建连接速率）：~1280 conn/s（单线程串行）
+- [x] 流开启速率（stream churn）：~1.46 亿/s
 
 ## 已知限制
 
