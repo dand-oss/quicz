@@ -45,7 +45,7 @@ zig build run-quic-bench
 | Sys CPU | 3.27s (~65% of one core) |
 | Peak RSS | 1.5 GB (bench arena accumulated across iterations, not production per-connection) |
 
-High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is ACK-clock and single-threaded-architecture limited, not pure CPU compute.
+High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is ACK-clock and shared-I/O-path limited (no scaling with concurrent connections), not pure CPU compute.
 
 ## Throughput (single stream, loopback, real handshake)
 
@@ -103,13 +103,13 @@ High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is A
 
 > All measured with the real-handshake bench (`quic_bench_hs.zig`); handshake throughput is single-threaded serial.
 
-## Connection Scaling Baseline (real handshake)
+## Connection Scaling Baseline (real handshake, multi-threaded)
 
 | Baseline | Value | Notes |
 |---|---|---|
-| Sequential multi-connection aggregate (4 conns) | **~208 MB/s** | Single-threaded architecture, no concurrency gain (below single-stream) |
+| Concurrent multi-connection aggregate (4 conns, 4 threads) | **~375 MB/s** | Comparable to single-stream ~404 MB/s, no concurrency scaling |
 
-> The single-threaded std.Io architecture serializes connection processing; concurrent connections give no scaling benefit. Higher concurrency needs multi-threading / multiple endpoints. Absolute values vary with system load.
+> std.Io.Threaded is multi-threaded and the bench runs concurrent connections on separate threads (4 conns finish in 0.68s vs 1.23s sequential); however aggregate throughput does not scale with connection count — the bottleneck is the shared I/O path and loopback, not thread count. Absolute values vary with system load/temperature.
 
 ## Comparison with Other QUIC Implementations
 
@@ -141,7 +141,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 
 **Key findings (all sourced)**:
 - KIT 2025 measures 10Gb physical testbed goodput in the range **1220–4172 Mbit/s (~152–521 MB/s)**; **MTU 1500→9000 lets some implementations saturate 10 Gbit/s**.
-- The KIT paper states explicitly: **throughput limitations stem primarily from single-core performance constraints** (consistent with quicz being constrained by its single-threaded architecture / ACK clock on a single core).
+- The KIT paper states explicitly: **throughput limitations stem primarily from single-core performance constraints** (consistent with quicz being constrained by the ACK clock / shared I/O path on a single core).
 - quicz ~390 MB/s ≈ **3120 Mbit/s**, within the KIT range and above its midpoint; conditions differ (macOS loopback no-GSO vs 10Gb physical link), but the magnitude is comparable to mainstream implementations.
 - quic-go #3670 user-measured ~1100 Mbit/s (~137 MB/s, Ubuntu two hosts, 10Gb physical link, not loopback).
 
@@ -180,7 +180,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 The real-handshake bench (`quic_bench_hs.zig`) measures **~390 MB/s** single-stream on macOS loopback (stddev 4.3%). The following are verified by measurement:
 
 1. **Handshake is not a bottleneck**: a real TLS 1.3 handshake takes ~0.6–1.0 ms/iter, negligible vs the ~40 ms 16 MB transfer; transport parameters are negotiated correctly (RFC 9000 §7.4).
-2. **Per-packet processing CPU is not the bottleneck**: AES-128-GCM measures 3.5–3.7 GB/s (ARM PMULL hardware accelerated), ~4.9 μs encrypt+decrypt per packet; server per-packet processing capacity is ~900 MB/s, above the measured ~390 MB/s (headroom). Throughput is limited by the ACK clock and the single-threaded server architecture.
+2. **Per-packet processing CPU is not the bottleneck**: AES-128-GCM measures 3.5–3.7 GB/s (ARM PMULL hardware accelerated), ~4.9 μs encrypt+decrypt per packet; server per-packet processing capacity is ~900 MB/s, above the measured ~400 MB/s (headroom). Throughput is limited by the ACK clock and the shared I/O path (no scaling even with multi-threaded concurrent connections).
 3. **UDP syscalls are not dominant**: raw UDP loopback `sendto` measures ~3.5–4.7 μs/packet (3 runs: 3.48 / 3.61 / 4.67 μs).
 4. **GSO/GRO platform difference**: Linux GSO batch sending yields 3–10x throughput; macOS has no equivalent (no `UDP_SEGMENT`/`sendmmsg`). This is a platform limitation, not a quicz defect. On Linux, `std.Io.Threaded` already provides `sendmmsg`.
 
@@ -199,7 +199,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
 - Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
 - quicz currently reaches ~390 MB/s single-stream on macOS loopback (real handshake, quic-go style multi-iteration, stddev 4.3%; 8.9KB datagram, 100μs timeout).
-- Throughput is limited by the ACK clock and the single-threaded server architecture (server capacity ~900 MB/s with headroom); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP syscalls are not the bottleneck.
+- Throughput is limited by the ACK clock and the shared I/O path (server capacity ~900 MB/s with headroom; no scaling with concurrent connections); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP syscalls are not the bottleneck.
 
 ## Planned Benchmarks
 
@@ -219,7 +219,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
 Benchmark uses a 100μs `receiveTimeout`; `nanoTime()` is nanosecond-precision (macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`).
-Throughput is limited by the ACK clock and the single-threaded server architecture (server per-packet processing capacity ~900 MB/s, with headroom); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP `sendto` ~3.5–4.7 μs/packet, neither a bottleneck. ~390 MB/s is near the practical limit on macOS loopback, single-threaded, no GSO; higher throughput needs GSO/GRO and multi-threading (platform capabilities; std.Io auto-adapts on Linux, not separately benchmarked).
+Throughput is limited by the ACK clock and the shared I/O path (server per-packet processing capacity ~900 MB/s, with headroom; concurrent connections give no scaling); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP `sendto` ~3.5–4.7 μs/packet, neither a bottleneck. ~400 MB/s is near the practical limit on macOS loopback, no GSO; higher throughput needs GSO/GRO (platform capabilities; std.Io is multi-threaded and auto-adapts on Linux, not separately benchmarked).
 
 ## References
 

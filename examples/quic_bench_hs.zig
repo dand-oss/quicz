@@ -803,43 +803,97 @@ fn measureDatagram(allocator: std.mem.Allocator, io: std.Io) !void {
     });
 }
 
-/// Aggregate throughput over N sequential connections (each a fresh real
-/// handshake + 16 MB transfer). The single-threaded std.Io architecture
-/// serializes connection processing, so this records the honest aggregate.
+const WorkerCtx = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    bytes_out: *std.atomic.Value(usize),
+};
+
+/// One connection (real handshake + 16 MB transfer) run on its own thread, for
+/// the concurrent-connection scaling test. std.Io.Threaded is multi-threaded, so
+/// independent connections on separate threads can run in parallel.
+fn workerFn(ctx: WorkerCtx) void {
+    const allocator = ctx.allocator;
+    const io = ctx.io;
+    var client_socket = bindLoopback(io) catch return;
+    defer client_socket.close(io);
+    var server_socket = bindLoopback(io) catch return;
+    defer server_socket.close(io);
+    const server_addr = server_socket.address;
+
+    const seed = [_]u8{0x55} ** 32;
+    const server_kp = EcdsaP256Sha256.KeyPair.generateDeterministic(seed) catch return;
+    const server_priv = server_kp.secret_key.bytes;
+    const cert_der = [_]u8{ 0x30, 0x82, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const alpn = [_][]const u8{"bench"};
+    const secrets = protection.deriveInitialSecrets(.v1, &original_dcid) catch return;
+
+    var client = Connection.init(allocator, .client, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
+    }) catch return;
+    var server = Connection.init(allocator, .server, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .max_datagram_size = max_datagram_size,
+    }) catch return;
+    server.validatePeerAddress() catch return;
+
+    var client_backend = Tls13Backend.initClient(.{ .alpn = &alpn, .server_name = "example.com", .skip_cert_verify = true });
+    var server_backend = Tls13Backend.initServer(.{ .alpn = &alpn, .cert_chain_der = &.{&cert_der}, .private_key_bytes = &server_priv, .private_key_algorithm = .ecdsa_p256_sha256 });
+
+    var scratch: [16384]u8 = undefined;
+    var hs_buf: [16384]u8 = undefined;
+    client.setLocalInitialSourceConnectionId(&client_scid) catch return;
+    server.setLocalInitialSourceConnectionId(&server_scid) catch return;
+    doHandshake(allocator, &client, &server, &client_socket, &server_socket, io, &client_backend, &server_backend, &scratch, &hs_buf, secrets) catch return;
+
+    var done = std.atomic.Value(bool).init(false);
+    var bytes_received = std.atomic.Value(usize).init(0);
+    var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = &server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
+    const srv_thread = std.Thread.spawn(.{}, serverTransferThread, .{&srv_ctx}) catch return;
+    const stream_id = client.openStream() catch return;
+    _ = runTransfer(allocator, io, &client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
+    done.store(true, .release);
+    srv_thread.join();
+    ctx.bytes_out.store(bytes_received.load(.monotonic), .monotonic);
+    client.deinit();
+    server.deinit();
+}
+
+/// Concurrent connection scaling: N connections each run on their own thread
+/// (own arena + server thread), started together. Measures aggregate throughput
+/// to see how quicz scales with multiple threads (std.Io.Threaded is multi-threaded).
 fn measureConcurrentConnections(allocator: std.mem.Allocator, io: std.Io) !void {
-    std.debug.print("\n  --- Connection Scaling (sequential, single-threaded) ---\n", .{});
+    std.debug.print("\n  --- Concurrent Connection Scaling (N threads) ---\n", .{});
     const num_conns: usize = 4;
-    var total_bytes: usize = 0;
+    var arenas: [num_conns]*std.heap.ArenaAllocator = undefined;
+    var byte_counts: [num_conns]std.atomic.Value(usize) = undefined;
+    var threads: [num_conns]std.Thread = undefined;
+    for (0..num_conns) |i| byte_counts[i] = std.atomic.Value(usize).init(0);
+
     const t0 = nanoTime();
-    var c: usize = 0;
-    while (c < num_conns) : (c += 1) {
-        var client_socket = try bindLoopback(io);
-        defer client_socket.close(io);
-        var server_socket = try bindLoopback(io);
-        defer server_socket.close(io);
-        const server_addr = server_socket.address;
-        var scratch: [16384]u8 = undefined;
-        var hs_buf: [16384]u8 = undefined;
-        const pair = try setupHandshakenPair(allocator, io, &client_socket, &server_socket, &scratch, &hs_buf);
-        var done = std.atomic.Value(bool).init(false);
-        var bytes_received = std.atomic.Value(usize).init(0);
-        var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = pair.server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
-        const srv_thread = try std.Thread.spawn(.{}, serverTransferThread, .{&srv_ctx});
-        const stream_id = try pair.client.openStream();
-        _ = runTransfer(allocator, io, pair.client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
-        done.store(true, .release);
-        srv_thread.join();
-        total_bytes += bytes_received.load(.monotonic);
-        pair.client.deinit();
-        pair.server.deinit();
-        allocator.destroy(pair.client);
-        allocator.destroy(pair.server);
-        allocator.destroy(pair.client_backend);
-        allocator.destroy(pair.server_backend);
+    for (0..num_conns) |i| {
+        const arena = try allocator.create(std.heap.ArenaAllocator);
+        arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        arenas[i] = arena;
+        const ctx = WorkerCtx{ .io = io, .allocator = arena.allocator(), .bytes_out = &byte_counts[i] };
+        threads[i] = try std.Thread.spawn(.{ .allocator = allocator }, workerFn, .{ctx});
+    }
+    var total_bytes: usize = 0;
+    for (0..num_conns) |i| {
+        threads[i].join();
+        total_bytes += byte_counts[i].load(.monotonic);
+        arenas[i].deinit();
+        allocator.destroy(arenas[i]);
     }
     const elapsed = nanoTime() - t0;
     const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
-    std.debug.print("  {s:20} {d:.2} MB/s  ({d} conns x {d} MB in {d:.3} s)\n", .{
+    std.debug.print("  {s:20} {d:.2} MB/s  ({d} concurrent conns x {d} MB in {d:.3} s)\n", .{
         "Aggregate (4 conns)",
         @as(f64, @floatFromInt(total_bytes)) / (1024.0 * 1024.0) / seconds,
         num_conns,
@@ -848,6 +902,7 @@ fn measureConcurrentConnections(allocator: std.mem.Allocator, io: std.Io) !void 
     });
 }
 
+/// Server thread that drains received DATAGRAM frames (RFC 9221) and counts bytes.
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();

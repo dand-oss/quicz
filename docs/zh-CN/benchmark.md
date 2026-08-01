@@ -46,7 +46,7 @@ zig build run-quic-bench
 | Sys CPU | 3.27s（~65% 单核） |
 | Peak RSS | 1.5 GB（bench arena 跨迭代累积，非生产单连接占用） |
 
-sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 ACK 时钟与单线程架构限制，非纯 CPU 算力。
+sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 ACK 时钟与共享 I/O 路径限制，非纯 CPU 算力。
 ## 吞吐量（单流，loopback，真实握手）
 
 | 指标 | 数值 | 说明 |
@@ -103,13 +103,13 @@ sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 AC
 
 > 均为真实握手 bench（`quic_bench_hs.zig`）实测；握手吞吐受单线程串行限制。
 
-## 连接扩展基线（真实握手）
+## 连接扩展基线（真实握手，多线程）
 
 | 基线 | 数值 | 说明 |
 |---|---|---|
-| 顺序多连接聚合（4 连接） | **~208 MB/s** | 单线程架构，无并发增益（低于单流） |
+| 并发多连接聚合（4 连接，4 线程） | **~375 MB/s** | 与单流 ~404 MB/s 相当，无并发扩展增益 |
 
-> 单线程 std.Io 架构下连接处理串行，并发连接无扩展收益；更高并发需多线程/多 endpoint。绝对值随系统负载波动。
+> std.Io.Threaded 是多线程的，bench 也用多线程跑并发连接（4 连接 0.68s 完成 vs 顺序 1.23s）；但聚合吞吐不随连接数扩展，瓶颈在共享 I/O 路径与 loopback，而非线程数。绝对值随系统负载/温度波动。
 
 ## 与其他 QUIC 实现对比
 
@@ -141,7 +141,7 @@ sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 AC
 
 **关键结论（均有出处）**：
 - KIT 2025 实测 10Gb 物理测试床 goodput 区间 **1220–4172 Mbit/s（~152–521 MB/s）**；**MTU 1500→9000 可让部分实现打满 10 Gbit/s**。
-- KIT 论文明确：**吞吐瓶颈主要来自单核性能约束**（与 quicz 单线程架构受 ACK 时钟/单核约束一致）。
+- KIT 论文明确：**吞吐瓶颈主要来自单核性能约束**（与 quicz 受 ACK 时钟/共享 I/O 路径约束一致）。
 - quicz ~390 MB/s ≈ **3120 Mbit/s**，落在 KIT 区间内、中位以上；条件不同（macOS loopback 无 GSO vs 10Gb 物理链路），但量级与主流实现相当。
 - quic-go #3670 用户自测 ~1100 Mbit/s（~137 MB/s，Ubuntu 双主机 10Gb 物理链路，非 loopback）。
 
@@ -180,7 +180,7 @@ sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 AC
 真实握手 bench（`quic_bench_hs.zig`）测得 macOS loopback 单流 **~390 MB/s**（stddev 4.3%）。以下为实测核实的结论：
 
 1. **握手非瓶颈**：真实 TLS 1.3 握手 ~0.6–1.0 ms/轮，相对 16 MB 传输（~40 ms）可忽略；transport parameters 经握手正确协商（RFC 9000 §7.4）。
-2. **每包处理 CPU 非瓶颈**：AES-128-GCM 实测 3.5–3.7 GB/s（ARM PMULL 硬件加速），每包加密+解密 ~4.9 μs；服务端每包处理容量 ~900 MB/s，高于实测 ~390 MB/s（有余量）。吞吐受 ACK 时钟与单线程服务端架构限制。
+2. **每包处理 CPU 非瓶颈**：AES-128-GCM 实测 3.5–3.7 GB/s（ARM PMULL 硬件加速），每包加密+解密 ~4.9 μs；服务端每包处理容量 ~900 MB/s，高于实测 ~400 MB/s（有余量）。吞吐受 ACK 时钟与共享 I/O 路径限制（多线程并发连接亦无扩展）。
 3. **UDP 系统调用非主因**：原始 UDP loopback `sendto` 实测 ~3.5–4.7 μs/包（3 次：3.48 / 3.61 / 4.67 μs）。
 4. **GSO/GRO 平台差异**：Linux GSO 批量发送可带来 3–10x 吞吐提升，macOS 无等价机制（无 `UDP_SEGMENT`/`sendmmsg`）；此为平台限制，非 quicz 实现缺陷。Linux 上 `std.Io.Threaded` 已内置 `sendmmsg`。
 
