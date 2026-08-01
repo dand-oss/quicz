@@ -814,7 +814,11 @@ const WorkerCtx = struct {
 /// independent connections on separate threads can run in parallel.
 fn workerFn(ctx: WorkerCtx) void {
     const allocator = ctx.allocator;
-    const io = ctx.io;
+    // Per-connection std.Io (msquic-style: each worker owns its own I/O context)
+    // to test whether the shared std.Io serializes concurrent connections.
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
     var client_socket = bindLoopback(io) catch return;
     defer client_socket.close(io);
     var server_socket = bindLoopback(io) catch return;

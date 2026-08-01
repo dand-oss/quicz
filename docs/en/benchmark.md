@@ -107,9 +107,10 @@ High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is A
 
 | Baseline | Value | Notes |
 |---|---|---|
-| Concurrent multi-connection aggregate (4 conns, 4 threads) | **~375 MB/s** | Comparable to single-stream ~404 MB/s, no concurrency scaling |
+| Concurrent aggregate (4 conns, shared std.Io) | ~375 MB/s | ≈ single-stream, no scaling |
+| Concurrent aggregate (4 conns, **per-connection std.Io**) | **~471 MB/s** | ~1.2x scaling (I/O partitioning) |
 
-> std.Io.Threaded is multi-threaded and the bench runs concurrent connections on separate threads (4 conns finish in 0.68s vs 1.23s sequential); however aggregate throughput does not scale with connection count — the bottleneck is the shared I/O path and loopback, not thread count. Absolute values vary with system load/temperature.
+> **Key finding (cf. msquic `docs/Execution.md`)**: msquic uses one worker thread per processor with connections partitioned across threads by RSS; each connection is single-threaded but distinct connections run in parallel. With quicz sharing a single std.Io, concurrent connections are serialized (no scaling); **giving each connection its own std.Io (I/O partitioning) scales to ~1.2x**. The remaining sub-linear scaling is CPU and loopback-bandwidth limited. quic-go (goroutine per connection) and quinn (tokio task per connection) follow the same principle: partitioning connections across independent execution contexts is the key to throughput scaling. Absolute values vary with system load/temperature.
 
 ## Comparison with Other QUIC Implementations
 
