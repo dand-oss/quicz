@@ -64,7 +64,7 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
 );
 
 /// Async streaming QUIC server (single connection, Phase 1).
-pub const AsyncServer = struct {
+pub const Server = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     socket: std.Io.net.Socket,
@@ -90,7 +90,7 @@ pub const AsyncServer = struct {
         private_key: []const u8,
     };
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !AsyncServer {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Server {
         var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = config.port } };
         const socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
         const server_ep = try ServerEndpoint.initWithCapacity(allocator, 16, .{
@@ -108,7 +108,7 @@ pub const AsyncServer = struct {
         };
     }
 
-    pub fn deinit(self: *AsyncServer) void {
+    pub fn deinit(self: *Server) void {
         self.stream_queue.deinit(self.allocator);
         self.server_ep.deinit();
         self.socket.close(self.io);
@@ -117,7 +117,7 @@ pub const AsyncServer = struct {
     /// The connection driving task body (runs on Group.concurrent). Receives
     /// packets, processes them through the endpoint, and pushes accepted
     /// connections / received stream data to the queues, signaling waiters.
-    pub fn drive(self: *AsyncServer) std.Io.Cancelable!void {
+    pub fn drive(self: *Server) std.Io.Cancelable!void {
         const allocator = self.allocator;
         const io = self.io;
         var recv_buf: [max_datagram_size]u8 = undefined;
@@ -248,7 +248,7 @@ pub const AsyncServer = struct {
     }
 
     /// Accept the (first) connection: waits until the driving task accepts one.
-    pub fn accept(self: *AsyncServer) !*Connection {
+    pub fn accept(self: *Server) !*Connection {
         try self.mutex.lock(self.io);
         defer self.mutex.unlock(self.io);
         while (!self.conn_ready) {
@@ -259,7 +259,7 @@ pub const AsyncServer = struct {
 
     /// Receive stream data: waits until the driving task pushes some, then
     /// copies up to buf.len bytes out of the queue.
-    pub fn receiveStreamData(self: *AsyncServer, buf: []u8) !usize {
+    pub fn receiveStreamData(self: *Server, buf: []u8) !usize {
         try self.mutex.lock(self.io);
         defer self.mutex.unlock(self.io);
         while (self.stream_queue.items.len == 0) {
@@ -273,7 +273,7 @@ pub const AsyncServer = struct {
 
     /// Send stream data on the accepted connection (stream 0), then flush the
     /// resulting QUIC packets to the peer.
-    pub fn sendStreamData(self: *AsyncServer, stream_id: u64, data: []const u8) !void {
+    pub fn sendStreamData(self: *Server, stream_id: u64, data: []const u8) !void {
         const conn = self.the_conn orelse return error.NoConnection;
         const peer = self.peer_addr orelse return error.NoConnection;
         try conn.sendOnStream(stream_id, data, false);

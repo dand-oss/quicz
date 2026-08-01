@@ -8,8 +8,8 @@
 
 const std = @import("std");
 const quicz = @import("quicz");
-const Server = quicz.runtime.server.AsyncServer;
-const Client = quicz.runtime.client.AsyncClient;
+const Server = quicz.runtime.server.Server;
+const Client = quicz.runtime.client.Client;
 
 const port: u16 = 4433;
 

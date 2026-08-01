@@ -13,7 +13,7 @@ const endpoint = quicz.endpoint;
 
 const max_datagram_size: usize = 8192;
 
-pub const AsyncClient = struct {
+pub const Client = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     socket: std.Io.net.Socket,
@@ -28,7 +28,7 @@ pub const AsyncClient = struct {
         alpn: []const []const u8,
     };
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !AsyncClient {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
         var client_address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
         const socket = try client_address.bind(io, .{ .mode = .dgram, .protocol = .udp });
         const server_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = config.server_host, .port = config.server_port } };
@@ -53,13 +53,13 @@ pub const AsyncClient = struct {
         return .{ .allocator = allocator, .io = io, .socket = socket, .client = client, .server_address = server_address };
     }
 
-    pub fn deinit(self: *AsyncClient) void {
+    pub fn deinit(self: *Client) void {
         self.client.deinit();
         self.socket.close(self.io);
     }
 
     /// Drive the TLS 1.3 handshake to completion (std.Io recv/send).
-    pub fn connect(self: *AsyncClient) !void {
+    pub fn connect(self: *Client) !void {
         const io = self.io;
         const begin_result = try self.client.beginWithRoutePath(0, &self.scratch);
         try self.socket.send(io, &self.server_address, begin_result.datagram);
@@ -84,7 +84,7 @@ pub const AsyncClient = struct {
     }
 
     /// Send `data` on a new bidirectional stream; returns the stream id.
-    pub fn send(self: *AsyncClient, data: []const u8, fin: bool) !u64 {
+    pub fn send(self: *Client, data: []const u8, fin: bool) !u64 {
         const stream_id = try self.client.openStream();
         var send_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
         const send_result = try self.client.sendStreamWithRoutePathAndDrainDatagrams(stream_id, data, fin, 0, &send_out);
@@ -96,7 +96,7 @@ pub const AsyncClient = struct {
     }
 
     /// Receive echoed data on `stream_id` into `buf`; returns bytes read.
-    pub fn receive(self: *AsyncClient, stream_id: u64, buf: []u8) !?usize {
+    pub fn receive(self: *Client, stream_id: u64, buf: []u8) !?usize {
         const io = self.io;
         var recv_buf: [max_datagram_size]u8 = undefined;
         var attempts: usize = 0;
@@ -111,7 +111,7 @@ pub const AsyncClient = struct {
 
     /// Full echo session (connect + send + receive); returns true on a matching
     /// echo. Suitable for running as a std.Io async task via Group.concurrent.
-    pub fn runEchoSession(self: *AsyncClient, payload: []const u8) !bool {
+    pub fn runEchoSession(self: *Client, payload: []const u8) !bool {
         try self.connect();
         const stream_id = try self.send(payload, true);
         var echo_buf: [4096]u8 = undefined;
