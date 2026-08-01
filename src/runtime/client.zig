@@ -1,6 +1,6 @@
 //! quicz I/O runtime — async streaming client (Phase 1, std.Io async model).
 //!
-//! s2n-quic-style streaming client over Tls13ClientEndpoint, using std.Io. The
+//! Streaming client over Tls13ClientEndpoint, using std.Io. The
 //! handshake + transfer run as a std.Io async task (Group.concurrent); the
 //! streaming methods (connect/send/receive) drive the client endpoint with
 //! std.Io recv/send.

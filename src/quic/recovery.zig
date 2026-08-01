@@ -248,7 +248,7 @@ pub const Recovery = struct {
                 self.cubic.onAppLimited(sent_time_nanos);
             }
             // Slow start must not grow when the window is underutilized.
-            // Congestion avoidance still grows (s2n-quic behavior):
+            // Congestion avoidance still grows:
             // the app-limited signal only adjusts the CUBIC epoch timing.
             if (self.congestion_state != .congestion_avoidance) return;
         }

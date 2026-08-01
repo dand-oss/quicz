@@ -4,7 +4,7 @@
 //! transport-parameter exchange (RFC 9000 §7.4); fresh bypass connections misbehave
 //! across repeated transfers. This bench does a real handshake (pattern from
 //! examples/interop_client.zig) for every measurement, and measures throughput with the
-//! quic-go model: N self-contained iterations, end-to-end, report mean/stddev.
+//! Multi-iteration model: N self-contained iterations, end-to-end, report mean/stddev.
 const std = @import("std");
 const builtin = @import("builtin");
 const quicz = @import("quicz");
@@ -906,7 +906,7 @@ fn measureConcurrentAsync(allocator: std.mem.Allocator, io: std.Io) !void {
 /// independent connections on separate threads can run in parallel.
 fn workerFn(ctx: WorkerCtx) void {
     const allocator = ctx.allocator;
-    // Per-connection std.Io (msquic-style: each worker owns its own I/O context)
+    // Per-connection std.Io (each worker owns its own I/O context)
     // to test whether the shared std.Io serializes concurrent connections.
     var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
     defer threaded.deinit();

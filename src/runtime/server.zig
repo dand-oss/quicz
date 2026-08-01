@@ -1,14 +1,12 @@
-//! quicz I/O runtime — async streaming server (Phase 1, std.Io async model).
+//! quicz I/O runtime — async streaming server (Phase 2: multi-connection).
 //!
-//! s2n-quic-style streaming API driven by std.Io async tasks. A connection
+//! Streaming API driven by std.Io async tasks. A connection
 //! driving task runs on Group.concurrent: it receives packets via std.Io,
 //! processes them through the endpoint (sync, CPU-bound), and pushes accepted
-//! connections / received stream data to queues, signaling Conditions. The
-//! application calls accept()/receiveStreamData()/send() which wait on those
-//! Conditions concurrently with the driving task (std.Io thread pool).
-//!
-//! Phase 1 scope: a single connection. Multi-connection (per-conn queues keyed
-//! by conn id) lands in Phase 2.
+//! connections / received stream data to per-connection queues (keyed by
+//! connection id), signaling Conditions. The application calls
+//! accept()/receiveStreamData()/sendStreamData() which wait on those Conditions
+//! concurrently with the driving task (std.Io thread pool).
 
 const std = @import("std");
 const quicz = @import("../lib.zig");
@@ -63,7 +61,20 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
     ServerRecord.deinit,
 );
 
-/// Async streaming QUIC server (single connection, Phase 1).
+/// Per-connection server state: the connection, its peer address, and a queue
+/// of received stream data the application drains via receiveStreamData.
+const ConnState = struct {
+    conn: *Connection,
+    peer: std.Io.net.IpAddress,
+    stream_queue: std.ArrayList(u8) = .empty,
+    data_cond: std.Io.Condition = std.Io.Condition.init,
+
+    fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
+        self.stream_queue.deinit(alloc);
+    }
+};
+
+/// Async streaming QUIC server (multi-connection).
 pub const Server = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -74,14 +85,11 @@ pub const Server = struct {
     cert_der: []const u8,
     private_key: []const u8,
 
-    // Streaming coordination (driving task <-> application).
+    // Multi-connection state (guarded by mutex).
     mutex: std.Io.Mutex = std.Io.Mutex.init,
     conn_cond: std.Io.Condition = std.Io.Condition.init,
-    data_cond: std.Io.Condition = std.Io.Condition.init,
-    conn_ready: bool = false,
-    the_conn: ?*Connection = null,
-    stream_queue: std.ArrayList(u8) = .empty,
-    peer_addr: ?std.Io.net.IpAddress = null,
+    conns: std.AutoHashMap(u64, *ConnState),
+    pending_accept: std.ArrayList(u64) = .empty,
 
     pub const Config = struct {
         port: u16,
@@ -105,18 +113,23 @@ pub const Server = struct {
             .alpn = config.alpn,
             .cert_der = config.cert_der,
             .private_key = config.private_key,
+            .conns = std.AutoHashMap(u64, *ConnState).init(allocator),
         };
     }
 
     pub fn deinit(self: *Server) void {
-        self.stream_queue.deinit(self.allocator);
+        var it = self.conns.valueIterator();
+        while (it.next()) |cs| {
+            cs.*.deinit(self.allocator);
+            self.allocator.destroy(cs.*);
+        }
+        self.conns.deinit();
+        self.pending_accept.deinit(self.allocator);
         self.server_ep.deinit();
         self.socket.close(self.io);
     }
 
-    /// The connection driving task body (runs on Group.concurrent). Receives
-    /// packets, processes them through the endpoint, and pushes accepted
-    /// connections / received stream data to the queues, signaling waiters.
+    /// The connection driving task body (runs on Group.concurrent).
     pub fn drive(self: *Server) std.Io.Cancelable!void {
         const allocator = self.allocator;
         const io = self.io;
@@ -177,11 +190,13 @@ pub const Server = struct {
                         allocator.destroy(record);
                         continue;
                     };
+                    // Register per-connection state and queue it for accept().
+                    const cs = allocator.create(ConnState) catch continue;
+                    cs.* = .{ .conn = record.transport.connectionRef(), .peer = dest };
                     self.mutex.lock(io) catch return;
-                    self.the_conn = record.transport.connectionRef();
-                    self.peer_addr = dest;
-                    self.conn_ready = true;
-                    self.mutex.unlock(self.io);
+                    self.conns.put(handle, cs) catch {};
+                    self.pending_accept.append(allocator, handle) catch {};
+                    self.mutex.unlock(io);
                     self.conn_cond.signal(io);
                     for (initial_out[0..accepted.initial.drain.datagrams_written]) |o| {
                         self.socket.send(io, &dest, o.datagram) catch {};
@@ -213,10 +228,14 @@ pub const Server = struct {
                                             while (sid < 512) : (sid += 4) {
                                                 const n = conn.recvOnStream(sid, &stream_buf) catch continue;
                                                 if (n) |len| if (len > 0) {
+                                                    // Push to this connection's queue (look up by handle).
                                                     self.mutex.lock(io) catch return;
-                                                    self.stream_queue.appendSlice(allocator, stream_buf[0..len]) catch {};
-                                                    self.mutex.unlock(self.io);
-                                                    self.data_cond.signal(io);
+                                                    const cs = self.findConnStateLocked(rec);
+                                                    if (cs) |state| {
+                                                        state.stream_queue.appendSlice(allocator, stream_buf[0..len]) catch {};
+                                                        state.data_cond.signal(io);
+                                                    }
+                                                    self.mutex.unlock(io);
                                                 };
                                             }
                                         }
@@ -247,35 +266,52 @@ pub const Server = struct {
         }
     }
 
-    /// Accept the (first) connection: waits until the driving task accepts one.
-    pub fn accept(self: *Server) !*Connection {
-        try self.mutex.lock(self.io);
-        defer self.mutex.unlock(self.io);
-        while (!self.conn_ready) {
-            self.conn_cond.wait(self.io, &self.mutex) catch return error.Canceled;
+    /// Find the ConnState for a ServerRecord (mutex must be held). Matches by
+    /// connection pointer.
+    fn findConnStateLocked(self: *Server, rec: *ServerRecord) ?*ConnState {
+        const conn_ptr = rec.transport.connectionRef();
+        var it = self.conns.valueIterator();
+        while (it.next()) |cs| {
+            if (cs.*.conn == conn_ptr) return cs.*;
         }
-        return self.the_conn orelse error.NoConnection;
+        return null;
     }
 
-    /// Receive stream data: waits until the driving task pushes some, then
-    /// copies up to buf.len bytes out of the queue.
-    pub fn receiveStreamData(self: *Server, buf: []u8) !usize {
-        try self.mutex.lock(self.io);
+    /// Accept the next new connection; returns its connection id.
+    pub fn accept(self: *Server) !u64 {
+        self.mutex.lock(self.io) catch return error.Canceled;
         defer self.mutex.unlock(self.io);
-        while (self.stream_queue.items.len == 0) {
-            self.data_cond.wait(self.io, &self.mutex) catch return error.Canceled;
+        while (self.pending_accept.items.len == 0) {
+            self.conn_cond.wait(self.io, &self.mutex) catch return error.Canceled;
         }
-        const n = @min(buf.len, self.stream_queue.items.len);
-        @memcpy(buf[0..n], self.stream_queue.items[0..n]);
-        self.stream_queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
+        return self.pending_accept.orderedRemove(0);
+    }
+
+    /// Receive stream data on a connection: waits until its queue has data,
+    /// then copies up to buf.len bytes out.
+    pub fn receiveStreamData(self: *Server, conn_id: u64, buf: []u8) !usize {
+        self.mutex.lock(self.io) catch return error.Canceled;
+        defer self.mutex.unlock(self.io);
+        const cs = self.conns.get(conn_id) orelse return error.NoConnection;
+        while (cs.stream_queue.items.len == 0) {
+            cs.data_cond.wait(self.io, &self.mutex) catch return error.Canceled;
+        }
+        const n = @min(buf.len, cs.stream_queue.items.len);
+        @memcpy(buf[0..n], cs.stream_queue.items[0..n]);
+        cs.stream_queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
         return n;
     }
 
-    /// Send stream data on the accepted connection (stream 0), then flush the
-    /// resulting QUIC packets to the peer.
-    pub fn sendStreamData(self: *Server, stream_id: u64, data: []const u8) !void {
-        const conn = self.the_conn orelse return error.NoConnection;
-        const peer = self.peer_addr orelse return error.NoConnection;
+    /// Send stream data on a connection (stream id), then flush QUIC packets.
+    pub fn sendStreamData(self: *Server, conn_id: u64, stream_id: u64, data: []const u8) !void {
+        self.mutex.lock(self.io) catch return error.Canceled;
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock(self.io);
+            return error.NoConnection;
+        };
+        const conn = cs.conn;
+        const peer = cs.peer;
+        self.mutex.unlock(self.io);
         try conn.sendOnStream(stream_id, data, false);
         var out: [16]ServerEndpoint.DatagramPathResult = undefined;
         const drain = self.server_ep.drainDatagramsAcrossRecordsWithRoutePathWithScratch(0, .application, &out);
