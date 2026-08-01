@@ -669,6 +669,52 @@ fn measureStreamChurn(allocator: std.mem.Allocator, io: std.Io) !void {
     });
 }
 
+
+/// Aggregate throughput over N sequential connections (each a fresh real
+/// handshake + 16 MB transfer). The single-threaded std.Io architecture
+/// serializes connection processing, so this records the honest aggregate.
+fn measureConcurrentConnections(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- Connection Scaling (sequential, single-threaded) ---\n", .{});
+    const num_conns: usize = 4;
+    var total_bytes: usize = 0;
+    const t0 = nanoTime();
+    var c: usize = 0;
+    while (c < num_conns) : (c += 1) {
+        var client_socket = try bindLoopback(io);
+        defer client_socket.close(io);
+        var server_socket = try bindLoopback(io);
+        defer server_socket.close(io);
+        const server_addr = server_socket.address;
+        var scratch: [16384]u8 = undefined;
+        var hs_buf: [16384]u8 = undefined;
+        const pair = try setupHandshakenPair(allocator, io, &client_socket, &server_socket, &scratch, &hs_buf);
+        var done = std.atomic.Value(bool).init(false);
+        var bytes_received = std.atomic.Value(usize).init(0);
+        var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = pair.server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
+        const srv_thread = try std.Thread.spawn(.{}, serverTransferThread, .{&srv_ctx});
+        const stream_id = try pair.client.openStream();
+        _ = runTransfer(allocator, io, pair.client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
+        done.store(true, .release);
+        srv_thread.join();
+        total_bytes += bytes_received.load(.monotonic);
+        pair.client.deinit();
+        pair.server.deinit();
+        allocator.destroy(pair.client);
+        allocator.destroy(pair.server);
+        allocator.destroy(pair.client_backend);
+        allocator.destroy(pair.server_backend);
+    }
+    const elapsed = nanoTime() - t0;
+    const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
+    std.debug.print("  {s:20} {d:.2} MB/s  ({d} conns x {d} MB in {d:.3} s)\n", .{
+        "Aggregate (4 conns)",
+        @as(f64, @floatFromInt(total_bytes)) / (1024.0 * 1024.0) / seconds,
+        num_conns,
+        transfer_size / (1024 * 1024),
+        seconds,
+    });
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -688,6 +734,7 @@ pub fn main() !void {
     try measureHandshakeLatency(allocator, io);
     try measureHandshakeRate(allocator, io);
     try measureStreamChurn(allocator, io);
+    try measureConcurrentConnections(allocator, io);
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }

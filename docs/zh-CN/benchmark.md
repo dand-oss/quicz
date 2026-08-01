@@ -37,16 +37,16 @@ zig build run-quic-bench
 | 4 流聚合（4×4 MB） | **0.26 GB/s** | 共享 cwnd |
 
 
-### CPU 占用（单线程内存直连，/usr/bin/time -l）
+### CPU 占用（真实握手 bench 全套，/usr/bin/time -l）
 
 | 指标 | 数值 |
 |---|---|
-| Real time | 0.80s |
-| User CPU | 0.10s (12.5%) |
-| Sys CPU | 0.02s (2.5%) |
-| Peak RSS | 346 MB |
+| Real time | 5.04s |
+| User CPU | 2.48s（~49% 单核） |
+| Sys CPU | 3.27s（~65% 单核） |
+| Peak RSS | 1.5 GB（bench arena 跨迭代累积，非生产单连接占用） |
 
-CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU 计算。
+sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 ACK 时钟与单线程架构限制，非纯 CPU 算力。
 ## 吞吐量（单流，loopback，真实握手）
 
 | 指标 | 数值 | 说明 |
@@ -103,6 +103,14 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 > 均为真实握手 bench（`quic_bench_hs.zig`）实测；握手吞吐受单线程串行限制。
 
+## 连接扩展基线（真实握手）
+
+| 基线 | 数值 | 说明 |
+|---|---|---|
+| 顺序多连接聚合（4 连接） | **~208 MB/s** | 单线程架构，无并发增益（低于单流） |
+
+> 单线程 std.Io 架构下连接处理串行，并发连接无扩展收益；更高并发需多线程/多 endpoint。绝对值随系统负载波动。
+
 ## 与其他 QUIC 实现对比
 
 ### 测试条件差异说明
@@ -133,7 +141,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 
 **关键结论（均有出处）**：
 - KIT 2025 实测 10Gb 物理测试床 goodput 区间 **1220–4172 Mbit/s（~152–521 MB/s）**；**MTU 1500→9000 可让部分实现打满 10 Gbit/s**。
-- KIT 论文明确：**吞吐瓶颈主要来自单核性能约束**（与 quicz「每包处理 CPU 是主要成本」结论一致）。
+- KIT 论文明确：**吞吐瓶颈主要来自单核性能约束**（与 quicz 单线程架构受 ACK 时钟/单核约束一致）。
 - quicz ~390 MB/s ≈ **3120 Mbit/s**，落在 KIT 区间内、中位以上；条件不同（macOS loopback 无 GSO vs 10Gb 物理链路），但量级与主流实现相当。
 - quic-go #3670 用户自测 ~1100 Mbit/s（~137 MB/s，Ubuntu 双主机 10Gb 物理链路，非 loopback）。
 
@@ -172,7 +180,7 @@ CPU 占用极低（15%），瓶颈在事件循环等待和 UDP syscall，非 CPU
 真实握手 bench（`quic_bench_hs.zig`）测得 macOS loopback 单流 **~390 MB/s**（stddev 4.3%）。以下为实测核实的结论：
 
 1. **握手非瓶颈**：真实 TLS 1.3 握手 ~0.6–1.0 ms/轮，相对 16 MB 传输（~40 ms）可忽略；transport parameters 经握手正确协商（RFC 9000 §7.4）。
-2. **每包处理 CPU 是主要成本**：AES-128-GCM 实测 3.5–3.7 GB/s（ARM PMULL 硬件加速），每包加密+解密 ~4.9 μs；叠加 QUIC 成帧/解析与每包堆分配。原始 UDP loopback 可达 1.8–2.4 GB/s，QUIC 处理后降到 ~390 MB/s。
+2. **每包处理 CPU 非瓶颈**：AES-128-GCM 实测 3.5–3.7 GB/s（ARM PMULL 硬件加速），每包加密+解密 ~4.9 μs；服务端每包处理容量 ~900 MB/s，高于实测 ~390 MB/s（有余量）。吞吐受 ACK 时钟与单线程服务端架构限制。
 3. **UDP 系统调用非主因**：原始 UDP loopback `sendto` 实测 ~3.5–4.7 μs/包（3 次：3.48 / 3.61 / 4.67 μs）。
 4. **GSO/GRO 平台差异**：Linux GSO 批量发送可带来 3–10x 吞吐提升，macOS 无等价机制（无 `UDP_SEGMENT`/`sendmmsg`）；此为平台限制，非 quicz 实现缺陷。Linux 上 `std.Io.Threaded` 已内置 `sendmmsg`。
 
@@ -191,14 +199,14 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 - quicz 使用内存连接模型（无内核旁路），loopback UDP 开销适用。
 - Go/Rust 实现在 Linux 上受益于零拷贝 sendmsg 和 GSO。
 - quicz 当前 macOS loopback 单流 ~390 MB/s（真实握手，quic-go 式多次迭代，stddev 4.3%；8.9KB datagram，100μs timeout）。
-- 吞吐主要成本为每包 QUIC 处理 CPU（AES-128-GCM 硬件加速 + 成帧/解析）；UDP 系统调用非主因。
+- 吞吐受 ACK 时钟与单线程服务端架构限制（服务端容量 ~900 MB/s 有余量）；每包 AES-128-GCM 硬件加速（~4.9 μs）、UDP 系统调用均非瓶颈。
 
 ## 待完成基准
 
 - [x] 多流并发（4 流，内存直连 + UDP 线程化）
 - [x] 丢包恢复（1%/5%，loopback + 100μs RTT）
-- [x] DATAGRAM 吞吐（RFC 9221，installed keys）：**168.78 MB/s**（1200B payload，loopback）
-- [x] CPU 占用（/usr/bin/time -l，单线程内存直连）
+- [ ] DATAGRAM 吞吐（RFC 9221）：待真实握手重测（需握手协商 max_datagram_frame_size；bypass 旧值 168.78 MB/s 仅作参考）
+- [x] CPU 占用（/usr/bin/time -l，真实握手 bench 全套）
 - [x] 外部互通（quic-go）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 外部互通（s2n-quic）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 外部互通（quiche）：握手 + 证书验证 + ALPN + 双流 echo 通过
