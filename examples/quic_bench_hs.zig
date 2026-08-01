@@ -670,6 +670,139 @@ fn measureStreamChurn(allocator: std.mem.Allocator, io: std.Io) !void {
 }
 
 
+
+/// Server thread that drains received DATAGRAM frames (RFC 9221) and counts bytes.
+fn serverDatagramThread(ctx: *SrvCtx) void {
+    var recv_buf: [9000]u8 = undefined;
+    var read_buf: [9000]u8 = undefined;
+    var have_client_addr = false;
+    while (!ctx.done.load(.acquire)) {
+        var received_any = false;
+        while (true) {
+            const received = ctx.socket.receiveTimeout(ctx.io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
+            if (!have_client_addr) {
+                ctx.client_addr = received.from;
+                have_client_addr = true;
+            }
+            _ = ctx.server.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_scid.len, received.data) catch {};
+            received_any = true;
+        }
+        if (!received_any) continue;
+        while (true) {
+            const n = ctx.server.recvDatagram(&read_buf) catch break orelse break;
+            if (n == 0) break;
+            _ = ctx.bytes_received.fetchAdd(n, .monotonic);
+        }
+        if (have_client_addr) {
+            while (true) {
+                const ack_dg = ctx.server.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &client_scid) catch break orelse break;
+                defer ctx.server.allocator.free(ack_dg);
+                ctx.socket.send(ctx.io, &ctx.client_addr, ack_dg) catch break;
+            }
+        }
+    }
+}
+
+/// DATAGRAM (RFC 9221) throughput over a real handshake. max_datagram_frame_size is
+/// negotiated via the transport parameter during the handshake.
+fn measureDatagram(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- DATAGRAM Throughput (RFC 9221, real handshake) ---\n", .{});
+    const dgram_payload: usize = 1200;
+    const total_bytes: usize = 4 * 1024 * 1024;
+
+    var client_socket = try bindLoopback(io);
+    defer client_socket.close(io);
+    var server_socket = try bindLoopback(io);
+    defer server_socket.close(io);
+    const server_addr = server_socket.address;
+
+    const seed = [_]u8{0x55} ** 32;
+    const server_kp = try EcdsaP256Sha256.KeyPair.generateDeterministic(seed);
+    const server_priv = server_kp.secret_key.bytes;
+    const cert_der = [_]u8{ 0x30, 0x82, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const alpn = [_][]const u8{"bench"};
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    var client = try Connection.init(allocator, .client, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
+        .max_datagram_frame_size = max_datagram_size,
+    });
+    defer client.deinit();
+    var server = try Connection.init(allocator, .server, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .max_datagram_size = max_datagram_size,
+        .max_datagram_frame_size = max_datagram_size,
+    });
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    var client_backend = Tls13Backend.initClient(.{ .alpn = &alpn, .server_name = "example.com", .skip_cert_verify = true });
+    var server_backend = Tls13Backend.initServer(.{ .alpn = &alpn, .cert_chain_der = &.{&cert_der}, .private_key_bytes = &server_priv, .private_key_algorithm = .ecdsa_p256_sha256 });
+
+    var scratch: [16384]u8 = undefined;
+    var hs_buf: [16384]u8 = undefined;
+    try client.setLocalInitialSourceConnectionId(&client_scid);
+    try server.setLocalInitialSourceConnectionId(&server_scid);
+    try doHandshake(allocator, &client, &server, &client_socket, &server_socket, io, &client_backend, &server_backend, &scratch, &hs_buf, secrets);
+
+    var done = std.atomic.Value(bool).init(false);
+    var bytes_received = std.atomic.Value(usize).init(0);
+    var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = &server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
+    const srv_thread = try std.Thread.spawn(.{}, serverDatagramThread, .{&srv_ctx});
+
+    var payload: [dgram_payload]u8 = undefined;
+    @memset(&payload, 'D');
+    var recv_buf: [9000]u8 = undefined;
+    var sent: usize = 0;
+    const t0 = nanoTime();
+    while (sent < total_bytes) {
+        var burst: usize = 0;
+        while (sent < total_bytes and burst < 64) : (burst += 1) {
+            client.sendDatagram(&payload) catch break;
+            sent += dgram_payload;
+        }
+        while (true) {
+            const dg = client.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_scid) catch break orelse break;
+            defer allocator.free(dg);
+            client_socket.send(io, &server_addr, dg) catch break;
+        }
+        while (true) {
+            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
+            _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_scid.len, ack.data) catch {};
+        }
+    }
+    var wait: usize = 0;
+    while (bytes_received.load(.monotonic) < total_bytes and wait < 5_000_000) : (wait += 1) {
+        while (true) {
+            const dg = client.pollProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), &server_scid) catch break orelse break;
+            defer allocator.free(dg);
+            client_socket.send(io, &server_addr, dg) catch break;
+        }
+        while (true) {
+            const ack = client_socket.receiveTimeout(io, &recv_buf, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
+            _ = client.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), server_scid.len, ack.data) catch {};
+        }
+    }
+    const elapsed = nanoTime() - t0;
+    done.store(true, .release);
+    srv_thread.join();
+    const recv = bytes_received.load(.monotonic);
+    const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
+    std.debug.print("  {s:20} {d:.2} MB/s  ({d} B payload, recv {d}/{d} bytes)\n", .{
+        "DATAGRAM (RFC 9221)",
+        @as(f64, @floatFromInt(recv)) / (1024.0 * 1024.0) / seconds,
+        dgram_payload,
+        recv,
+        total_bytes,
+    });
+}
+
 /// Aggregate throughput over N sequential connections (each a fresh real
 /// handshake + 16 MB transfer). The single-threaded std.Io architecture
 /// serializes connection processing, so this records the honest aggregate.
@@ -735,6 +868,7 @@ pub fn main() !void {
     try measureHandshakeRate(allocator, io);
     try measureStreamChurn(allocator, io);
     try measureConcurrentConnections(allocator, io);
+    try measureDatagram(allocator, io);
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }

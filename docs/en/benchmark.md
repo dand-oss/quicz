@@ -205,7 +205,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 
 - [x] Multi-stream (4 streams, in-memory + UDP threaded)
 - [x] Loss recovery (1%/5%, loopback + 100us RTT)
-- [ ] DATAGRAM throughput (RFC 9221): pending real-handshake re-measure (needs max_datagram_frame_size negotiated in handshake; bypass value 168.78 MB/s for reference only)
+- [x] DATAGRAM throughput (RFC 9221, max_datagram_frame_size negotiated via real handshake): **114.87 MB/s** (1200B payload, loopback)
 - [x] CPU utilization (/usr/bin/time -l, real-handshake bench full suite: ~49% user, ~65% sys of one core)
 - [x] External interop (quic-go): handshake + cert verify + ALPN + 2-stream echo PASS
 - [x] External interop (s2n-quic): handshake + cert verify + ALPN + 2-stream echo PASS

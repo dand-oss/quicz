@@ -205,7 +205,7 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 
 - [x] 多流并发（4 流，内存直连 + UDP 线程化）
 - [x] 丢包恢复（1%/5%，loopback + 100μs RTT）
-- [ ] DATAGRAM 吞吐（RFC 9221）：待真实握手重测（需握手协商 max_datagram_frame_size；bypass 旧值 168.78 MB/s 仅作参考）
+- [x] DATAGRAM 吞吐（RFC 9221，真实握手协商 max_datagram_frame_size）：**114.87 MB/s**（1200B payload，loopback）
 - [x] CPU 占用（/usr/bin/time -l，真实握手 bench 全套）
 - [x] 外部互通（quic-go）：握手 + 证书验证 + ALPN + 双流 echo 通过
 - [x] 外部互通（s2n-quic）：握手 + 证书验证 + ALPN + 双流 echo 通过
