@@ -8,6 +8,10 @@ pub const duration = @import("time/duration.zig");
 pub const protection = @import("quic/protection.zig");
 pub const address_validation_token = @import("quic/address_validation_token.zig");
 pub const endpoint = @import("quic/endpoint.zig");
+pub const runtime = struct {
+    pub const server = @import("runtime/server.zig");
+    pub const client = @import("runtime/client.zig");
+};
 pub const transport_error = @import("quic/transport_error.zig");
 pub const transport_parameters = @import("quic/transport_parameters.zig");
 const transport_types = @import("quic/transport_types.zig");
