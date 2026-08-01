@@ -93,6 +93,9 @@ pub const Server = struct {
     conn_cond: std.Io.Condition = std.Io.Condition.init,
     conns: std.AutoHashMap(u64, *ConnState),
     pending_accept: std.ArrayList(u64) = .empty,
+    drive_group: std.Io.Group = .init,
+    started: bool = false,
+    stopping: bool = false,
 
     pub const Config = struct {
         port: u16,
@@ -120,7 +123,24 @@ pub const Server = struct {
         };
     }
 
+    /// Start the connection driving task (owned by the Server). The driving
+    /// task runs until deinit() cancels it.
+    pub fn start(self: *Server) !void {
+        if (self.started) return;
+        try self.drive_group.concurrent(self.io, Server.drive, .{self});
+        self.started = true;
+    }
+
     pub fn deinit(self: *Server) void {
+        // Shutdown coordination (single-owner model): stop the driving task and
+        // wait for it to exit BEFORE freeing connection state, so the driving
+        // task never accesses freed ConnState (fixes use-after-free).
+        if (self.started) {
+            @atomicStore(bool, &self.stopping, true, .release);
+            self.drive_group.cancel(self.io);
+            self.drive_group.await(self.io) catch {};
+            self.started = false;
+        }
         var it = self.conns.valueIterator();
         while (it.next()) |cs| {
             cs.*.deinit(self.allocator);
@@ -137,7 +157,7 @@ pub const Server = struct {
         const allocator = self.allocator;
         const io = self.io;
         var recv_buf: [max_datagram_size]u8 = undefined;
-        while (true) {
+        while (!@atomicLoad(bool, &self.stopping, .acquire)) {
             const timeout = std.Io.Timeout{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(50) } };
             const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch continue;
             const from_addr = endpoint.Udp4Address.init(received.from.ip4.bytes, received.from.ip4.port);

@@ -49,18 +49,16 @@ const certificate_der = [_]u8{
     0x20, 0x62, 0x79, 0x20, 0x71, 0x75, 0x69, 0x63, 0x7a,
 };
 
-const TaskCtx = struct { server: *Server, io: std.Io };
+const alpn = [_][]const u8{"hq-interop"};
 
-/// Server-side async task: drive the connection (background) + streaming echo.
-fn serverTask(ctx: TaskCtx) std.Io.Cancelable!void {
-    var group: std.Io.Group = .init;
-    group.concurrent(ctx.io, Server.drive, .{ctx.server}) catch {};
-    var conn = ctx.server.accept() catch return;
+/// Server-side echo handler: accept a connection, accept a stream, echo data.
+/// Runs concurrently with the Server's driving task (started via server.start()).
+fn echoHandler(server: *Server) std.Io.Cancelable!void {
+    var conn = server.accept() catch return;
     var stream = conn.acceptStream() catch return;
     var buf: [4096]u8 = undefined;
     const n = stream.receive(&buf) catch return;
     stream.send(buf[0..n], false) catch {};
-    group.await(ctx.io) catch {};
 }
 
 pub fn main() !void {
@@ -72,20 +70,14 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const alpn = [_][]const u8{"hq-interop"};
-
-    var server = try Server.init(allocator, io, .{
-        .port = port,
-        .alpn = &alpn,
-        .cert_der = &certificate_der,
-        .private_key = &server_private_key,
-    });
+    var server = try Server.init(allocator, io, .{ .port = port, .alpn = &alpn, .cert_der = &certificate_der, .private_key = &server_private_key });
     defer server.deinit();
+    try server.start();
     std.debug.print("async streaming server on 127.0.0.1:{d}\n", .{port});
 
-    var server_group: std.Io.Group = .init;
-    const ctx = TaskCtx{ .server = &server, .io = io };
-    server_group.concurrent(io, serverTask, .{ctx}) catch {};
+    // Run the echo handler concurrently with the driving task.
+    var echo_group: std.Io.Group = .init;
+    echo_group.concurrent(io, echoHandler, .{&server}) catch {};
 
     var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
     defer client.deinit();
@@ -94,5 +86,5 @@ pub fn main() !void {
     const ok = try client.runEchoSession(payload);
     std.debug.print("async streaming echo: {s} ('{s}')\n", .{ if (ok) "SUCCESS" else "FAILED", payload });
 
-    server_group.cancel(io);
+    echo_group.cancel(io);
 }
