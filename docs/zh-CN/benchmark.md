@@ -107,10 +107,10 @@ sys CPU 占比高，来自每包 UDP sendto/recvfrom 系统调用；吞吐受 AC
 
 | 基线 | 数值 | 说明 |
 |---|---|---|
-| 并发聚合（4 连接，共享 std.Io） | ~375 MB/s | ≈ 单流，无扩展 |
-| 并发聚合（4 连接，**每连接独立 std.Io**） | **~471 MB/s** | ~1.2x 扩展（I/O 分区） |
+| 并发聚合（4 连接，thread-per-connection，每连接独立 std.Io） | ~375–471 MB/s | I/O 分区，~1.2x |
+| 并发聚合（4 连接，**std.Io Group.concurrent 异步**，共享 std.Io） | 同轮 ~1.2x 于 thread-per-connection | 线程效率更高（少量线程跑同样连接） |
 
-> **关键发现（参考 msquic `docs/Execution.md`）**：msquic 每处理器一个 worker 线程、连接按 RSS 分区到不同线程，每连接单线程但不同连接并行。quicz 共享单个 std.Io 时并发连接被串行化（无扩展）；**给每个连接独立 std.Io（I/O 分区）后扩展到 ~1.2x**。剩余未线性扩展受 CPU 与 loopback 带宽限制。quic-go（每连接 goroutine）、quinn（每连接 tokio task）同理：连接分区到独立执行上下文是高吞吐的关键。绝对值随系统负载/温度波动。
+> **关键发现（参考 msquic `docs/Execution.md`）**：msquic 每处理器一个 worker 线程、连接按 RSS 分区，每连接单线程但不同连接并行。quicz 实测：(1) 共享单个 std.Io 时并发连接被串行化（无扩展）；(2) 每连接独立 std.Io（I/O 分区）扩展到 ~1.2x；(3) **std.Io Group.concurrent 异步多路复用比 thread-per-connection 线程效率更高（同轮 ~1.2x）**——用更少线程跑同样连接。但三种模型都**未线性扩展**，因吞吐受单核包处理 CPU 限制（服务端容量 ~900 MB/s），非 I/O 模型；真正线性扩展需 msquic 式多核并行处理包。quic-go（每连接 goroutine）、quinn（每连接 tokio task）同理。绝对值随系统负载/温度波动。
 
 ## 与其他 QUIC 实现对比
 

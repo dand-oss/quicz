@@ -809,6 +809,98 @@ const WorkerCtx = struct {
     bytes_out: *std.atomic.Value(usize),
 };
 
+
+/// One connection transfer as a std.Io concurrent task (returns Cancelable!void).
+/// Used to test whether std.Io's async multiplexing (Group.concurrent on a shared
+/// std.Io thread pool) changes aggregate throughput vs thread-per-connection.
+fn asyncTransferTask(ctx: WorkerCtx) std.Io.Cancelable!void {
+    const allocator = ctx.allocator;
+    const io = ctx.io;
+    var client_socket = bindLoopback(io) catch return;
+    defer client_socket.close(io);
+    var server_socket = bindLoopback(io) catch return;
+    defer server_socket.close(io);
+    const server_addr = server_socket.address;
+
+    const seed = [_]u8{0x55} ** 32;
+    const server_kp = EcdsaP256Sha256.KeyPair.generateDeterministic(seed) catch return;
+    const server_priv = server_kp.secret_key.bytes;
+    const cert_der = [_]u8{ 0x30, 0x82, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const alpn = [_][]const u8{"bench"};
+    const secrets = protection.deriveInitialSecrets(.v1, &original_dcid) catch return;
+
+    var client = Connection.init(allocator, .client, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .congestion_algorithm = .cubic,
+        .max_datagram_size = max_datagram_size,
+    }) catch return;
+    var server = Connection.init(allocator, .server, .{
+        .initial_max_data = 256 * 1024 * 1024,
+        .initial_max_stream_data = 256 * 1024 * 1024,
+        .initial_max_streams_bidi = 64,
+        .max_datagram_size = max_datagram_size,
+    }) catch return;
+    server.validatePeerAddress() catch return;
+
+    var client_backend = Tls13Backend.initClient(.{ .alpn = &alpn, .server_name = "example.com", .skip_cert_verify = true });
+    var server_backend = Tls13Backend.initServer(.{ .alpn = &alpn, .cert_chain_der = &.{&cert_der}, .private_key_bytes = &server_priv, .private_key_algorithm = .ecdsa_p256_sha256 });
+
+    var scratch: [16384]u8 = undefined;
+    var hs_buf: [16384]u8 = undefined;
+    client.setLocalInitialSourceConnectionId(&client_scid) catch return;
+    server.setLocalInitialSourceConnectionId(&server_scid) catch return;
+    doHandshake(allocator, &client, &server, &client_socket, &server_socket, io, &client_backend, &server_backend, &scratch, &hs_buf, secrets) catch return;
+
+    var done = std.atomic.Value(bool).init(false);
+    var bytes_received = std.atomic.Value(usize).init(0);
+    var srv_ctx = SrvCtx{ .socket = &server_socket, .io = io, .server = &server, .done = &done, .bytes_received = &bytes_received, .client_addr = client_socket.address, .num_streams = 1 };
+    const srv_thread = std.Thread.spawn(.{}, serverTransferThread, .{&srv_ctx}) catch return;
+    const stream_id = client.openStream() catch return;
+    _ = runTransfer(allocator, io, &client, &client_socket, &server_addr, &bytes_received, stream_id, transfer_size);
+    done.store(true, .release);
+    srv_thread.join();
+    ctx.bytes_out.store(bytes_received.load(.monotonic), .monotonic);
+    client.deinit();
+    server.deinit();
+}
+
+/// Concurrent connections via std.Io Group.concurrent on ONE shared std.Io
+/// (async multiplexing model), to compare against thread-per-connection.
+fn measureConcurrentAsync(allocator: std.mem.Allocator, io: std.Io) !void {
+    std.debug.print("\n  --- Concurrent via std.Io Group.concurrent (shared std.Io) ---\n", .{});
+    const num_conns: usize = 4;
+    var arenas: [num_conns]*std.heap.ArenaAllocator = undefined;
+    var byte_counts: [num_conns]std.atomic.Value(usize) = undefined;
+    for (0..num_conns) |i| byte_counts[i] = std.atomic.Value(usize).init(0);
+
+    var group: std.Io.Group = .init;
+    const t0 = nanoTime();
+    for (0..num_conns) |i| {
+        const arena = try allocator.create(std.heap.ArenaAllocator);
+        arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        arenas[i] = arena;
+        const ctx = WorkerCtx{ .io = io, .allocator = arena.allocator(), .bytes_out = &byte_counts[i] };
+        group.concurrent(io, asyncTransferTask, .{ctx}) catch {};
+    }
+    group.await(io) catch {};
+    var total_bytes: usize = 0;
+    for (0..num_conns) |i| {
+        total_bytes += byte_counts[i].load(.monotonic);
+        arenas[i].deinit();
+        allocator.destroy(arenas[i]);
+    }
+    const elapsed = nanoTime() - t0;
+    const seconds = @as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0;
+    std.debug.print("  {s:20} {d:.2} MB/s  ({d} conns via Group.concurrent in {d:.3} s)\n", .{
+        "Async (shared Io)",
+        @as(f64, @floatFromInt(total_bytes)) / (1024.0 * 1024.0) / seconds,
+        num_conns,
+        seconds,
+    });
+}
+
 /// One connection (real handshake + 16 MB transfer) run on its own thread, for
 /// the concurrent-connection scaling test. std.Io.Threaded is multi-threaded, so
 /// independent connections on separate threads can run in parallel.
@@ -927,6 +1019,7 @@ pub fn main() !void {
     try measureHandshakeRate(allocator, io);
     try measureStreamChurn(allocator, io);
     try measureConcurrentConnections(allocator, io);
+    try measureConcurrentAsync(allocator, io);
     try measureDatagram(allocator, io);
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});

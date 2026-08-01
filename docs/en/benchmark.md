@@ -107,10 +107,10 @@ High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is A
 
 | Baseline | Value | Notes |
 |---|---|---|
-| Concurrent aggregate (4 conns, shared std.Io) | ~375 MB/s | ≈ single-stream, no scaling |
-| Concurrent aggregate (4 conns, **per-connection std.Io**) | **~471 MB/s** | ~1.2x scaling (I/O partitioning) |
+| Concurrent aggregate (4 conns, thread-per-connection, per-connection std.Io) | ~375–471 MB/s | I/O partitioning, ~1.2x |
+| Concurrent aggregate (4 conns, **std.Io Group.concurrent async**, shared std.Io) | ~1.2x of thread-per-connection (same run) | Higher thread efficiency (fewer threads, same connections) |
 
-> **Key finding (cf. msquic `docs/Execution.md`)**: msquic uses one worker thread per processor with connections partitioned across threads by RSS; each connection is single-threaded but distinct connections run in parallel. With quicz sharing a single std.Io, concurrent connections are serialized (no scaling); **giving each connection its own std.Io (I/O partitioning) scales to ~1.2x**. The remaining sub-linear scaling is CPU and loopback-bandwidth limited. quic-go (goroutine per connection) and quinn (tokio task per connection) follow the same principle: partitioning connections across independent execution contexts is the key to throughput scaling. Absolute values vary with system load/temperature.
+> **Key finding (cf. msquic `docs/Execution.md`)**: msquic uses one worker thread per processor with connections partitioned across threads by RSS; each connection is single-threaded but distinct connections run in parallel. quicz measurements: (1) sharing a single std.Io serializes concurrent connections (no scaling); (2) per-connection std.Io (I/O partitioning) scales to ~1.2x; (3) **std.Io Group.concurrent async multiplexing is more thread-efficient than thread-per-connection (~1.2x in the same run)** — fewer threads run the same connections. But none of the three scales linearly, because throughput is limited by single-core packet-processing CPU (server capacity ~900 MB/s), not the I/O model; true linear scaling needs msquic-style multi-core parallel packet processing. quic-go (goroutine per connection) and quinn (tokio task per connection) follow the same principle. Absolute values vary with system load/temperature.
 
 ## Comparison with Other QUIC Implementations
 
