@@ -198,7 +198,7 @@ quicz 的 Echo P50=17.8 μs 在 loopback 条件下优于多数实现的公开数
 
 Zig 0.16 的 `std.Io.Threaded` 中 `receiveTimeout(Duration(0))` 使用 `poll(timeout_ms=0)` 实现非阻塞接收。
 Benchmark 使用 100μs `receiveTimeout`，`nanoTime()` 为纳秒精度（macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`）。
-当前吞吐量瓶颈在每包 QUIC 处理 CPU 开销（AES-128-GCM + 成帧/解析）；UDP 系统调用 `sendto` 实测 ~3.5–4.7 μs/包，约占 23% 墙钟。
+吞吐受 ACK 时钟与单线程服务端架构限制（服务端每包处理容量 ~900 MB/s，有余量）；每包 AES-128-GCM 已硬件加速（~4.9 μs），UDP `sendto` ~3.5–4.7 μs/包，均非瓶颈。~390 MB/s 为 macOS loopback、单线程、无 GSO 下接近实际上限；更高吞吐依赖 GSO/GRO 与多线程（平台能力，std.Io 在 Linux 自动适配，不另测）。
 
 ## 参考
 
