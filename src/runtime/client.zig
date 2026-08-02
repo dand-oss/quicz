@@ -36,8 +36,13 @@ pub const Client = struct {
             .local = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port),
             .remote = endpoint.Udp4Address.init(config.server_host, config.server_port),
         };
-        const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
-        const client_scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
+        // Unique connection ids per client (required for the endpoint to route
+        // multiple connections; cf. reference QUIC implementations which generate
+        // random connection ids).
+        var original_dcid: [8]u8 = undefined;
+        var client_scid: [8]u8 = undefined;
+        io.randomSecure(&original_dcid) catch io.random(&original_dcid);
+        io.randomSecure(&client_scid) catch io.random(&client_scid);
         const client = try Tls13ClientEndpoint.init(
             allocator, 1, client_path, .{ .active_migration_disabled = true },
             .{
@@ -51,6 +56,10 @@ pub const Client = struct {
             original_dcid, client_scid,
         );
         return .{ .allocator = allocator, .io = io, .socket = socket, .client = client, .server_address = server_address };
+    }
+
+    pub fn localPort(self: *const Client) u16 {
+        return self.socket.address.ip4.port;
     }
 
     pub fn deinit(self: *Client) void {
@@ -102,9 +111,21 @@ pub const Client = struct {
         var attempts: usize = 0;
         while (attempts < 100) : (attempts += 1) {
             const timeout = std.Io.Timeout{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(2000) } };
-            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch continue;
-            _ = self.client.receiveWithRoutePath(0, &self.scratch, received.data) catch continue;
-            if (try self.client.recvStream(stream_id, buf)) |len| if (len > 0) return len;
+            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch |e| {
+                if (attempts < 3) std.debug.print("[cli] recv timeout {}\n", .{e});
+                continue;
+            };
+            std.debug.print("[cli] recv {d} bytes\n", .{received.data.len});
+            _ = self.client.receiveWithRoutePath(0, &self.scratch, received.data) catch |e| {
+                std.debug.print("[cli] receiveWithRoutePath err {}\n", .{e});
+                continue;
+            };
+            const r = self.client.recvStream(stream_id, buf) catch |e| {
+                std.debug.print("[cli] recvStream err {}\n", .{e});
+                continue;
+            };
+            std.debug.print("[cli] recvStream = {?d}\n", .{r});
+            if (r) |len| if (len > 0) return len;
         }
         return null;
     }
