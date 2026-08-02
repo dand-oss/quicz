@@ -21,6 +21,7 @@
 | PMTU 发现 | 8899 | ✅ | ✅ | ✅ | ✅ | — |
 | GSO/GRO | — | ✅ | ❌ | ✅ | ✅ | quiche 委托应用层 I/O |
 | 连接池 | — | ✅ | ❌ | ❌ | ✅ | — |
+| 异步 I/O 运行时（多连接） | — | ✅(goroutine) | ✅(tokio) | ✅(tokio) | ✅(std.Io) | std.http 模型：accept + per-conn handler |
 | qlog | draft | ✅ | ✅(feature-gated) | ❌(event subscriber) | ✅ | — |
 | Fuzz 目标 | — | ✅(OSS-Fuzz) | ✅ | ✅ | ✅ | — |
 | NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
