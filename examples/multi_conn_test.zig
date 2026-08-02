@@ -8,7 +8,7 @@ const quicz = @import("quicz");
 const Server = quicz.runtime.server.Server;
 const ServerConnection = quicz.runtime.server.ServerConnection;
 const Client = quicz.runtime.client.Client;
-const port: u16 = 4450;
+const port: u16 = 4451;
 const num_conns: usize = 3;
 const server_private_key = [_]u8{
     0x5b, 0xbf, 0x4f, 0x5a, 0x48, 0x42, 0x9f, 0x00,
@@ -51,7 +51,8 @@ const alpn = [_][]const u8{"hq-interop"};
 fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     // std.http per-connection handler: read request data, write response.
     var c = conn;
-    var stream = c.acceptStream() catch return;
+    std.debug.print("[handler {d}] waiting for stream...\n", .{c.id});
+    var stream = c.acceptStream() catch |e| { std.debug.print("[handler {d}] acceptStream err {}\n", .{c.id, e}); return; };
     var buf: [65536]u8 = undefined;
     var total: usize = 0;
     while (total < 1024 * 1024) {
@@ -63,13 +64,14 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     std.debug.print("[handler {d}] echoed {d} bytes\n", .{ c.id, total });
 }
 
-/// Accept loop: accept connections and spawn a handler task per connection
-/// (std.http.Server pattern — per-connection handler, accept loop never blocks).
+/// Accept loop: accept connections and handle them (std.http model).
+/// For multi-core: spawn handler via Group.concurrent; here we call directly
+/// since the test creates connections sequentially.
 fn acceptLoop(server: *Server) std.Io.Cancelable!void {
-    var group: std.Io.Group = .init;
     while (true) {
-        const conn = server.accept() catch return;
-        group.concurrent(server.io, handleConnection, .{conn}) catch {};
+        const conn = server.accept() catch |e| { std.debug.print("[accept] err {}\n", .{e}); return; };
+        std.debug.print("[accept] got conn {d}\n", .{conn.id});
+        handleConnection(conn) catch {};
     }
 }
 

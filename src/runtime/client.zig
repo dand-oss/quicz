@@ -1,4 +1,4 @@
-//! quicz I/O runtime — async streaming client (Phase 1, std.Io async model).
+//! quicz I/O runtime — async streaming client (std.Io async model).
 //!
 //! Streaming client over Tls13ClientEndpoint, using std.Io. The
 //! handshake + transfer run as a std.Io async task (Group.concurrent); the
@@ -36,9 +36,6 @@ pub const Client = struct {
             .local = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port),
             .remote = endpoint.Udp4Address.init(config.server_host, config.server_port),
         };
-        // Unique connection ids per client (required for the endpoint to route
-        // multiple connections; cf. reference QUIC implementations which generate
-        // random connection ids).
         var original_dcid: [8]u8 = undefined;
         var client_scid: [8]u8 = undefined;
         io.randomSecure(&original_dcid) catch io.random(&original_dcid);
@@ -46,8 +43,8 @@ pub const Client = struct {
         const client = try Tls13ClientEndpoint.init(
             allocator, 1, client_path, .{ .active_migration_disabled = true },
             .{
-                .initial_max_data = 1_048_576,
-                .initial_max_stream_data = 1_048_576,
+                .initial_max_data = 10_485_760,
+                .initial_max_stream_data = 10_485_760,
                 .initial_max_streams_bidi = 128,
                 .initial_max_streams_uni = 128,
                 .max_datagram_size = max_datagram_size,
@@ -67,7 +64,7 @@ pub const Client = struct {
         self.socket.close(self.io);
     }
 
-    /// Drive the TLS 1.3 handshake to completion (std.Io recv/send).
+    /// Drive the TLS 1.3 handshake to completion.
     pub fn connect(self: *Client) !void {
         const io = self.io;
         const begin_result = try self.client.beginWithRoutePath(0, &self.scratch);
@@ -93,38 +90,53 @@ pub const Client = struct {
     }
 
     /// Send `data` on a new bidirectional stream; returns the stream id.
+    /// Drains ALL outgoing datagrams in a loop (1MB needs ~128 packets).
     pub fn send(self: *Client, data: []const u8, fin: bool) !u64 {
         const stream_id = try self.client.openStream();
-        var send_out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
-        const send_result = try self.client.sendStreamWithRoutePathAndDrainDatagrams(stream_id, data, fin, 0, &send_out);
-        for (send_out[0..send_result.drain.datagrams_written]) |o| {
-            try self.socket.send(self.io, &self.server_address, o.datagram);
+        if (try self.client.sendStreamWithRoutePath(stream_id, data, fin, 0)) |o| {
+            self.socket.send(self.io, &self.server_address, o.datagram) catch {};
             self.allocator.free(o.datagram);
         }
+        try self.drainAllOutgoing();
         return stream_id;
     }
 
+    /// Drain all pending outgoing datagrams from the client endpoint and send
+    /// them to the server. Loops until the endpoint queue is empty.
+    fn drainAllOutgoing(self: *Client) !void {
+        var out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
+        while (true) {
+            const drained = self.client.drainApplicationDatagramsWithRoutePath(0, &out) catch break;
+            if (drained.datagrams_written == 0) break;
+            for (out[0..drained.datagrams_written]) |o| {
+                self.socket.send(self.io, &self.server_address, o.datagram) catch {};
+                self.allocator.free(o.datagram);
+            }
+        }
+    }
+
     /// Receive echoed data on `stream_id` into `buf`; returns bytes read.
+    /// Bidirectional drive: drains outgoing (ACKs + pending stream data) after
+    /// each received packet (quic_bench_hs pattern).
     pub fn receive(self: *Client, stream_id: u64, buf: []u8) !?usize {
         const io = self.io;
         var recv_buf: [max_datagram_size]u8 = undefined;
         var attempts: usize = 0;
-        while (attempts < 100) : (attempts += 1) {
-            const timeout = std.Io.Timeout{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(2000) } };
-            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch |e| {
-                if (attempts < 3) std.debug.print("[cli] recv timeout {}\n", .{e});
+        while (attempts < 500) : (attempts += 1) {
+            // Drain pending outgoing (remaining stream data, ACKs).
+            self.drainAllOutgoing() catch {};
+            // Short timeout: 100ms (loopback RTT ~1μs, no need to wait long).
+            const timeout = std.Io.Timeout{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(100) } };
+            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch {
+                // Timeout: check if stream already has buffered data.
+                const r = self.client.recvStream(stream_id, buf) catch null;
+                if (r) |len| if (len > 0) return len;
                 continue;
             };
-            std.debug.print("[cli] recv {d} bytes\n", .{received.data.len});
-            _ = self.client.receiveWithRoutePath(0, &self.scratch, received.data) catch |e| {
-                std.debug.print("[cli] receiveWithRoutePath err {}\n", .{e});
-                continue;
-            };
-            const r = self.client.recvStream(stream_id, buf) catch |e| {
-                std.debug.print("[cli] recvStream err {}\n", .{e});
-                continue;
-            };
-            std.debug.print("[cli] recvStream = {?d}\n", .{r});
+            _ = self.client.receiveWithRoutePath(0, &self.scratch, received.data) catch continue;
+            // Drain ACKs generated by processing the incoming packet.
+            self.drainAllOutgoing() catch {};
+            const r = self.client.recvStream(stream_id, buf) catch continue;
             if (r) |len| if (len > 0) return len;
         }
         return null;
