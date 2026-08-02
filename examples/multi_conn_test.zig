@@ -52,7 +52,10 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     // std.http per-connection handler: read request data, write response.
     var c = conn;
     std.debug.print("[handler {d}] waiting for stream...\n", .{c.id});
-    var stream = c.acceptStream() catch |e| { std.debug.print("[handler {d}] acceptStream err {}\n", .{c.id, e}); return; };
+    var stream = c.acceptStream() catch |e| {
+        std.debug.print("[handler {d}] acceptStream err {}\n", .{ c.id, e });
+        return;
+    };
     var buf: [65536]u8 = undefined;
     var total: usize = 0;
     while (total < 1024 * 1024) {
@@ -69,7 +72,10 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
 /// since the test creates connections sequentially.
 fn acceptLoop(server: *Server) std.Io.Cancelable!void {
     while (true) {
-        const conn = server.accept() catch |e| { std.debug.print("[accept] err {}\n", .{e}); return; };
+        const conn = server.accept() catch |e| {
+            if (e != error.Canceled) std.debug.print("[accept] err {}\n", .{e});
+            return;
+        };
         std.debug.print("[accept] got conn {d}\n", .{conn.id});
         handleConnection(conn) catch {};
     }
@@ -93,7 +99,10 @@ pub fn main() !void {
         std.debug.print("[client {d}] init+connect...\n", .{ci});
         var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
         defer client.deinit();
-        client.connect() catch |e| { std.debug.print("[client {d}] connect FAILED: {}\n", .{ ci, e }); continue; };
+        client.connect() catch |e| {
+            std.debug.print("[client {d}] connect FAILED: {}\n", .{ ci, e });
+            continue;
+        };
         std.debug.print("[client {d}] connected\n", .{ci});
         const payload = try allocator.alloc(u8, 1024 * 1024);
         defer allocator.free(payload);
@@ -112,5 +121,6 @@ pub fn main() !void {
         std.debug.print("[client {d}] received {d}/{d} bytes\n", .{ ci, total, payload.len });
     }
     std.debug.print("multi-connection test done\n", .{});
+    server.stop();
     accept_group.cancel(io);
 }

@@ -64,12 +64,14 @@ const ConnState = struct {
     mutex: std.atomic.Mutex = .unlocked,
     stream_queue: std.ArrayList(u8) = .empty,
     pending_streams: std.ArrayList(u64) = .empty,
+    known_streams: std.ArrayList(u64) = .empty,
     send_queue: std.ArrayList(u8) = .empty,
     send_fin: bool = false,
 
     fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
         self.stream_queue.deinit(alloc);
         self.pending_streams.deinit(alloc);
+        self.known_streams.deinit(alloc);
         self.send_queue.deinit(alloc);
     }
 };
@@ -124,9 +126,14 @@ pub const Server = struct {
         self.started = true;
     }
 
+    /// Signal the drive task and all accept/receive loops to stop.
+    pub fn stop(self: *Server) void {
+        @atomicStore(bool, &self.stopping, true, .release);
+    }
+
     pub fn deinit(self: *Server) void {
         if (self.started) {
-            @atomicStore(bool, &self.stopping, true, .release);
+            self.stop();
             self.drive_group.cancel(self.io);
             self.drive_group.await(self.io) catch {};
             self.started = false;
@@ -140,6 +147,10 @@ pub const Server = struct {
         self.pending_accept.deinit(self.allocator);
         self.server_ep.deinit();
         self.socket.close(self.io);
+    }
+
+    fn nowNanos(self: *const Server) i64 {
+        return @intCast(std.Io.Timestamp.now(self.io, .awake).nanoseconds);
     }
 
     /// Drain queued stream sends and emit outgoing datagrams.
@@ -158,7 +169,7 @@ pub const Server = struct {
         }
         self.mutex.unlock();
         var out: [16]ServerEndpoint.DatagramPathResult = undefined;
-        const drained = self.server_ep.drainDatagramsAcrossRecordsWithRoutePathWithScratch(0, .application, &out);
+        const drained = self.server_ep.drainDatagramsAcrossRecordsWithRoutePathWithScratch(self.nowNanos(), .application, &out);
         for (out[0..drained.datagrams_written]) |o| {
             var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = o.path.remote.octets, .port = o.path.remote.port } };
             self.socket.send(io, &dest, o.datagram) catch {};
@@ -174,10 +185,11 @@ pub const Server = struct {
         while (!@atomicLoad(bool, &self.stopping, .acquire)) {
             self.drainOutgoing(io, allocator);
             const timeout = std.Io.Timeout{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMilliseconds(10) } };
-            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch |e| { std.debug.print("[drive] step err {}\n", .{e}); continue; };
-            std.debug.print("[drive] recv {d} bytes\n", .{received.data.len});            const from_addr = endpoint.Udp4Address.init(received.from.ip4.bytes, received.from.ip4.port);
+            const received = self.socket.receiveTimeout(io, &recv_buf, timeout) catch continue;
+            const from_addr = endpoint.Udp4Address.init(received.from.ip4.bytes, received.from.ip4.port);
             const local_addr = endpoint.Udp4Address.init(self.socket.address.ip4.bytes, self.socket.address.ip4.port);
             const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
+            const now = self.nowNanos();
 
             var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
             var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
@@ -185,16 +197,19 @@ pub const Server = struct {
             var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
             var scratch: [8192]u8 = undefined;
 
-            const action = self.server_ep.feedDatagram(&scratch, path, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| { std.debug.print("[drive] step err {}\n", .{e}); continue; };
+            const action = self.server_ep.feedDatagram(&scratch, path, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch continue;
             var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port } };
 
-            std.debug.print("[drive] action={s}\n", .{@tagName(action)});            switch (action) {
+            switch (action) {
                 .accept_initial => |initial_accept| {
                     const handle = self.next_handle;
                     self.next_handle += 1;
                     var server_scid: [8]u8 = undefined;
                     io.randomSecure(&server_scid) catch {};
-                    const record = allocator.create(ServerRecord) catch |e| { std.debug.print("[drive] step err {}\n", .{e}); continue; };
+                    const record = allocator.create(ServerRecord) catch |e| {
+                        std.debug.print("[drive] step err {}\n", .{e});
+                        continue;
+                    };
                     const cert_chain = [_][]const u8{self.cert_der};
                     record.* = .{
                         .handle = handle,
@@ -223,12 +238,15 @@ pub const Server = struct {
                         continue;
                     };
                     record.transport.setOriginalDestinationConnectionId(initial_info.dcid) catch {};
-                    const accepted = self.server_ep.acceptInitialRecord(handle, record, 0, initial_accept, &server_scid, received.data, .{}, &scratch, &initial_out, &handshake_out) catch {
+                    const accepted = self.server_ep.acceptInitialRecord(handle, record, now, initial_accept, &server_scid, received.data, .{}, &scratch, &initial_out, &handshake_out) catch {
                         record.transport.deinit();
                         allocator.destroy(record);
                         continue;
                     };
-                    const cs = allocator.create(ConnState) catch |e| { std.debug.print("[drive] step err {}\n", .{e}); continue; };
+                    const cs = allocator.create(ConnState) catch |e| {
+                        std.debug.print("[drive] step err {}\n", .{e});
+                        continue;
+                    };
                     cs.* = .{ .conn = record.transport.connectionRef(), .peer = dest };
                     while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
                     self.conns.put(handle, cs) catch {};
@@ -247,21 +265,31 @@ pub const Server = struct {
                 },
                 .routed => {
                     const step = self.server_ep.receiveDatagramStepWithRoutePath(
-                        allocator, path, 0, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1},
+                        allocator,
+                        path,
+                        now,
+                        received.data,
+                        &[_]u8{},
+                        &[_]quic_packet.Version{.v1},
                         .{ .space = .application, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
-                        &scratch, &[_]u8{}, &initial_out, &handshake_out, &installed_out, .application, &pending_out,
-                    ) catch |e| { std.debug.print("[drive] step err {}\n", .{e}); continue; };
-                    std.debug.print("[drive] step.process tag={s}\n", .{@tagName(step.process)});                    switch (step.process) {
+                        &scratch,
+                        &[_]u8{},
+                        &initial_out,
+                        &handshake_out,
+                        &installed_out,
+                        .application,
+                        &pending_out,
+                    ) catch continue;
+                    switch (step.process) {
                         .routed => |routed| switch (routed) {
                             .installed_key => |ik| {
                                 for (installed_out[0..ik.drain.datagrams_written]) |o| {
                                     self.socket.send(io, &dest, o.datagram) catch {};
                                     allocator.free(o.datagram);
                                 }
-                                // Push received stream data to per-conn queues.
-                                // Use endpoint records (quic_echo_server pattern):
-                                // the endpoint delivers data to its own record's
-                                // connection, which may differ from our stored ptr.
+                                // Deliver received stream data to per-connection
+                                // queues via the endpoint's own records: the
+                                // routed connection is the record's connection.
                                 while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
                                 var rit = self.server_ep.records.records.valueIterator();
                                 while (rit.next()) |recp| {
@@ -277,9 +305,16 @@ pub const Server = struct {
                                             const len = n orelse break;
                                             if (len == 0) break;
                                             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
-                                            const first = st.stream_queue.items.len == 0;
                                             st.stream_queue.appendSlice(allocator, stream_buf[0..len]) catch {};
-                                            if (first) {
+                                            var known = false;
+                                            for (st.known_streams.items) |k| {
+                                                if (k == sid) {
+                                                    known = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (!known) {
+                                                st.known_streams.append(allocator, sid) catch {};
                                                 st.pending_streams.append(allocator, sid) catch {};
                                             }
                                             st.mutex.unlock();
@@ -289,7 +324,7 @@ pub const Server = struct {
                                 self.mutex.unlock();
                                 self.drainOutgoing(io, allocator);
                             },
-                            else => |other| { std.debug.print("[drive] routed inner={s}\n", .{@tagName(other)}); },
+                            else => {},
                         },
                         else => {},
                     }
