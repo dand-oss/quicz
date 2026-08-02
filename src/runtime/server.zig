@@ -259,15 +259,21 @@ pub const Server = struct {
                                     allocator.free(o.datagram);
                                 }
                                 // Push received stream data to per-conn queues.
+                                // Use endpoint records (quic_echo_server pattern):
+                                // the endpoint delivers data to its own record's
+                                // connection, which may differ from our stored ptr.
                                 while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
-                                var cit = self.conns.valueIterator();
-                                while (cit.next()) |csp| {
-                                    const st = csp.*;
+                                var rit = self.server_ep.records.records.valueIterator();
+                                while (rit.next()) |recp| {
+                                    const rec = recp.*;
+                                    const conn = rec.transport.connectionRef();
+                                    const handle = rec.handle;
+                                    const st = self.conns.get(handle) orelse continue;
                                     var stream_buf: [4096]u8 = undefined;
                                     var sid: u64 = 0;
                                     while (sid < 512) : (sid += 4) {
                                         while (true) {
-                                            const n = st.conn.recvOnStream(sid, &stream_buf) catch break;
+                                            const n = conn.recvOnStream(sid, &stream_buf) catch break;
                                             const len = n orelse break;
                                             if (len == 0) break;
                                             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
