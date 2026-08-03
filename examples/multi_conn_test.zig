@@ -99,18 +99,17 @@ fn runClientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize) !void {
     var recv_buf: [65536]u8 = undefined;
     for (stream_ids) |sid| {
         var total: usize = 0;
-        var attempts: usize = 0;
-        while (total < payload.len and attempts < 500) : (attempts += 1) {
+        var got_eof = false;
+        while (!got_eof) {
             const n = try client.receive(sid, &recv_buf);
-            if (n) |len| {
-                if (len == 0) break;
-                total += len;
+            if (n == 0) {
+                got_eof = true;
+            } else {
+                total += n;
             }
         }
-        const eof = try client.receive(sid, &recv_buf);
-        const got_eof = if (eof) |len| len == 0 else false;
         std.debug.print("[client {d}] stream {d} received {d}/{d} bytes eof={}\n", .{ ci, sid, total, payload.len, got_eof });
-        if (total != payload.len or !got_eof) return error.EchoMismatch;
+        if (total != payload.len) return error.EchoMismatch;
     }
     client.close();
     // Stay alive briefly so a lost close frame can be retransmitted by PTO

@@ -9,6 +9,7 @@
 const std = @import("std");
 const quicz = @import("quicz");
 const Server = quicz.runtime.server.Server;
+const ServerConnection = quicz.runtime.server.ServerConnection;
 const Client = quicz.runtime.client.Client;
 
 const port: u16 = 4433;
@@ -51,11 +52,11 @@ const certificate_der = [_]u8{
 
 const alpn = [_][]const u8{"hq-interop"};
 
-/// Server-side echo handler: accept a connection, accept a stream, echo data.
-/// Runs concurrently with the Server's driving task (started via server.start()).
-fn echoHandler(server: *Server) std.Io.Cancelable!void {
-    var conn = server.accept() catch return;
-    var stream = conn.acceptStream() catch return;
+/// Server-side echo handler: one per connection (server.serve model);
+/// accept a stream and echo the first chunk back.
+fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
+    var c = conn;
+    var stream = c.acceptStream() catch return;
     var buf: [4096]u8 = undefined;
     const n = stream.receive(&buf) catch return;
     stream.send(buf[0..n], false) catch {};
@@ -72,12 +73,8 @@ pub fn main() !void {
 
     var server = try Server.init(allocator, io, .{ .port = port, .alpn = &alpn, .cert_der = &certificate_der, .private_key = &server_private_key });
     defer server.deinit();
-    try server.start();
+    try server.serve(&echoHandler);
     std.debug.print("async streaming server on 127.0.0.1:{d}\n", .{port});
-
-    // Run the echo handler concurrently with the driving task.
-    var echo_group: std.Io.Group = .init;
-    echo_group.concurrent(io, echoHandler, .{&server}) catch {};
 
     var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
     defer client.deinit();
@@ -85,6 +82,4 @@ pub fn main() !void {
     const payload = "hello quicz async streaming";
     const ok = try client.runEchoSession(payload);
     std.debug.print("async streaming echo: {s} ('{s}')\n", .{ if (ok) "SUCCESS" else "FAILED", payload });
-
-    echo_group.cancel(io);
 }

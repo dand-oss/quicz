@@ -606,6 +606,12 @@ pub const Server = struct {
             // notifier that already ran changed wake_id, so the wait returns
             // immediately (std.Build.WebServer futexWaitTimeout pattern).
             const snapshot = self.wake_id.load(.acquire);
+            // Re-check stopping after the snapshot: a stop() that ran before
+            // the snapshot already bumped wake_id (and its futexWake may have
+            // had no waiter yet), and one that runs after the snapshot
+            // changes wake_id so the compare cannot match. Without this
+            // check the drive could park forever past a stop request.
+            if (@atomicLoad(bool, &self.stopping, .acquire)) break;
             const timeout: std.Io.Timeout = timeout: {
                 const deadline = self.server_ep.nextDeadlineWithScratch() catch break :timeout .none;
                 const d = deadline orelse break :timeout .none;
