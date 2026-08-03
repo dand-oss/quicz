@@ -62,12 +62,13 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
         };
         var buf: [65536]u8 = undefined;
         var total: usize = 0;
-        while (total < stream_payload_len) {
+        while (true) {
             const n = stream.receive(&buf) catch break;
-            if (n == 0) break;
+            if (n == 0) break; // EOF: peer FIN received and drained.
             stream.send(buf[0..n], false) catch break;
             total += n;
         }
+        stream.send(&.{}, true) catch {}; // FIN the echoed stream.
         std.debug.print("[handler {d}] stream {d} echoed {d} bytes\n", .{ c.id, stream.id, total });
     }
 }
@@ -127,7 +128,9 @@ pub fn main() !void {
                     total += len;
                 }
             }
-            std.debug.print("[client {d}] stream {d} received {d}/{d} bytes\n", .{ ci, sid, total, payload.len });
+            const eof = try client.receive(sid, &recv_buf);
+            const got_eof = if (eof) |len| len == 0 else false;
+            std.debug.print("[client {d}] stream {d} received {d}/{d} bytes eof={}\n", .{ ci, sid, total, payload.len, got_eof });
         }
     }
     std.debug.print("multi-connection test done\n", .{});

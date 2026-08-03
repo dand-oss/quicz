@@ -131,7 +131,8 @@ pub const Client = struct {
         }
     }
 
-    /// Receive echoed data on `stream_id` into `buf`; returns bytes read.
+    /// Receive data on `stream_id` into `buf`. Returns bytes read, 0 at
+    /// EOF (peer FIN fully consumed), or null when nothing arrived.
     /// Bidirectional drive: drains outgoing (ACKs + pending stream data) after
     /// each received packet (quic_bench_hs pattern).
     pub fn receive(self: *Client, stream_id: u64, buf: []u8) !?usize {
@@ -147,6 +148,7 @@ pub const Client = struct {
                 // Timeout: check if stream already has buffered data.
                 const r = self.client.recvStream(stream_id, buf) catch null;
                 if (r) |len| if (len > 0) return len;
+                if (self.client.streamFinished(stream_id) catch false) return 0;
                 continue;
             };
             _ = self.client.receiveWithRoutePath(self.nowNanos(), &self.scratch, received.data) catch continue;
@@ -154,6 +156,7 @@ pub const Client = struct {
             self.drainAllOutgoing() catch {};
             const r = self.client.recvStream(stream_id, buf) catch continue;
             if (r) |len| if (len > 0) return len;
+            if (self.client.streamFinished(stream_id) catch false) return 0;
         }
         return null;
     }

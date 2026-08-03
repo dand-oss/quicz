@@ -61,6 +61,8 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
 const StreamRecvState = struct {
     id: u64,
     queue: std.ArrayList(u8) = .empty,
+    /// Peer FIN received and all stream bytes delivered to the queue.
+    eof: bool = false,
 };
 
 /// Per-stream send buffer within a connection.
@@ -343,6 +345,25 @@ pub const Server = struct {
                                             st.recv_streams.items[idx.?].queue.appendSlice(allocator, stream_buf[0..len]) catch {};
                                             st.mutex.unlock();
                                         }
+                                        // FIN received and all bytes drained from the
+                                        // connection: surface EOF on the stream queue.
+                                        if (conn.recvStreamFinished(sid) catch false) {
+                                            while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
+                                            var eof_idx: ?usize = null;
+                                            for (st.recv_streams.items, 0..) |s, i| {
+                                                if (s.id == sid) {
+                                                    eof_idx = i;
+                                                    break;
+                                                }
+                                            }
+                                            if (eof_idx == null) {
+                                                st.recv_streams.append(allocator, .{ .id = sid }) catch {};
+                                                eof_idx = st.recv_streams.items.len - 1;
+                                                st.pending_streams.append(allocator, sid) catch {};
+                                            }
+                                            st.recv_streams.items[eof_idx.?].eof = true;
+                                            st.mutex.unlock();
+                                        }
                                     }
                                 }
                                 self.mutex.unlock();
@@ -410,7 +431,8 @@ pub const Server = struct {
             };
             while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
             for (cs.recv_streams.items) |*s| {
-                if (s.id == sid and s.queue.items.len > 0) {
+                if (s.id != sid) continue;
+                if (s.queue.items.len > 0) {
                     const n = @min(buf.len, s.queue.items.len);
                     @memcpy(buf[0..n], s.queue.items[0..n]);
                     s.queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
@@ -418,6 +440,12 @@ pub const Server = struct {
                     self.mutex.unlock();
                     return n;
                 }
+                if (s.eof) {
+                    cs.mutex.unlock();
+                    self.mutex.unlock();
+                    return 0;
+                }
+                break;
             }
             cs.mutex.unlock();
             self.mutex.unlock();
@@ -468,6 +496,8 @@ pub const Stream = struct {
     conn_id: u64,
     id: u64,
 
+    /// Read queued stream bytes. Returns 0 at EOF: the peer FIN arrived
+    /// and every stream byte was already consumed.
     pub fn receive(self: *Stream, buf: []u8) !usize {
         return self.server.receiveStreamData(self.conn_id, self.id, buf);
     }
