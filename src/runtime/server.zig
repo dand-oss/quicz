@@ -7,6 +7,8 @@
 const std = @import("std");
 const quicz = @import("../lib.zig");
 
+const log = std.log.scoped(.quicz_runtime);
+
 const Connection = quicz.Connection;
 const Tls13ServerTransport = quicz.Tls13ServerTransport;
 const endpoint = quicz.endpoint;
@@ -61,6 +63,8 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
 const StreamRecvState = struct {
     id: u64,
     queue: std.ArrayList(u8) = .empty,
+    /// First unread byte; avoids shifting the queue on every read.
+    read_offset: usize = 0,
     /// Peer FIN received and all stream bytes delivered to the queue.
     eof: bool = false,
 };
@@ -75,6 +79,7 @@ const StreamSendState = struct {
 /// Per-connection server state.
 const ConnState = struct {
     conn: *Connection,
+    handle: u64,
     peer: std.Io.net.IpAddress,
     mutex: std.atomic.Mutex = .unlocked,
     recv_streams: std.ArrayList(StreamRecvState) = .empty,
@@ -82,6 +87,11 @@ const ConnState = struct {
     send_streams: std.ArrayList(StreamSendState) = .empty,
     /// Posted by the drive task when stream data or EOF arrives.
     data_sem: std.Io.Semaphore = .{ .permits = 0 },
+    /// Set by releaseConnection; the drive task reclaims the state once
+    /// the connection is closed and the handler is done with it
+    /// (single-owner reclamation; s2n-quic uses a handle refcount here,
+    /// which only pays off when one connection has several handlers).
+    handler_done: bool = false,
 
     fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
         for (self.recv_streams.items) |*s| s.queue.deinit(alloc);
@@ -170,6 +180,17 @@ pub const Server = struct {
         self.socket.close(self.io);
     }
 
+    /// Mark the handler done with a connection. Call once per connection
+    /// when the handler finishes; the drive task frees the state once the
+    /// connection is also closed (single-owner reclamation).
+    pub fn releaseConnection(self: *Server, conn_id: u64) void {
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        if (self.conns.get(conn_id)) |cs| {
+            cs.handler_done = true;
+        }
+        self.mutex.unlock();
+    }
+
     /// Raise SO_RCVBUF so client bursts do not overflow the kernel receive
     /// buffer before the drive task drains it; loss recovery still covers
     /// any residual drops.
@@ -185,9 +206,18 @@ pub const Server = struct {
     /// Drain queued stream sends and emit outgoing datagrams.
     fn drainOutgoing(self: *Server, io: std.Io, allocator: std.mem.Allocator) void {
         while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        var closed_handles: [64]u64 = undefined;
+        var closed_count: usize = 0;
         var cit = self.conns.valueIterator();
         while (cit.next()) |csp| {
             const st = csp.*;
+            if (st.conn.isClosingOrClosed() and st.handler_done) {
+                if (closed_count < closed_handles.len) {
+                    closed_handles[closed_count] = st.handle;
+                    closed_count += 1;
+                }
+                continue;
+            }
             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
             for (st.send_streams.items) |*sq| {
                 if (sq.queue.items.len > 0 or sq.fin) {
@@ -197,6 +227,13 @@ pub const Server = struct {
                 }
             }
             st.mutex.unlock();
+        }
+        for (closed_handles[0..closed_count]) |h| {
+            if (self.conns.fetchRemove(h)) |kv| {
+                kv.value.deinit(allocator);
+                allocator.destroy(kv.value);
+                log.info("connection {d} closed: state reclaimed", .{h});
+            }
         }
         self.mutex.unlock();
         var out: [16]ServerEndpoint.DatagramPathResult = undefined;
@@ -228,7 +265,10 @@ pub const Server = struct {
             var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
             var scratch: [8192]u8 = undefined;
 
-            const action = self.server_ep.feedDatagram(&scratch, path, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch continue;
+            const action = self.server_ep.feedDatagram(&scratch, path, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| {
+                log.debug("drive: feedDatagram: {}", .{e});
+                continue;
+            };
             var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port } };
 
             switch (action) {
@@ -275,10 +315,10 @@ pub const Server = struct {
                         continue;
                     };
                     const cs = allocator.create(ConnState) catch |e| {
-                        std.debug.print("[drive] step err {}\n", .{e});
+                        log.err("drive: allocate ConnState: {}", .{e});
                         continue;
                     };
-                    cs.* = .{ .conn = record.transport.connectionRef(), .peer = dest };
+                    cs.* = .{ .conn = record.transport.connectionRef(), .handle = handle, .peer = dest };
                     while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
                     self.conns.put(handle, cs) catch {};
                     self.pending_accept.append(allocator, handle) catch {};
@@ -311,7 +351,10 @@ pub const Server = struct {
                         &installed_out,
                         .application,
                         &pending_out,
-                    ) catch continue;
+                    ) catch |e| {
+                        log.debug("drive: receiveDatagramStep: {}", .{e});
+                        continue;
+                    };
                     switch (step.process) {
                         .routed => |routed| switch (routed) {
                             .installed_key => |ik| {
@@ -443,10 +486,15 @@ pub const Server = struct {
             while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
             for (cs.recv_streams.items) |*s| {
                 if (s.id != sid) continue;
-                if (s.queue.items.len > 0) {
-                    const n = @min(buf.len, s.queue.items.len);
-                    @memcpy(buf[0..n], s.queue.items[0..n]);
-                    s.queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
+                const available = s.queue.items[s.read_offset..];
+                if (available.len > 0) {
+                    const n = @min(buf.len, available.len);
+                    @memcpy(buf[0..n], available[0..n]);
+                    s.read_offset += n;
+                    if (s.read_offset == s.queue.items.len) {
+                        s.queue.clearRetainingCapacity();
+                        s.read_offset = 0;
+                    }
                     cs.mutex.unlock();
                     self.mutex.unlock();
                     return n;

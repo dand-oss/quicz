@@ -73,6 +73,15 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     }
 }
 
+/// Handler task wrapper: releases the handler's connection reference after
+/// the handler logic finishes so the drive task can reclaim the state.
+fn handleConnectionTask(server: *Server, conn: ServerConnection) std.Io.Cancelable!void {
+    defer server.releaseConnection(conn.id);
+    handleConnection(conn) catch |e| {
+        if (e != error.Canceled) std.debug.print("[handler {d}] err {}\n", .{ conn.id, e });
+    };
+}
+
 /// Accept loop: accept connections and spawn one handler task per
 /// connection (std.Build.WebServer serve pattern: per-conn
 /// group.concurrent, defer group.cancel for cleanup).
@@ -86,7 +95,7 @@ fn acceptLoop(server: *Server) std.Io.Cancelable!void {
             return;
         };
         std.debug.print("[accept] got conn {d}\n", .{conn.id});
-        group.concurrent(io, handleConnection, .{conn}) catch |e| {
+        group.concurrent(io, handleConnectionTask, .{ server, conn }) catch |e| {
             std.debug.print("[accept] spawn err {}\n", .{e});
             continue;
         };
@@ -132,6 +141,10 @@ fn runClientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize) !void {
         std.debug.print("[client {d}] stream {d} received {d}/{d} bytes eof={}\n", .{ ci, sid, total, payload.len, got_eof });
         if (total != payload.len or !got_eof) return error.EchoMismatch;
     }
+    client.close();
+    // Stay alive briefly so a lost close frame can be retransmitted by PTO
+    // before the client endpoint is destroyed.
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(50), .awake) catch {};
 }
 
 pub fn main() !void {
@@ -154,6 +167,14 @@ pub fn main() !void {
     }
     try client_group.await(io);
     if (@atomicLoad(bool, &session_failed, .acquire)) return error.EchoMismatch;
+    // Give the drive task a few loops to observe the closes and reclaim
+    // connection state, then assert nothing leaked.
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(300), .awake) catch {};
+    while (!server.mutex.tryLock()) std.atomic.spinLoopHint();
+    const live = server.conns.count();
+    server.mutex.unlock();
+    std.debug.print("[server] live connections after reap window: {d}\n", .{live});
+    if (live != 0) return error.ConnectionLeak;
     std.debug.print("multi-connection test done\n", .{});
     server.stop();
     accept_group.cancel(io);

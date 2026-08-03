@@ -449,7 +449,6 @@ fn deinitPeerClose(close: *PeerClose, allocator: std.mem.Allocator) void {
     }
 }
 
-
 pub fn elapsed(sent_time_nanos: i64, now_nanos: i64) u64 {
     if (now_nanos <= sent_time_nanos) return 0;
     const delta = std.math.sub(i64, now_nanos, sent_time_nanos) catch return std.math.maxInt(u64);
@@ -1385,7 +1384,6 @@ pub const Connection = struct {
             .application => self.loss_deadline_nanos,
         };
     }
-
 
     /// Return the modeled PTO deadline for one packet number space.
     ///
@@ -3158,7 +3156,8 @@ pub const Connection = struct {
         self.last_packet_activity_nanos = now_nanos;
     }
 
-    fn isClosingOrClosed(self: Connection) bool {
+    /// Whether the connection is closing, draining, or fully closed.
+    pub fn isClosingOrClosed(self: Connection) bool {
         return self.state != .active or self.pending_close != null or self.closed;
     }
 
@@ -3471,7 +3470,6 @@ pub const Connection = struct {
             packet_space.pto_probe_count.* = 1;
         }
     }
-
 
     fn armCongestionProbeInSpace(self: *Connection, space: PacketNumberSpace) void {
         const packet_space = self.packetNumberSpace(space);
@@ -7059,7 +7057,6 @@ pub const Connection = struct {
         return self.processFramesInSpaceNoSnapshot(space, packet_type, now_nanos, datagram, received_packet_number);
     }
 
-
     /// Process decoded frames without transactional snapshot/rollback.
     ///
     /// Used by the close-on-error path where frame errors close the connection
@@ -8776,7 +8773,8 @@ pub const Connection = struct {
             self.restorePtoBackoffSnapshot(pto_backoff_before_ack);
         }
         if (persistent_congestion_established) {
-            const pc_rtt_sample_ns = latest_rtt_sample;            packet_space.recovery_state.onPersistentCongestionWithRttSample(pc_rtt_sample_ns);
+            const pc_rtt_sample_ns = latest_rtt_sample;
+            packet_space.recovery_state.onPersistentCongestionWithRttSample(pc_rtt_sample_ns);
             if (latest_rtt_sample != null) {
                 self.syncRttEstimatesFromSpace(space);
             }
@@ -11189,4 +11187,3 @@ pub const Connection = struct {
 /// New code should use `Connection`; the alias keeps existing examples and
 /// downstream experiments source-compatible while the API remains experimental.
 pub const QuicConnection = Connection;
-

@@ -76,6 +76,15 @@ pub const Client = struct {
         std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, std.mem.asBytes(&size)) catch {};
     }
 
+    /// Gracefully close the connection with an APPLICATION_CLOSE.
+    pub fn close(self: *Client) void {
+        const closed = self.client.closeApplicationWithRoutePath(0, "session complete", self.nowNanos()) catch return;
+        if (closed) |o| {
+            self.socket.send(self.io, &self.server_address, o.datagram) catch {};
+            self.allocator.free(o.datagram);
+        }
+    }
+
     fn nowNanos(self: *const Client) i64 {
         return @intCast(std.Io.Timestamp.now(self.io, .awake).nanoseconds);
     }
