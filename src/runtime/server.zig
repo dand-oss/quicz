@@ -57,22 +57,34 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
     ServerRecord.deinit,
 );
 
+/// Per-stream receive buffer within a connection.
+const StreamRecvState = struct {
+    id: u64,
+    queue: std.ArrayList(u8) = .empty,
+};
+
+/// Per-stream send buffer within a connection.
+const StreamSendState = struct {
+    id: u64,
+    queue: std.ArrayList(u8) = .empty,
+    fin: bool = false,
+};
+
 /// Per-connection server state.
 const ConnState = struct {
     conn: *Connection,
     peer: std.Io.net.IpAddress,
     mutex: std.atomic.Mutex = .unlocked,
-    stream_queue: std.ArrayList(u8) = .empty,
+    recv_streams: std.ArrayList(StreamRecvState) = .empty,
     pending_streams: std.ArrayList(u64) = .empty,
-    known_streams: std.ArrayList(u64) = .empty,
-    send_queue: std.ArrayList(u8) = .empty,
-    send_fin: bool = false,
+    send_streams: std.ArrayList(StreamSendState) = .empty,
 
     fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
-        self.stream_queue.deinit(alloc);
+        for (self.recv_streams.items) |*s| s.queue.deinit(alloc);
+        self.recv_streams.deinit(alloc);
         self.pending_streams.deinit(alloc);
-        self.known_streams.deinit(alloc);
-        self.send_queue.deinit(alloc);
+        for (self.send_streams.items) |*s| s.queue.deinit(alloc);
+        self.send_streams.deinit(alloc);
     }
 };
 
@@ -104,6 +116,7 @@ pub const Server = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Server {
         var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = config.port } };
         const socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
+        enlargeSocketReceiveBuffer(socket.handle);
         const server_ep = try ServerEndpoint.initWithCapacity(allocator, 16, .{
             .max_routes = 64,
             .max_stateless_reset_tokens = 64,
@@ -149,6 +162,14 @@ pub const Server = struct {
         self.socket.close(self.io);
     }
 
+    /// Raise SO_RCVBUF so client bursts do not overflow the kernel receive
+    /// buffer before the drive task drains it; loss recovery still covers
+    /// any residual drops.
+    fn enlargeSocketReceiveBuffer(handle: std.Io.net.Socket.Handle) void {
+        const size: u32 = 4 * 1024 * 1024;
+        std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, std.mem.asBytes(&size)) catch {};
+    }
+
     fn nowNanos(self: *const Server) i64 {
         return @intCast(std.Io.Timestamp.now(self.io, .awake).nanoseconds);
     }
@@ -160,10 +181,12 @@ pub const Server = struct {
         while (cit.next()) |csp| {
             const st = csp.*;
             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
-            if (st.send_queue.items.len > 0) {
-                st.conn.sendOnStream(0, st.send_queue.items, st.send_fin) catch {};
-                st.send_queue.clearRetainingCapacity();
-                st.send_fin = false;
+            for (st.send_streams.items) |*sq| {
+                if (sq.queue.items.len > 0 or sq.fin) {
+                    st.conn.sendOnStream(sq.id, sq.queue.items, sq.fin) catch {};
+                    sq.queue.clearRetainingCapacity();
+                    sq.fin = false;
+                }
             }
             st.mutex.unlock();
         }
@@ -305,18 +328,19 @@ pub const Server = struct {
                                             const len = n orelse break;
                                             if (len == 0) break;
                                             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
-                                            st.stream_queue.appendSlice(allocator, stream_buf[0..len]) catch {};
-                                            var known = false;
-                                            for (st.known_streams.items) |k| {
-                                                if (k == sid) {
-                                                    known = true;
+                                            var idx: ?usize = null;
+                                            for (st.recv_streams.items, 0..) |s, i| {
+                                                if (s.id == sid) {
+                                                    idx = i;
                                                     break;
                                                 }
                                             }
-                                            if (!known) {
-                                                st.known_streams.append(allocator, sid) catch {};
+                                            if (idx == null) {
+                                                st.recv_streams.append(allocator, .{ .id = sid }) catch {};
+                                                idx = st.recv_streams.items.len - 1;
                                                 st.pending_streams.append(allocator, sid) catch {};
                                             }
+                                            st.recv_streams.items[idx.?].queue.appendSlice(allocator, stream_buf[0..len]) catch {};
                                             st.mutex.unlock();
                                         }
                                     }
@@ -375,8 +399,8 @@ pub const Server = struct {
         }
     }
 
-    /// Receive stream data on a connection (polls queue).
-    pub fn receiveStreamData(self: *Server, conn_id: u64, buf: []u8) !usize {
+    /// Receive stream data for one stream (polls its per-stream queue).
+    pub fn receiveStreamData(self: *Server, conn_id: u64, sid: u64, buf: []u8) !usize {
         while (true) {
             if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
             while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
@@ -385,13 +409,15 @@ pub const Server = struct {
                 return error.NoConnection;
             };
             while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
-            if (cs.stream_queue.items.len > 0) {
-                const n = @min(buf.len, cs.stream_queue.items.len);
-                @memcpy(buf[0..n], cs.stream_queue.items[0..n]);
-                cs.stream_queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
-                cs.mutex.unlock();
-                self.mutex.unlock();
-                return n;
+            for (cs.recv_streams.items) |*s| {
+                if (s.id == sid and s.queue.items.len > 0) {
+                    const n = @min(buf.len, s.queue.items.len);
+                    @memcpy(buf[0..n], s.queue.items[0..n]);
+                    s.queue.replaceRange(self.allocator, 0, n, &.{}) catch {};
+                    cs.mutex.unlock();
+                    self.mutex.unlock();
+                    return n;
+                }
             }
             cs.mutex.unlock();
             self.mutex.unlock();
@@ -401,15 +427,25 @@ pub const Server = struct {
 
     /// Queue stream data to send (drive task drains and sends).
     pub fn sendStreamData(self: *Server, conn_id: u64, stream_id: u64, data: []const u8, fin: bool) !void {
-        _ = stream_id;
         while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
         const cs = self.conns.get(conn_id) orelse {
             self.mutex.unlock();
             return error.NoConnection;
         };
         while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
-        cs.send_queue.appendSlice(self.allocator, data) catch {};
-        if (fin) cs.send_fin = true;
+        var idx: ?usize = null;
+        for (cs.send_streams.items, 0..) |s, i| {
+            if (s.id == stream_id) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx == null) {
+            cs.send_streams.append(self.allocator, .{ .id = stream_id }) catch {};
+            idx = cs.send_streams.items.len - 1;
+        }
+        cs.send_streams.items[idx.?].queue.appendSlice(self.allocator, data) catch {};
+        if (fin) cs.send_streams.items[idx.?].fin = true;
         cs.mutex.unlock();
         self.mutex.unlock();
     }
@@ -433,7 +469,7 @@ pub const Stream = struct {
     id: u64,
 
     pub fn receive(self: *Stream, buf: []u8) !usize {
-        return self.server.receiveStreamData(self.conn_id, buf);
+        return self.server.receiveStreamData(self.conn_id, self.id, buf);
     }
     pub fn send(self: *Stream, data: []const u8, fin: bool) !void {
         return self.server.sendStreamData(self.conn_id, self.id, data, fin);

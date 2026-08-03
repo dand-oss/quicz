@@ -31,6 +31,7 @@ pub const Client = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
         var client_address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
         const socket = try client_address.bind(io, .{ .mode = .dgram, .protocol = .udp });
+        enlargeSocketReceiveBuffer(socket.handle);
         const server_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = config.server_host, .port = config.server_port } };
         const client_path = endpoint.Udp4Tuple{
             .local = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port),
@@ -66,6 +67,13 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         self.client.deinit();
         self.socket.close(self.io);
+    }
+
+    /// Raise SO_RCVBUF so server echo bursts do not overflow the kernel
+    /// receive buffer between client drains.
+    fn enlargeSocketReceiveBuffer(handle: std.Io.net.Socket.Handle) void {
+        const size: u32 = 4 * 1024 * 1024;
+        std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, std.mem.asBytes(&size)) catch {};
     }
 
     fn nowNanos(self: *const Client) i64 {

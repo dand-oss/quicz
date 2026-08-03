@@ -10,6 +10,8 @@ const ServerConnection = quicz.runtime.server.ServerConnection;
 const Client = quicz.runtime.client.Client;
 const port: u16 = 4455;
 const num_conns: usize = 3;
+const streams_per_conn: usize = 2;
+const stream_payload_len: usize = 512 * 1024;
 const server_private_key = [_]u8{
     0x5b, 0xbf, 0x4f, 0x5a, 0x48, 0x42, 0x9f, 0x00,
     0x5a, 0x57, 0x09, 0xc3, 0xb4, 0xc1, 0x3a, 0x64,
@@ -51,20 +53,23 @@ const alpn = [_][]const u8{"hq-interop"};
 fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     // std.http per-connection handler: read request data, write response.
     var c = conn;
-    std.debug.print("[handler {d}] waiting for stream...\n", .{c.id});
-    var stream = c.acceptStream() catch |e| {
-        std.debug.print("[handler {d}] acceptStream err {}\n", .{ c.id, e });
-        return;
-    };
-    var buf: [65536]u8 = undefined;
-    var total: usize = 0;
-    while (total < 1024 * 1024) {
-        const n = stream.receive(&buf) catch break;
-        if (n == 0) break;
-        stream.send(buf[0..n], false) catch break;
-        total += n;
+    std.debug.print("[handler {d}] waiting for {d} streams...\n", .{ c.id, streams_per_conn });
+    var si: usize = 0;
+    while (si < streams_per_conn) : (si += 1) {
+        var stream = c.acceptStream() catch |e| {
+            std.debug.print("[handler {d}] acceptStream err {}\n", .{ c.id, e });
+            return;
+        };
+        var buf: [65536]u8 = undefined;
+        var total: usize = 0;
+        while (total < stream_payload_len) {
+            const n = stream.receive(&buf) catch break;
+            if (n == 0) break;
+            stream.send(buf[0..n], false) catch break;
+            total += n;
+        }
+        std.debug.print("[handler {d}] stream {d} echoed {d} bytes\n", .{ c.id, stream.id, total });
     }
-    std.debug.print("[handler {d}] echoed {d} bytes\n", .{ c.id, total });
 }
 
 /// Accept loop: accept connections and handle them (std.http model).
@@ -104,21 +109,26 @@ pub fn main() !void {
             continue;
         };
         std.debug.print("[client {d}] connected\n", .{ci});
-        const payload = try allocator.alloc(u8, 1024 * 1024);
+        const payload = try allocator.alloc(u8, stream_payload_len);
         defer allocator.free(payload);
         @memset(payload, 'X');
-        const stream_id = try client.send(payload, true);
-        var recv_buf: [65536]u8 = undefined;
-        var total: usize = 0;
-        var attempts: usize = 0;
-        while (total < payload.len and attempts < 500) : (attempts += 1) {
-            const n = try client.receive(stream_id, &recv_buf);
-            if (n) |len| {
-                if (len == 0) break;
-                total += len;
-            }
+        var stream_ids: [streams_per_conn]u64 = undefined;
+        for (0..streams_per_conn) |si| {
+            stream_ids[si] = try client.send(payload, true);
         }
-        std.debug.print("[client {d}] received {d}/{d} bytes\n", .{ ci, total, payload.len });
+        var recv_buf: [65536]u8 = undefined;
+        for (stream_ids) |sid| {
+            var total: usize = 0;
+            var attempts: usize = 0;
+            while (total < payload.len and attempts < 500) : (attempts += 1) {
+                const n = try client.receive(sid, &recv_buf);
+                if (n) |len| {
+                    if (len == 0) break;
+                    total += len;
+                }
+            }
+            std.debug.print("[client {d}] stream {d} received {d}/{d} bytes\n", .{ ci, sid, total, payload.len });
+        }
     }
     std.debug.print("multi-connection test done\n", .{});
     server.stop();
