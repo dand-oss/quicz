@@ -1,10 +1,11 @@
 //! quicz I/O runtime — async streaming server (multi-connection).
 //!
 //! std.http model: accept loop spawns per-connection handler tasks.
-//! Drive task receives UDP → routes to connections → pushes to queues.
-//! Handlers block on std.Io.Semaphore wakeups. The drive task waits on the
-//! earlier of the endpoint's next lifecycle deadline and a fixed cap
-//! (std.Io.Timeout `.deadline`), then services due deadlines.
+//! A recv task blocks on the UDP socket and queues datagrams; the drive
+//! task routes them to connections and services lifecycle deadlines.
+//! The drive parks on a futex word (std.Build.WebServer update_id pattern)
+//! bumped by every wakeup source, waiting until the next lifecycle deadline.
+//! Handlers block on std.Io.Semaphore wakeups.
 
 const std = @import("std");
 const quicz = @import("../lib.zig");
@@ -61,6 +62,13 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
     ServerRecord.deinit,
 );
 
+/// Datagram received by the recv task, waiting for the drive task.
+const QueuedDatagram = struct {
+    from: std.Io.net.IpAddress,
+    /// Owned copy; the drive task frees it after processing.
+    data: []u8,
+};
+
 /// Per-stream receive buffer within a connection.
 const StreamRecvState = struct {
     id: u64,
@@ -99,6 +107,9 @@ const ConnState = struct {
     /// connections during deadline queries; after that the connection pointer
     /// must not be dereferenced, so reclamation relies on this cache.
     closing_or_closed: bool = false,
+    /// Set while this connection has queued send data the drive task has
+    /// not flushed yet; used to coalesce drive wakeups in sendStreamData.
+    send_pending: bool = false,
 
     fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
         for (self.recv_streams.items) |*s| s.queue.deinit(alloc);
@@ -125,6 +136,14 @@ pub const Server = struct {
     pending_accept: std.ArrayList(u64) = .empty,
     /// Posted by the drive task when a new connection is accepted.
     accept_sem: std.Io.Semaphore = .{ .permits = 0 },
+    /// Futex word bumped by every drive wakeup source (recv task, senders,
+    /// stop); the drive task parks on it with an absolute deadline
+    /// (std.Build.WebServer update_id pattern).
+    wake_id: std.atomic.Value(u32) = .init(0),
+    queue_mutex: std.atomic.Mutex = .unlocked,
+    /// Datagrams received by the recv task, consumed FIFO by the drive task.
+    datagram_queue: std.ArrayList(QueuedDatagram),
+    datagram_read_offset: usize = 0,
     drive_group: std.Io.Group = .init,
     started: bool = false,
     stopping: bool = false,
@@ -153,12 +172,19 @@ pub const Server = struct {
             .cert_der = config.cert_der,
             .private_key = config.private_key,
             .conns = std.AutoHashMap(u64, *ConnState).init(allocator),
+            .datagram_queue = .empty,
         };
     }
 
     pub fn start(self: *Server) !void {
         if (self.started) return;
-        try self.drive_group.concurrent(self.io, Server.drive, .{self});
+        try self.drive_group.concurrent(self.io, Server.recvTask, .{self});
+        self.drive_group.concurrent(self.io, Server.drive, .{self}) catch |err| {
+            @atomicStore(bool, &self.stopping, true, .release);
+            self.drive_group.cancel(self.io);
+            self.drive_group.await(self.io) catch {};
+            return err;
+        };
         self.started = true;
     }
 
@@ -167,6 +193,8 @@ pub const Server = struct {
         @atomicStore(bool, &self.stopping, true, .release);
         // Wake a blocked accept loop so it observes `stopping`.
         self.accept_sem.post(self.io);
+        // Wake the parked drive task.
+        self.notifyDrive(self.io);
     }
 
     pub fn deinit(self: *Server) void {
@@ -183,6 +211,10 @@ pub const Server = struct {
         }
         self.conns.deinit();
         self.pending_accept.deinit(self.allocator);
+        for (self.datagram_queue.items[self.datagram_read_offset..]) |qd| {
+            self.allocator.free(qd.data);
+        }
+        self.datagram_queue.deinit(self.allocator);
         self.server_ep.deinit();
         self.socket.close(self.io);
     }
@@ -244,6 +276,7 @@ pub const Server = struct {
                     sq.fin = false;
                 }
             }
+            st.send_pending = false;
             st.mutex.unlock();
         }
         for (closed_handles[0..closed_count]) |h| {
@@ -263,29 +296,241 @@ pub const Server = struct {
         }
     }
 
-    /// Cap for the deadline-driven wait so queued handler sends keep being
-    /// drained and stop() is observed even when no lifecycle timer is pending.
-    const max_wait = std.Io.Duration.fromMilliseconds(10);
-
-    /// Earliest absolute wake time: the endpoint's next lifecycle deadline
-    /// (recovery/idle/close/key-discard) capped by `max_wait`. Mirrors the
-    /// s2n-quic endpoint `timeout()` contract; expressed as an absolute
-    /// deadline so the Io backend does the clock math.
-    fn nextWaitDeadline(self: *Server, io: std.Io) std.Io.Clock.Timestamp {
-        const cap = std.Io.Clock.Timestamp.fromNow(io, .{ .clock = .awake, .raw = max_wait });
-        const deadline = self.server_ep.nextDeadlineWithScratch() catch return cap;
-        const d = deadline orelse return cap;
-        if (@as(i96, d.deadline_nanos) >= cap.raw.nanoseconds) return cap;
-        return .{ .raw = .{ .nanoseconds = d.deadline_nanos }, .clock = .awake };
+    /// Wake the drive task: bump the futex word, then wake the waiter.
+    /// std.Build.WebServer uses the same pattern (notifyUpdate/update_id).
+    fn notifyDrive(self: *Server, io: std.Io) void {
+        _ = self.wake_id.rmw(.Add, 1, .release);
+        io.futexWake(u32, &self.wake_id.raw, 1);
     }
 
-    /// Wait until the next lifecycle deadline (capped) and receive one
-    /// datagram if one arrives in time. Returns null on timeout or when a
-    /// deadline is already due and should be serviced first.
-    fn waitAndReceiveDatagram(self: *Server, io: std.Io, recv_buf: *[max_datagram_size]u8) ?std.Io.net.IncomingMessage {
-        const wait_deadline = self.nextWaitDeadline(io);
-        if (wait_deadline.raw.nanoseconds <= std.Io.Timestamp.now(io, .awake).nanoseconds) return null;
-        return self.socket.receiveTimeout(io, recv_buf, .{ .deadline = wait_deadline }) catch null;
+    /// Receive datagrams into the queue and wake the drive task. Mirrors the
+    /// official WebServer accept task: block on the socket, hand work off.
+    fn recvTask(self: *Server) std.Io.Cancelable!void {
+        const io = self.io;
+        const allocator = self.allocator;
+        var recv_buf: [max_datagram_size]u8 = undefined;
+        while (!@atomicLoad(bool, &self.stopping, .acquire)) {
+            const received = self.socket.receiveTimeout(io, &recv_buf, .none) catch |err| switch (err) {
+                error.Canceled => return,
+                else => {
+                    if (@atomicLoad(bool, &self.stopping, .acquire)) return;
+                    log.debug("recv task: receive: {}", .{err});
+                    continue;
+                },
+            };
+            const copy = allocator.dupe(u8, received.data) catch continue;
+            while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
+            self.datagram_queue.append(allocator, .{ .from = received.from, .data = copy }) catch {
+                self.queue_mutex.unlock();
+                allocator.free(copy);
+                continue;
+            };
+            self.queue_mutex.unlock();
+            self.notifyDrive(io);
+        }
+    }
+
+    /// Process every queued datagram in FIFO order and free its buffer.
+    fn drainQueuedDatagrams(self: *Server, io: std.Io, allocator: std.mem.Allocator) void {
+        while (true) {
+            while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
+            if (self.datagram_read_offset >= self.datagram_queue.items.len) {
+                self.datagram_queue.clearRetainingCapacity();
+                self.datagram_read_offset = 0;
+                self.queue_mutex.unlock();
+                return;
+            }
+            const qd = self.datagram_queue.items[self.datagram_read_offset];
+            self.datagram_read_offset += 1;
+            self.queue_mutex.unlock();
+            self.processDatagram(io, allocator, qd.from, qd.data);
+            allocator.free(qd.data);
+        }
+    }
+
+    /// Route one datagram through the endpoint (accept or routed step) and
+    /// deliver stream data to per-connection queues.
+    fn processDatagram(self: *Server, io: std.Io, allocator: std.mem.Allocator, from: std.Io.net.IpAddress, data: []const u8) void {
+        const from_addr = endpoint.Udp4Address.init(from.ip4.bytes, from.ip4.port);
+        const local_addr = endpoint.Udp4Address.init(self.socket.address.ip4.bytes, self.socket.address.ip4.port);
+        const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
+        const now = self.nowNanos();
+
+        var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
+        var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
+        var installed_out: [16]ServerEndpoint.DatagramPathResult = undefined;
+        var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
+        var scratch: [8192]u8 = undefined;
+
+        const action = self.server_ep.feedDatagram(&scratch, path, data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| {
+            log.debug("drive: feedDatagram: {}", .{e});
+            return;
+        };
+        var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port } };
+
+        switch (action) {
+            .accept_initial => |initial_accept| {
+                const handle = self.next_handle;
+                self.next_handle += 1;
+                var server_scid: [8]u8 = undefined;
+                io.randomSecure(&server_scid) catch {};
+                const record = allocator.create(ServerRecord) catch |e| {
+                    std.debug.print("[drive] step err {}\n", .{e});
+                    return;
+                };
+                const cert_chain = [_][]const u8{self.cert_der};
+                record.* = .{
+                    .handle = handle,
+                    .transport = Tls13ServerTransport.init(allocator, .{
+                        .initial_max_data = 10_485_760,
+                        .initial_max_stream_data = 10_485_760,
+                        .initial_max_streams_bidi = 128,
+                        .initial_max_streams_uni = 128,
+                        .max_datagram_size = max_datagram_size,
+                        .max_idle_timeout_ms = 30000,
+                    }, .{
+                        .alpn = self.alpn,
+                        .cert_chain_der = &cert_chain,
+                        .private_key_bytes = self.private_key,
+                        .private_key_algorithm = .ecdsa_p256_sha256,
+                    }) catch {
+                        allocator.destroy(record);
+                        return;
+                    },
+                };
+                record.transport.connection.validatePeerAddress() catch {};
+                record.transport.setLocalInitialSourceConnectionId(&server_scid) catch {};
+                const initial_info = quicz.protection.peekProtectedLongPacketInfo(data) catch {
+                    record.transport.deinit();
+                    allocator.destroy(record);
+                    return;
+                };
+                record.transport.setOriginalDestinationConnectionId(initial_info.dcid) catch {};
+                const accepted = self.server_ep.acceptInitialRecord(handle, record, now, initial_accept, &server_scid, data, .{}, &scratch, &initial_out, &handshake_out) catch {
+                    record.transport.deinit();
+                    allocator.destroy(record);
+                    return;
+                };
+                const cs = allocator.create(ConnState) catch |e| {
+                    log.err("drive: allocate ConnState: {}", .{e});
+                    return;
+                };
+                cs.* = .{ .conn = record.transport.connectionRef(), .handle = handle, .peer = dest };
+                while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+                self.conns.put(handle, cs) catch {};
+                self.pending_accept.append(allocator, handle) catch {};
+                self.mutex.unlock();
+                self.accept_sem.post(io);
+                for (initial_out[0..accepted.initial.drain.datagrams_written]) |o| {
+                    self.socket.send(io, &dest, o.datagram) catch {};
+                    allocator.free(o.datagram);
+                }
+                if (accepted.handshake) |hs| {
+                    for (handshake_out[0..hs.drain.datagrams_written]) |o| {
+                        self.socket.send(io, &dest, o.datagram) catch {};
+                        allocator.free(o.datagram);
+                    }
+                }
+            },
+            .routed => {
+                const step = self.server_ep.receiveDatagramStepWithRoutePath(
+                    allocator,
+                    path,
+                    now,
+                    data,
+                    &[_]u8{},
+                    &[_]quic_packet.Version{.v1},
+                    .{ .space = .application, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
+                    &scratch,
+                    &[_]u8{},
+                    &initial_out,
+                    &handshake_out,
+                    &installed_out,
+                    .application,
+                    &pending_out,
+                ) catch |e| {
+                    log.debug("drive: receiveDatagramStep: {}", .{e});
+                    return;
+                };
+                switch (step.process) {
+                    .routed => |routed| switch (routed) {
+                        .installed_key => |ik| {
+                            for (installed_out[0..ik.drain.datagrams_written]) |o| {
+                                self.socket.send(io, &dest, o.datagram) catch {};
+                                allocator.free(o.datagram);
+                            }
+                            // Deliver received stream data to per-connection
+                            // queues via the endpoint's own records: the
+                            // routed connection is the record's connection.
+                            while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+                            var rit = self.server_ep.records.records.valueIterator();
+                            while (rit.next()) |recp| {
+                                const rec = recp.*;
+                                const conn = rec.transport.connectionRef();
+                                const handle = rec.handle;
+                                const st = self.conns.get(handle) orelse continue;
+                                var stream_buf: [4096]u8 = undefined;
+                                var sid: u64 = 0;
+                                var pushed = false;
+                                while (sid < 512) : (sid += 4) {
+                                    while (true) {
+                                        const n = conn.recvOnStream(sid, &stream_buf) catch break;
+                                        const len = n orelse break;
+                                        if (len == 0) break;
+                                        while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
+                                        var idx: ?usize = null;
+                                        for (st.recv_streams.items, 0..) |s, i| {
+                                            if (s.id == sid) {
+                                                idx = i;
+                                                break;
+                                            }
+                                        }
+                                        if (idx == null) {
+                                            st.recv_streams.append(allocator, .{ .id = sid }) catch {};
+                                            idx = st.recv_streams.items.len - 1;
+                                            st.pending_streams.append(allocator, sid) catch {};
+                                        }
+                                        st.recv_streams.items[idx.?].queue.appendSlice(allocator, stream_buf[0..len]) catch {};
+                                        pushed = true;
+                                        st.mutex.unlock();
+                                    }
+                                    // FIN received and all bytes drained from the
+                                    // connection: surface EOF on the stream queue.
+                                    if (conn.recvStreamFinished(sid) catch false) {
+                                        while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
+                                        var eof_idx: ?usize = null;
+                                        for (st.recv_streams.items, 0..) |s, i| {
+                                            if (s.id == sid) {
+                                                eof_idx = i;
+                                                break;
+                                            }
+                                        }
+                                        if (eof_idx == null) {
+                                            st.recv_streams.append(allocator, .{ .id = sid }) catch {};
+                                            eof_idx = st.recv_streams.items.len - 1;
+                                            st.pending_streams.append(allocator, sid) catch {};
+                                        }
+                                        st.recv_streams.items[eof_idx.?].eof = true;
+                                        pushed = true;
+                                        st.mutex.unlock();
+                                    }
+                                }
+                                if (pushed) st.data_sem.post(io);
+                            }
+                            self.mutex.unlock();
+                            self.drainOutgoing(io, allocator);
+                        },
+                        else => {},
+                    },
+                    else => {},
+                }
+                for (pending_out[0..step.pending_drain.datagrams_written]) |o| {
+                    self.socket.send(io, &dest, o.datagram) catch {};
+                    allocator.free(o.datagram);
+                }
+            },
+            else => {},
+        }
     }
 
     /// Service lifecycle deadlines that came due and send the datagrams they
@@ -308,199 +553,28 @@ pub const Server = struct {
         }
     }
 
-    /// The connection driving task body.
+    /// The connection driving task body: drain sends, process queued
+    /// datagrams, service due deadlines, then park on the wakeup futex until
+    /// the next event or lifecycle deadline.
     pub fn drive(self: *Server) std.Io.Cancelable!void {
         const allocator = self.allocator;
         const io = self.io;
-        var recv_buf: [max_datagram_size]u8 = undefined;
         while (!@atomicLoad(bool, &self.stopping, .acquire)) {
             self.drainOutgoing(io, allocator);
-            if (self.waitAndReceiveDatagram(io, &recv_buf)) |received| {
-                const from_addr = endpoint.Udp4Address.init(received.from.ip4.bytes, received.from.ip4.port);
-                const local_addr = endpoint.Udp4Address.init(self.socket.address.ip4.bytes, self.socket.address.ip4.port);
-                const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
-                const now = self.nowNanos();
-
-                var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
-                var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
-                var installed_out: [16]ServerEndpoint.DatagramPathResult = undefined;
-                var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
-                var scratch: [8192]u8 = undefined;
-
-                const action = self.server_ep.feedDatagram(&scratch, path, received.data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| {
-                    log.debug("drive: feedDatagram: {}", .{e});
-                    continue;
-                };
-                var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port } };
-
-                switch (action) {
-                    .accept_initial => |initial_accept| {
-                        const handle = self.next_handle;
-                        self.next_handle += 1;
-                        var server_scid: [8]u8 = undefined;
-                        io.randomSecure(&server_scid) catch {};
-                        const record = allocator.create(ServerRecord) catch |e| {
-                            std.debug.print("[drive] step err {}\n", .{e});
-                            continue;
-                        };
-                        const cert_chain = [_][]const u8{self.cert_der};
-                        record.* = .{
-                            .handle = handle,
-                            .transport = Tls13ServerTransport.init(allocator, .{
-                                .initial_max_data = 10_485_760,
-                                .initial_max_stream_data = 10_485_760,
-                                .initial_max_streams_bidi = 128,
-                                .initial_max_streams_uni = 128,
-                                .max_datagram_size = max_datagram_size,
-                                .max_idle_timeout_ms = 30000,
-                            }, .{
-                                .alpn = self.alpn,
-                                .cert_chain_der = &cert_chain,
-                                .private_key_bytes = self.private_key,
-                                .private_key_algorithm = .ecdsa_p256_sha256,
-                            }) catch {
-                                allocator.destroy(record);
-                                continue;
-                            },
-                        };
-                        record.transport.connection.validatePeerAddress() catch {};
-                        record.transport.setLocalInitialSourceConnectionId(&server_scid) catch {};
-                        const initial_info = quicz.protection.peekProtectedLongPacketInfo(received.data) catch {
-                            record.transport.deinit();
-                            allocator.destroy(record);
-                            continue;
-                        };
-                        record.transport.setOriginalDestinationConnectionId(initial_info.dcid) catch {};
-                        const accepted = self.server_ep.acceptInitialRecord(handle, record, now, initial_accept, &server_scid, received.data, .{}, &scratch, &initial_out, &handshake_out) catch {
-                            record.transport.deinit();
-                            allocator.destroy(record);
-                            continue;
-                        };
-                        const cs = allocator.create(ConnState) catch |e| {
-                            log.err("drive: allocate ConnState: {}", .{e});
-                            continue;
-                        };
-                        cs.* = .{ .conn = record.transport.connectionRef(), .handle = handle, .peer = dest };
-                        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
-                        self.conns.put(handle, cs) catch {};
-                        self.pending_accept.append(allocator, handle) catch {};
-                        self.mutex.unlock();
-                        self.accept_sem.post(io);
-                        for (initial_out[0..accepted.initial.drain.datagrams_written]) |o| {
-                            self.socket.send(io, &dest, o.datagram) catch {};
-                            allocator.free(o.datagram);
-                        }
-                        if (accepted.handshake) |hs| {
-                            for (handshake_out[0..hs.drain.datagrams_written]) |o| {
-                                self.socket.send(io, &dest, o.datagram) catch {};
-                                allocator.free(o.datagram);
-                            }
-                        }
-                    },
-                    .routed => {
-                        const step = self.server_ep.receiveDatagramStepWithRoutePath(
-                            allocator,
-                            path,
-                            now,
-                            received.data,
-                            &[_]u8{},
-                            &[_]quic_packet.Version{.v1},
-                            .{ .space = .application, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
-                            &scratch,
-                            &[_]u8{},
-                            &initial_out,
-                            &handshake_out,
-                            &installed_out,
-                            .application,
-                            &pending_out,
-                        ) catch |e| {
-                            log.debug("drive: receiveDatagramStep: {}", .{e});
-                            continue;
-                        };
-                        switch (step.process) {
-                            .routed => |routed| switch (routed) {
-                                .installed_key => |ik| {
-                                    for (installed_out[0..ik.drain.datagrams_written]) |o| {
-                                        self.socket.send(io, &dest, o.datagram) catch {};
-                                        allocator.free(o.datagram);
-                                    }
-                                    // Deliver received stream data to per-connection
-                                    // queues via the endpoint's own records: the
-                                    // routed connection is the record's connection.
-                                    while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
-                                    var rit = self.server_ep.records.records.valueIterator();
-                                    while (rit.next()) |recp| {
-                                        const rec = recp.*;
-                                        const conn = rec.transport.connectionRef();
-                                        const handle = rec.handle;
-                                        const st = self.conns.get(handle) orelse continue;
-                                        var stream_buf: [4096]u8 = undefined;
-                                        var sid: u64 = 0;
-                                        var pushed = false;
-                                        while (sid < 512) : (sid += 4) {
-                                            while (true) {
-                                                const n = conn.recvOnStream(sid, &stream_buf) catch break;
-                                                const len = n orelse break;
-                                                if (len == 0) break;
-                                                while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
-                                                var idx: ?usize = null;
-                                                for (st.recv_streams.items, 0..) |s, i| {
-                                                    if (s.id == sid) {
-                                                        idx = i;
-                                                        break;
-                                                    }
-                                                }
-                                                if (idx == null) {
-                                                    st.recv_streams.append(allocator, .{ .id = sid }) catch {};
-                                                    idx = st.recv_streams.items.len - 1;
-                                                    st.pending_streams.append(allocator, sid) catch {};
-                                                }
-                                                st.recv_streams.items[idx.?].queue.appendSlice(allocator, stream_buf[0..len]) catch {};
-                                                pushed = true;
-                                                st.mutex.unlock();
-                                            }
-                                            // FIN received and all bytes drained from the
-                                            // connection: surface EOF on the stream queue.
-                                            if (conn.recvStreamFinished(sid) catch false) {
-                                                while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
-                                                var eof_idx: ?usize = null;
-                                                for (st.recv_streams.items, 0..) |s, i| {
-                                                    if (s.id == sid) {
-                                                        eof_idx = i;
-                                                        break;
-                                                    }
-                                                }
-                                                if (eof_idx == null) {
-                                                    st.recv_streams.append(allocator, .{ .id = sid }) catch {};
-                                                    eof_idx = st.recv_streams.items.len - 1;
-                                                    st.pending_streams.append(allocator, sid) catch {};
-                                                }
-                                                st.recv_streams.items[eof_idx.?].eof = true;
-                                                pushed = true;
-                                                st.mutex.unlock();
-                                            }
-                                        }
-                                        if (pushed) st.data_sem.post(io);
-                                    }
-                                    self.mutex.unlock();
-                                    self.drainOutgoing(io, allocator);
-                                },
-                                else => {},
-                            },
-                            else => {},
-                        }
-                        for (pending_out[0..step.pending_drain.datagrams_written]) |o| {
-                            self.socket.send(io, &dest, o.datagram) catch {};
-                            allocator.free(o.datagram);
-                        }
-                    },
-                    else => {},
-                }
-            }
-            // Service lifecycle deadlines (loss/PTO recovery, idle timeout,
-            // close timeout, key discard) that came due while waiting or
-            // while the datagram was processed.
+            self.drainQueuedDatagrams(io, allocator);
             self.serviceDueDeadlines(io, allocator);
+            // Park until a datagram arrives, a handler queues a send, stop()
+            // runs, or the next lifecycle deadline comes due. The snapshot is
+            // taken after draining, pairing with notifyDrive's bump: a
+            // notifier that already ran changed wake_id, so the wait returns
+            // immediately (std.Build.WebServer futexWaitTimeout pattern).
+            const snapshot = self.wake_id.load(.acquire);
+            const timeout: std.Io.Timeout = timeout: {
+                const deadline = self.server_ep.nextDeadlineWithScratch() catch break :timeout .none;
+                const d = deadline orelse break :timeout .none;
+                break :timeout .{ .deadline = .{ .raw = .{ .nanoseconds = d.deadline_nanos }, .clock = .awake } };
+            };
+            io.futexWaitTimeout(u32, &self.wake_id.raw, snapshot, timeout) catch return;
         }
     }
 
@@ -600,8 +674,11 @@ pub const Server = struct {
         }
         cs.send_streams.items[idx.?].queue.appendSlice(self.allocator, data) catch {};
         if (fin) cs.send_streams.items[idx.?].fin = true;
+        const notify = !cs.send_pending;
+        cs.send_pending = true;
         cs.mutex.unlock();
         self.mutex.unlock();
+        if (notify) self.notifyDrive(self.io);
     }
 };
 
