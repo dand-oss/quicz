@@ -73,17 +73,64 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     }
 }
 
-/// Accept loop: accept connections and handle them (std.http model).
-/// For multi-core: spawn handler via Group.concurrent; here we call directly
-/// since the test creates connections sequentially.
+/// Accept loop: accept connections and spawn one handler task per
+/// connection (std.Build.WebServer serve pattern: per-conn
+/// group.concurrent, defer group.cancel for cleanup).
 fn acceptLoop(server: *Server) std.Io.Cancelable!void {
+    const io = server.io;
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
     while (true) {
         const conn = server.accept() catch |e| {
             if (e != error.Canceled) std.debug.print("[accept] err {}\n", .{e});
             return;
         };
         std.debug.print("[accept] got conn {d}\n", .{conn.id});
-        handleConnection(conn) catch {};
+        group.concurrent(io, handleConnection, .{conn}) catch |e| {
+            std.debug.print("[accept] spawn err {}\n", .{e});
+            continue;
+        };
+    }
+}
+
+/// Concurrent-task wrapper: run one echo session, record failure in
+/// `failed` (transport errors do not fit the Cancelable error set).
+fn clientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize, failed: *bool) std.Io.Cancelable!void {
+    runClientSession(allocator, io, ci) catch |e| {
+        std.debug.print("[client {d}] session FAILED: {}\n", .{ ci, e });
+        @atomicStore(bool, failed, true, .release);
+    };
+}
+
+/// One full client echo session; all sessions run concurrently.
+fn runClientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize) !void {
+    std.debug.print("[client {d}] init+connect...\n", .{ci});
+    var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
+    defer client.deinit();
+    try client.connect();
+    std.debug.print("[client {d}] connected\n", .{ci});
+    const payload = try allocator.alloc(u8, stream_payload_len);
+    defer allocator.free(payload);
+    @memset(payload, 'X');
+    var stream_ids: [streams_per_conn]u64 = undefined;
+    for (0..streams_per_conn) |si| {
+        stream_ids[si] = try client.send(payload, true);
+    }
+    var recv_buf: [65536]u8 = undefined;
+    for (stream_ids) |sid| {
+        var total: usize = 0;
+        var attempts: usize = 0;
+        while (total < payload.len and attempts < 500) : (attempts += 1) {
+            const n = try client.receive(sid, &recv_buf);
+            if (n) |len| {
+                if (len == 0) break;
+                total += len;
+            }
+        }
+        const eof = try client.receive(sid, &recv_buf);
+        const got_eof = if (eof) |len| len == 0 else false;
+        std.debug.print("[client {d}] stream {d} received {d}/{d} bytes eof={}\n", .{ ci, sid, total, payload.len, got_eof });
+        if (total != payload.len or !got_eof) return error.EchoMismatch;
     }
 }
 
@@ -100,39 +147,13 @@ pub fn main() !void {
     var accept_group: std.Io.Group = .init;
     accept_group.concurrent(io, acceptLoop, .{&server}) catch {};
     std.debug.print("server on 127.0.0.1:{d} (std.http per-connection handler model)\n", .{port});
-    var ci: usize = 0;
-    while (ci < num_conns) : (ci += 1) {
-        std.debug.print("[client {d}] init+connect...\n", .{ci});
-        var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
-        defer client.deinit();
-        client.connect() catch |e| {
-            std.debug.print("[client {d}] connect FAILED: {}\n", .{ ci, e });
-            continue;
-        };
-        std.debug.print("[client {d}] connected\n", .{ci});
-        const payload = try allocator.alloc(u8, stream_payload_len);
-        defer allocator.free(payload);
-        @memset(payload, 'X');
-        var stream_ids: [streams_per_conn]u64 = undefined;
-        for (0..streams_per_conn) |si| {
-            stream_ids[si] = try client.send(payload, true);
-        }
-        var recv_buf: [65536]u8 = undefined;
-        for (stream_ids) |sid| {
-            var total: usize = 0;
-            var attempts: usize = 0;
-            while (total < payload.len and attempts < 500) : (attempts += 1) {
-                const n = try client.receive(sid, &recv_buf);
-                if (n) |len| {
-                    if (len == 0) break;
-                    total += len;
-                }
-            }
-            const eof = try client.receive(sid, &recv_buf);
-            const got_eof = if (eof) |len| len == 0 else false;
-            std.debug.print("[client {d}] stream {d} received {d}/{d} bytes eof={}\n", .{ ci, sid, total, payload.len, got_eof });
-        }
+    var session_failed: bool = false;
+    var client_group: std.Io.Group = .init;
+    for (0..num_conns) |ci| {
+        try client_group.concurrent(io, clientSession, .{ allocator, io, ci, &session_failed });
     }
+    try client_group.await(io);
+    if (@atomicLoad(bool, &session_failed, .acquire)) return error.EchoMismatch;
     std.debug.print("multi-connection test done\n", .{});
     server.stop();
     accept_group.cancel(io);

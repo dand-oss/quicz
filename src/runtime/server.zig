@@ -80,6 +80,8 @@ const ConnState = struct {
     recv_streams: std.ArrayList(StreamRecvState) = .empty,
     pending_streams: std.ArrayList(u64) = .empty,
     send_streams: std.ArrayList(StreamSendState) = .empty,
+    /// Posted by the drive task when stream data or EOF arrives.
+    data_sem: std.Io.Semaphore = .{ .permits = 0 },
 
     fn deinit(self: *ConnState, alloc: std.mem.Allocator) void {
         for (self.recv_streams.items) |*s| s.queue.deinit(alloc);
@@ -104,6 +106,8 @@ pub const Server = struct {
     mutex: std.atomic.Mutex = .unlocked,
     conns: std.AutoHashMap(u64, *ConnState),
     pending_accept: std.ArrayList(u64) = .empty,
+    /// Posted by the drive task when a new connection is accepted.
+    accept_sem: std.Io.Semaphore = .{ .permits = 0 },
     drive_group: std.Io.Group = .init,
     started: bool = false,
     stopping: bool = false,
@@ -144,6 +148,8 @@ pub const Server = struct {
     /// Signal the drive task and all accept/receive loops to stop.
     pub fn stop(self: *Server) void {
         @atomicStore(bool, &self.stopping, true, .release);
+        // Wake a blocked accept loop so it observes `stopping`.
+        self.accept_sem.post(self.io);
     }
 
     pub fn deinit(self: *Server) void {
@@ -277,6 +283,7 @@ pub const Server = struct {
                     self.conns.put(handle, cs) catch {};
                     self.pending_accept.append(allocator, handle) catch {};
                     self.mutex.unlock();
+                    self.accept_sem.post(io);
                     for (initial_out[0..accepted.initial.drain.datagrams_written]) |o| {
                         self.socket.send(io, &dest, o.datagram) catch {};
                         allocator.free(o.datagram);
@@ -324,6 +331,7 @@ pub const Server = struct {
                                     const st = self.conns.get(handle) orelse continue;
                                     var stream_buf: [4096]u8 = undefined;
                                     var sid: u64 = 0;
+                                    var pushed = false;
                                     while (sid < 512) : (sid += 4) {
                                         while (true) {
                                             const n = conn.recvOnStream(sid, &stream_buf) catch break;
@@ -343,6 +351,7 @@ pub const Server = struct {
                                                 st.pending_streams.append(allocator, sid) catch {};
                                             }
                                             st.recv_streams.items[idx.?].queue.appendSlice(allocator, stream_buf[0..len]) catch {};
+                                            pushed = true;
                                             st.mutex.unlock();
                                         }
                                         // FIN received and all bytes drained from the
@@ -362,9 +371,11 @@ pub const Server = struct {
                                                 st.pending_streams.append(allocator, sid) catch {};
                                             }
                                             st.recv_streams.items[eof_idx.?].eof = true;
+                                            pushed = true;
                                             st.mutex.unlock();
                                         }
                                     }
+                                    if (pushed) st.data_sem.post(io);
                                 }
                                 self.mutex.unlock();
                                 self.drainOutgoing(io, allocator);
@@ -394,7 +405,7 @@ pub const Server = struct {
                 return .{ .server = self, .id = id };
             }
             self.mutex.unlock();
-            std.atomic.spinLoopHint();
+            self.accept_sem.wait(self.io) catch return error.Canceled;
         }
     }
 
@@ -416,7 +427,7 @@ pub const Server = struct {
             }
             cs.mutex.unlock();
             self.mutex.unlock();
-            std.atomic.spinLoopHint();
+            cs.data_sem.wait(self.io) catch return error.Canceled;
         }
     }
 
@@ -449,7 +460,7 @@ pub const Server = struct {
             }
             cs.mutex.unlock();
             self.mutex.unlock();
-            std.atomic.spinLoopHint();
+            cs.data_sem.wait(self.io) catch return error.Canceled;
         }
     }
 
