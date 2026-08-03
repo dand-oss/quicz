@@ -197,6 +197,43 @@ pub const Server = struct {
         self.notifyDrive(self.io);
     }
 
+    /// Start the server (if not already started) and spawn the serve task,
+    /// which accepts connections and runs one handler task per connection
+    /// (std.Build.WebServer serve pattern). The runtime releases each
+    /// connection when its handler returns; deinit cancels the serve task
+    /// and every handler task.
+    pub fn serve(self: *Server, handler: HandlerFn) !void {
+        try self.start();
+        try self.drive_group.concurrent(self.io, Server.serveLoop, .{ self, handler });
+        log.info("quicz server listening on {f}/", .{self.socket.address});
+    }
+
+    /// Serve task body: accept loop plus per-connection handler tasks
+    /// (std.Build.WebServer.serve pattern: per-conn group.concurrent,
+    /// defer group.cancel for cleanup).
+    fn serveLoop(self: *Server, handler: HandlerFn) std.Io.Cancelable!void {
+        const io = self.io;
+        var group: std.Io.Group = .init;
+        defer group.cancel(io);
+        while (true) {
+            const conn = try self.accept();
+            group.concurrent(io, handlerTask, .{ self, conn, handler }) catch |err| {
+                log.err("unable to spawn connection handler: {}", .{err});
+                self.releaseConnection(conn.id);
+                continue;
+            };
+        }
+    }
+
+    /// Handler task wrapper: releases the connection reference when the
+    /// handler finishes so the drive task can reclaim the state.
+    fn handlerTask(self: *Server, conn: ServerConnection, handler: HandlerFn) std.Io.Cancelable!void {
+        defer self.releaseConnection(conn.id);
+        handler(conn) catch |err| {
+            if (err != error.Canceled) log.err("connection {d} handler failed: {}", .{ conn.id, err });
+        };
+    }
+
     pub fn deinit(self: *Server) void {
         if (self.started) {
             self.stop();
@@ -681,6 +718,10 @@ pub const Server = struct {
         if (notify) self.notifyDrive(self.io);
     }
 };
+
+/// Per-connection handler callback (std.http model): serves one
+/// connection; `error.Canceled` terminates it during shutdown.
+pub const HandlerFn = *const fn (ServerConnection) std.Io.Cancelable!void;
 
 /// A server-side connection handle.
 pub const ServerConnection = struct {

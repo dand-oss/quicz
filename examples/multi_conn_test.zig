@@ -73,35 +73,6 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     }
 }
 
-/// Handler task wrapper: releases the handler's connection reference after
-/// the handler logic finishes so the drive task can reclaim the state.
-fn handleConnectionTask(server: *Server, conn: ServerConnection) std.Io.Cancelable!void {
-    defer server.releaseConnection(conn.id);
-    handleConnection(conn) catch |e| {
-        if (e != error.Canceled) std.debug.print("[handler {d}] err {}\n", .{ conn.id, e });
-    };
-}
-
-/// Accept loop: accept connections and spawn one handler task per
-/// connection (std.Build.WebServer serve pattern: per-conn
-/// group.concurrent, defer group.cancel for cleanup).
-fn acceptLoop(server: *Server) std.Io.Cancelable!void {
-    const io = server.io;
-    var group: std.Io.Group = .init;
-    defer group.cancel(io);
-    while (true) {
-        const conn = server.accept() catch |e| {
-            if (e != error.Canceled) std.debug.print("[accept] err {}\n", .{e});
-            return;
-        };
-        std.debug.print("[accept] got conn {d}\n", .{conn.id});
-        group.concurrent(io, handleConnectionTask, .{ server, conn }) catch |e| {
-            std.debug.print("[accept] spawn err {}\n", .{e});
-            continue;
-        };
-    }
-}
-
 /// Concurrent-task wrapper: run one echo session, record failure in
 /// `failed` (transport errors do not fit the Cancelable error set).
 fn clientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize, failed: *bool) std.Io.Cancelable!void {
@@ -156,9 +127,7 @@ pub fn main() !void {
     const io = threaded.io();
     var server = try Server.init(allocator, io, .{ .port = port, .alpn = &alpn, .cert_der = &certificate_der, .private_key = &server_private_key });
     defer server.deinit();
-    try server.start();
-    var accept_group: std.Io.Group = .init;
-    accept_group.concurrent(io, acceptLoop, .{&server}) catch {};
+    try server.serve(&handleConnection);
     std.debug.print("server on 127.0.0.1:{d} (std.http per-connection handler model)\n", .{port});
     var session_failed: bool = false;
     var client_group: std.Io.Group = .init;
@@ -177,5 +146,4 @@ pub fn main() !void {
     if (live != 0) return error.ConnectionLeak;
     std.debug.print("multi-connection test done\n", .{});
     server.stop();
-    accept_group.cancel(io);
 }
