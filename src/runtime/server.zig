@@ -292,12 +292,14 @@ pub const Server = struct {
             // record is alive. The cached close state keeps this ConnState
             // reclaimable after the record is gone.
             const record_alive = self.server_ep.records.get(st.handle) != null;
-            if (record_alive) {
-                st.closing_or_closed = st.conn.isClosingOrClosed();
-            } else {
-                st.closing_or_closed = true;
+            const closing_now = if (record_alive) st.conn.isClosingOrClosed() else true;
+            const closing_prev = @atomicRmw(bool, &st.closing_or_closed, .Xchg, closing_now, .acq_rel);
+            if (closing_now and !closing_prev) {
+                // A blocked handler cannot learn about the close from stream
+                // data or EOF; wake it so it observes error.ConnectionClosed.
+                st.data_sem.post(io);
             }
-            if (st.closing_or_closed and st.handler_done) {
+            if (closing_now and st.handler_done) {
                 if (closed_count < closed_handles.len) {
                     closed_handles[closed_count] = st.handle;
                     closed_count += 1;
@@ -652,6 +654,11 @@ pub const Server = struct {
                 self.mutex.unlock();
                 return sid;
             }
+            if (@atomicLoad(bool, &cs.closing_or_closed, .acquire)) {
+                cs.mutex.unlock();
+                self.mutex.unlock();
+                return error.ConnectionClosed;
+            }
             cs.mutex.unlock();
             self.mutex.unlock();
             cs.data_sem.wait(self.io) catch return error.Canceled;
@@ -689,6 +696,13 @@ pub const Server = struct {
                     return 0;
                 }
                 break;
+            }
+            // No data and no FIN: a closing/closed connection will never
+            // deliver more on this stream.
+            if (@atomicLoad(bool, &cs.closing_or_closed, .acquire)) {
+                cs.mutex.unlock();
+                self.mutex.unlock();
+                return error.ConnectionClosed;
             }
             cs.mutex.unlock();
             self.mutex.unlock();

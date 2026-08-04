@@ -73,6 +73,27 @@ fn handleConnection(conn: ServerConnection) std.Io.Cancelable!void {
     }
 }
 
+/// Abrupt-close session: open a stream, send partial data WITHOUT a FIN,
+/// then close the connection. The server handler must wake up with
+/// error.ConnectionClosed instead of blocking on the stream forever.
+fn abruptSession(allocator: std.mem.Allocator, io: std.Io) std.Io.Cancelable!void {
+    runAbruptSession(allocator, io) catch |e| {
+        std.debug.print("[client abrupt] session FAILED: {}\n", .{e});
+    };
+}
+
+fn runAbruptSession(allocator: std.mem.Allocator, io: std.Io) !void {
+    var client = try Client.init(allocator, io, .{ .server_port = port, .server_name = "localhost", .alpn = &alpn });
+    defer client.deinit();
+    try client.connect();
+    var payload: [1024]u8 = undefined;
+    @memset(&payload, 'Y');
+    _ = try client.send(&payload, false);
+    client.close();
+    std.Io.sleep(io, std.Io.Duration.fromMilliseconds(50), .awake) catch {};
+    std.debug.print("[client abrupt] closed connection without FIN\n", .{});
+}
+
 /// Concurrent-task wrapper: run one echo session, record failure in
 /// `failed` (transport errors do not fit the Cancelable error set).
 fn clientSession(allocator: std.mem.Allocator, io: std.Io, ci: usize, failed: *bool) std.Io.Cancelable!void {
@@ -133,6 +154,7 @@ pub fn main() !void {
     for (0..num_conns) |ci| {
         try client_group.concurrent(io, clientSession, .{ allocator, io, ci, &session_failed });
     }
+    try client_group.concurrent(io, abruptSession, .{ allocator, io });
     try client_group.await(io);
     if (@atomicLoad(bool, &session_failed, .acquire)) return error.EchoMismatch;
     // Give the drive task a few loops to observe the closes and reclaim

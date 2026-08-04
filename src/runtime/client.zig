@@ -83,6 +83,9 @@ pub const Client = struct {
     /// Streams this client opened; the drive task delivers their data.
     open_streams: std.ArrayList(u64) = .empty,
     data_sem: std.Io.Semaphore = .{ .permits = 0 },
+    /// Drive-observed connection close; a blocked receive() cannot learn
+    /// about the close from stream data or EOF, so it checks this flag.
+    conn_closing_or_closed: bool = false,
 
     const handshake_pending: u8 = 0;
     const handshake_confirmed: u8 = 1;
@@ -249,6 +252,11 @@ pub const Client = struct {
                     return 0;
                 }
             }
+            // No data and no EOF: a closing/closed connection will never
+            // deliver more on this stream.
+            if (@atomicLoad(bool, &self.conn_closing_or_closed, .acquire)) {
+                return error.ConnectionClosed;
+            }
             self.state_mutex.unlock();
             self.data_sem.wait(io) catch return error.Canceled;
         }
@@ -313,6 +321,7 @@ pub const Client = struct {
             self.drainOutgoing();
             self.drainQueuedDatagrams();
             self.checkHandshakeProgress();
+            self.checkConnectionClose();
             self.serviceDueDeadlines();
             // Park until a datagram arrives, a request is queued, stop() runs,
             // or the next lifecycle deadline comes due. The snapshot is taken
@@ -527,5 +536,14 @@ pub const Client = struct {
             self.handshake_state.store(handshake_failed, .release);
             self.handshake_sem.post(self.io);
         }
+    }
+
+    /// Surface a closing/closed connection to a blocked receive(): wake the
+    /// stream waiters once, so they observe error.ConnectionClosed.
+    fn checkConnectionClose(self: *Client) void {
+        if (@atomicLoad(bool, &self.conn_closing_or_closed, .acquire)) return;
+        if (!self.client.transport.connection.isClosingOrClosed()) return;
+        @atomicStore(bool, &self.conn_closing_or_closed, true, .release);
+        self.data_sem.post(self.io);
     }
 };
