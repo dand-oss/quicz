@@ -328,9 +328,21 @@ pub const Client = struct {
             // after draining, pairing with notifyDrive's bump: a notifier that
             // already ran changed wake_id, so the wait returns immediately.
             const snapshot = self.wake_id.load(.acquire);
-            const timeout: std.Io.Timeout = timeout: {
-                const deadline = self.client.nextDeadline() orelse break :timeout .none;
-                break :timeout .{ .deadline = .{ .raw = .{ .nanoseconds = deadline.deadline() }, .clock = .awake } };
+            const timeout: std.Io.Timeout = blk: {
+                if (self.client.nextDeadline()) |d| {
+                    break :blk .{ .deadline = .{ .raw = .{ .nanoseconds = d.deadline() }, .clock = .awake } };
+                }
+                // The endpoint reports no pending deadline. During the handshake
+                // this is unsafe: a lost Initial/Handshake response must be
+                // retransmitted by PTO, and if the endpoint under-reports its
+                // deadline the drive would park forever and connect() would
+                // hang. Bound the wait so the loop re-evaluates the handshake
+                // (and the endpoint can produce a retransmit on the next pass).
+                if (self.handshake_state.load(.acquire) == handshake_pending) {
+                    log.warn("client drive: handshake pending but endpoint has no deadline; bounding park to 250ms", .{});
+                    break :blk .{ .deadline = .{ .raw = .{ .nanoseconds = self.nowNanos() + 250_000_000 }, .clock = .awake } };
+                }
+                break :blk .none;
             };
             // Re-check stopping after the snapshot: a deinit/stop that ran
             // before the snapshot already bumped wake_id (and its futexWake
@@ -406,10 +418,16 @@ pub const Client = struct {
         }
     }
 
-    /// Drain all pending outgoing datagrams to the server.
+    /// Drain pending outgoing datagrams to the server. Bounded: the server
+    /// endpoint can keep producing closing-frame retransmits, and an unbounded
+    /// loop here wedges the drive task so it never reaches the main loop's
+    /// `stopping` check (and group.cancel cannot interrupt a non-blocking
+    /// busy-spin). The remainder is picked up on the next drive iteration,
+    /// mirroring the server runtime's single-pass drain.
     fn drainOutgoing(self: *Client) void {
         var out: [16]Tls13ClientEndpoint.ApplicationDatagramPathResult = undefined;
-        while (true) {
+        var iterations: usize = 0;
+        while (iterations < 16) : (iterations += 1) {
             const drained = self.client.drainApplicationDatagramsWithRoutePath(self.nowNanos(), &out) catch return;
             if (drained.datagrams_written == 0) return;
             for (out[0..drained.datagrams_written]) |o| {
