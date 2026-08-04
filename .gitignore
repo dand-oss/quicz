@@ -14,3 +14,4 @@ Cargo.lock
 fuzz/
 bench_analysis.md
 reference/
+docs/zttp-analysis.md
