@@ -96,6 +96,11 @@ pub const Client = struct {
         server_port: u16,
         server_name: []const u8 = "localhost",
         alpn: []const []const u8,
+        /// CA bundle for server certificate verification. Caller owns it; must
+        /// outlive the Client. Null = skip verification (insecure).
+        ca_bundle: ?*const std.crypto.Certificate.Bundle = null,
+        /// Skip certificate verification (testing only).
+        insecure_skip_verify: bool = false,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
@@ -111,6 +116,14 @@ pub const Client = struct {
         var client_scid: [8]u8 = undefined;
         io.randomSecure(&original_dcid) catch io.random(&original_dcid);
         io.randomSecure(&client_scid) catch io.random(&client_scid);
+        const now = std.Io.Clock.real.now(io);
+        const tls_config = quicz.tls13.TlsConfig{
+            .alpn = config.alpn,
+            .server_name = config.server_name,
+            .skip_cert_verify = config.insecure_skip_verify or config.ca_bundle == null,
+            .now_sec = now.toSeconds(),
+            .client_ca_bundle = config.ca_bundle,
+        };
         const client = try Tls13ClientEndpoint.init(
             allocator,
             1,
@@ -123,7 +136,7 @@ pub const Client = struct {
                 .initial_max_streams_uni = 128,
                 .max_datagram_size = max_datagram_size,
             },
-            .{ .alpn = config.alpn, .server_name = config.server_name, .skip_cert_verify = true },
+            tls_config,
             original_dcid,
             client_scid,
         );
