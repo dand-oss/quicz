@@ -83,6 +83,51 @@ pub fn main() !void {
 调用方不接触 packet number space、traffic secret 或 CRYPTO frame。
 allocator 显式传入；close 幂等；所有资源有确定性 deinit 路径。
 
+### I/O 运行时（async，`std.Io`）
+
+`quicz.runtime` 提供基于 Zig 0.16 `std.Io`（线程化）的事件驱动 server/client。
+server 按连接 spawn 独立 handler task（std.http 模型）；client 驱动 async 会话。
+
+```zig
+const std = @import("std");
+const quicz = @import("quicz");
+const Server = quicz.runtime.server.Server;
+const Client = quicz.runtime.client.Client;
+
+pub fn main() !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Server：serve(handler) 启动 driving task + 每连接 handler。
+    var server = try Server.init(allocator, io, .{
+        .port = 4433,
+        .alpn = &.{"hq-interop"},
+        .cert_der = &cert_der,
+        .private_key = &key,
+    });
+    defer server.deinit();
+    try server.serve(&echoHandler); // fn(ServerConnection) std.Io.Cancelable!void
+
+    // Client：connect、send、receive 通过 async 会话。
+    var client = try Client.init(allocator, io, .{
+        .server_port = 4433,
+        .server_name = "localhost",
+        .alpn = &.{"hq-interop"},
+    });
+    defer client.deinit();
+    const ok = try client.runEchoSession("hello");
+}
+```
+
+Server handler 签名：`fn (ServerConnection) std.Io.Cancelable!void`。
+每连接 `ServerConnection.acceptStream()` 返回 `Stream`，提供 `receive(buf)` / `send(data, fin)`。
+见 `examples/io_echo.zig` 和 `examples/multi_conn_test.zig`。
+
 ### 低层 API
 
 需要更精细控制时，内部模块同样公开：
@@ -90,18 +135,17 @@ allocator 显式传入；close 幂等；所有资源有确定性 deinit 路径�
 ```zig
 const quicz = @import("quicz");
 
-// 包级连接状态机（76K 行）
+// 包级连接状态机（11K 行）
 var conn = try quicz.Connection.init(allocator, .client, .{...});
 
-// 纯 Zig TLS 1.3 握手状态机（8K 行）
+// 纯 Zig TLS 1.3 握手状态机（9.4K 行）
 const tls13 = quicz.tls13;
 
 // 包保护：AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305
 const protection = quicz.protection;
 
-// 拥塞控制：NewReno、CUBIC、BBR
+// 拥塞控制：NewReno、CUBIC
 const cubic = quicz.cubic;
-const bbr = quicz.bbr;
 
 // HTTP/3、QPACK、WebTransport
 const h3 = quicz.h3;
@@ -117,11 +161,11 @@ const qlog = quicz.qlog;
 | 类别 | 覆盖率 |
 | --- | --- |
 | 传输层（19 项） | 19/19 — QUIC v1+v2、TLS 1.3、0-RTT、迁移、路径验证、Retry、无状态重置、密钥更新、版本协商、DATAGRAM、多路径、ECN、PMTU、GSO/GRO、连接池、qlog、fuzz |
-| 拥塞控制（4 项） | 4/4 — NewReno、CUBIC、BBR、报文 pacing |
+| 拥塞控制（3 项） | 3/3 — NewReno、CUBIC、报文 pacing |
 | 密码套件（5 项） | 5/5 — AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、X25519、X25519Kyber768（后量子） |
 | 应用层（6/6） | HTTP/3 完整连接管理、QPACK 静态+动态表、WebTransport 完整会话、HTTP Datagrams (RFC 9297)、流重置部分交付 |
 | 外部互通 | ✅ quic-go、quiche、s2n-quic — 握手 + 传输全部验证 |
-| 测试 | 1793 个单元测试，零泄漏 |
+| 测试 | 1820 个单元测试，零泄漏 |
 
 完整对比见[传输任务矩阵](docs/zh-CN/quic_transport_tasks.md)。
 
@@ -157,7 +201,7 @@ const qlog = quicz.qlog;
 
 ```sh
 zig build                                    # 构建库
-zig build test --summary all                 # 1793 个单元测试
+zig build test --summary all                 # 1820 个单元测试
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP 回环
 zig build run-interop-client-standalone      # 互通自测
 zig fmt --check build.zig src examples       # 格式检查
@@ -181,15 +225,16 @@ exe.root_module.addImport("quicz", quicz_dep.module("quicz"));
 | 路径 | 说明 |
 | --- | --- |
 | `src/quic/api.zig` | **高层 API** — Endpoint / Connection / Stream |
-| `src/quic/connection.zig` | 连接状态机（76K 行） |
+| `src/runtime/` | I/O 运行时 - async server/client（`std.Io`） |
+| `src/quic/connection.zig` | 连接状态机（11K 行） |
 | `src/quic/endpoint.zig` | 端点路由、CID 注册、ECN 策略 |
 | `src/quic/endpoint_lifecycle.zig` | 连接生命周期管理 |
 | `src/quic/udp_event_loop.zig` | UDP socket I/O（IPv4 + IPv6 双栈） |
-| `src/tls/tls13.zig` | 纯 Zig TLS 1.3（8K 行，213 测试） |
+| `src/tls/tls13.zig` | 纯 Zig TLS 1.3（9.4K 行，222 测试） |
 | `src/tls/pq_kex.zig` | X25519Kyber768 后量子密钥交换 |
 | `src/quic/protection.zig` | 包保护（AES-GCM、ChaCha20-Poly1305） |
 | `src/quic/recovery.zig` | 丢包检测与恢复（RFC 9002） |
-| `src/quic/cubic.zig` / `bbr.zig` | 拥塞控制器 |
+| `src/quic/cubic.zig` | 拥塞控制器（NewReno + CUBIC） |
 | `src/h3/` | HTTP/3、QPACK、WebTransport |
 | `src/qlog/` | qlog 事件日志 |
 | `examples/` | 可运行示例和互通探针 |

@@ -48,7 +48,7 @@ zig build run-interop-external-client -- 127.0.0.1 4433 /absolute/path/to/go-ech
 | `run-post-quantum-echo -- --server` | `post_quantum_echo.zig` | X25519Kyber768 post-quantum KEX demo + QUIC echo server. |
 | `run-post-quantum-echo -- --client` | `post_quantum_echo.zig` | Post-quantum KEX demo + QUIC echo client. |
 | `run-zero-rtt-echo` | `zero_rtt_echo.zig` | 0-RTT session resumption state machine (PSK, early data, replay protection). |
-| `run-congestion-bench` | `congestion_bench.zig` | Congestion control comparison: NewReno vs CUBIC vs BBR under simulated loss. |
+| `run-congestion-bench` | `congestion_bench.zig` | Congestion control comparison: NewReno vs CUBIC under simulated loss. |
 | `run-connection-migration` | `connection_migration.zig` | PATH_CHALLENGE/PATH_RESPONSE round-trip and route path update. |
 
 ### Quick start: echo server + client
@@ -85,8 +85,20 @@ zig build run-post-quantum-echo -- --client
 
 ```sh
 zig build run-zero-rtt-echo        # 0-RTT state machine walkthrough
-zig build run-congestion-bench     # NewReno/CUBIC/BBR cwnd comparison
+zig build run-congestion-bench     # NewReno/CUBIC cwnd comparison
 zig build run-connection-migration # PATH_CHALLENGE/RESPONSE demo
+```
+
+## I/O runtime (async, `std.Io`)
+
+| Command | Source | What it demonstrates |
+| --- | --- | --- |
+| `run-io-echo` | `io_echo.zig` | Async streaming echo: `std.Io.Threaded` server with per-connection handler tasks + client echo session. |
+| `run-multi-conn-test` | `multi_conn_test.zig` | Async multi-connection test (std.http model): concurrent connections, multiple streams, bulk transfer. |
+
+```sh
+zig build run-io-echo
+zig build run-multi-conn-test
 ```
 
 ## Core transport state

@@ -215,7 +215,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe_congestion_bench);
-    const run_congestion_bench = b.step("run-congestion-bench", "Run congestion control comparison benchmark (NewReno/CUBIC/BBR)");
+    const run_congestion_bench = b.step("run-congestion-bench", "Run congestion control comparison benchmark (NewReno/CUBIC)");
     const run_congestion_bench_cmd = b.addRunArtifact(exe_congestion_bench);
     run_congestion_bench.dependOn(&run_congestion_bench_cmd.step);
 
@@ -234,8 +234,39 @@ pub fn build(b: *std.Build) void {
     const run_quic_bench = b.step("run-quic-bench", "Run QUIC transport micro-benchmark (throughput + latency)");
     const run_quic_bench_cmd = b.addRunArtifact(exe_quic_bench);
     run_quic_bench.dependOn(&run_quic_bench_cmd.step);
+    // I/O runtime - async streaming echo (std.Io)
+    const exe_io_echo = b.addExecutable(.{
+        .name = "quicz-io-echo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/io_echo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_io_echo);
+    const run_io_echo = b.step("run-io-echo", "Run I/O runtime async streaming echo demo");
+    const run_io_echo_cmd = b.addRunArtifact(exe_io_echo);
+    run_io_echo.dependOn(&run_io_echo_cmd.step);
 
-
+    // I/O runtime - multi-connection test (std.http model)
+    const exe_multi_conn = b.addExecutable(.{
+        .name = "quicz-multi-conn-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/multi_conn_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_multi_conn);
+    const run_multi_conn = b.step("run-multi-conn-test", "Run I/O runtime multi-connection echo test");
+    const run_multi_conn_cmd = b.addRunArtifact(exe_multi_conn);
+    run_multi_conn.dependOn(&run_multi_conn_cmd.step);
 
     const exe_interop_external_client = b.addExecutable(.{
         .name = "quicz-interop-external-client",
@@ -249,7 +280,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe_interop_external_client);
-
 
     // zig build run-fuzz — run the fuzz harness
     const exe_fuzz = b.addExecutable(.{
@@ -494,7 +524,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe_interop_event_loopback);
-
 
     // P5-C: QUIC-Interop-Runner server/client binaries
     const exe_interop_server = b.addExecutable(.{

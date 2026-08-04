@@ -9,7 +9,7 @@ English | [简体中文](README_zh-CN.md)
 
 A QUIC / HTTP/3 implementation in pure Zig.
 
-> **Current state:** Transport + application layer production-ready (36/37 features, 1793 tests,
+> **Current state:** Transport + application layer production-ready (36/37 features, 1820 tests,
 > three-implementation interop verified). Full HTTP/3, QPACK, WebTransport, and HTTP Datagrams.
 > Public APIs may still evolve.
 
@@ -19,7 +19,7 @@ A QUIC / HTTP/3 implementation in pure Zig.
 
 - **QUIC v1 & v2** (RFC 9000 / RFC 9369) — handshake, streams, flow control, connection migration, path validation, Retry, stateless reset, key update, version negotiation, DATAGRAM, multipath, ECN, PMTUD, GSO/GRO
 - **TLS 1.3** (RFC 8446 / RFC 9001) — pure Zig, no C dependencies. ECDSA P-256, X25519, X25519Kyber768 (post-quantum), AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, 0-RTT, session resumption
-- **Loss Detection & Congestion Control** (RFC 9002 / RFC 9438) — NewReno, CUBIC, BBR, packet pacing
+- **Loss Detection & Congestion Control** (RFC 9002 / RFC 9438) — NewReno, CUBIC, packet pacing
 - **HTTP/3** (RFC 9114) — full connection management, SETTINGS, GOAWAY, stream state machine, QPACK static + dynamic table
 - **WebTransport** (draft-ietf-webtrans-http3) — full session management, uni/bidi framing, CLOSE capsule, datagrams
 - **qlog** (draft-ietf-quic-qlog) — QUIC event logging
@@ -122,11 +122,13 @@ pub fn main() !void {
 | `alpn` | `&.{}` | ALPN protocol identifiers |
 | `max_connections` | `0` | Max concurrent connections (0 = unlimited) |
 | `max_streams_bidi` | `100` | Max bidirectional streams per connection |
+| `max_streams_uni` | `100` | Max unidirectional streams per connection |
 | `max_idle_timeout_ms` | `30000` | Idle timeout in milliseconds |
 | `max_datagram_size` | `1350` | Max UDP payload size |
 | `initial_max_data` | `1048576` | Connection-level flow control window |
 | `initial_max_stream_data` | `262144` | Per-stream flow control window |
 | `enable_datagrams` | `false` | Enable QUIC DATAGRAM extension (RFC 9221) |
+| `max_datagram_frame_size` | `0` | Max DATAGRAM frame size (0 = disabled) |
 | `require_retry` | `false` | Require Retry for address validation (server) |
 | `ipv6` | `false` | Use IPv6 dual-stack socket |
 
@@ -141,6 +143,53 @@ pub fn main() !void {
 | `ca_cert_pem` | `null` | CA certificate for verification |
 | `insecure_skip_verify` | `false` | Skip certificate verification |
 | `handshake_timeout_ms` | `10000` | Handshake timeout |
+
+### I/O runtime (async, `std.Io`)
+
+`quicz.runtime` provides an event-driven server/client on Zig 0.16 `std.Io`
+(threaded). The server spawns an independent handler task per connection
+(std.http model); the client drives an async session.
+
+```zig
+const std = @import("std");
+const quicz = @import("quicz");
+const Server = quicz.runtime.server.Server;
+const Client = quicz.runtime.client.Client;
+
+pub fn main() !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Server: serve(handler) spawns a driving task + per-connection handlers.
+    var server = try Server.init(allocator, io, .{
+        .port = 4433,
+        .alpn = &.{"hq-interop"},
+        .cert_der = &cert_der,
+        .private_key = &key,
+    });
+    defer server.deinit();
+    try server.serve(&echoHandler); // fn(ServerConnection) std.Io.Cancelable!void
+
+    // Client: connect, send, receive via async session.
+    var client = try Client.init(allocator, io, .{
+        .server_port = 4433,
+        .server_name = "localhost",
+        .alpn = &.{"hq-interop"},
+    });
+    defer client.deinit();
+    const ok = try client.runEchoSession("hello");
+}
+```
+
+Server handler signature: `fn (ServerConnection) std.Io.Cancelable!void`.
+Per-connection `ServerConnection.acceptStream()` returns a `Stream` with
+`receive(buf)` / `send(data, fin)`. See `examples/io_echo.zig` and
+`examples/multi_conn_test.zig`.
 
 ### Low-level API (direct connection control)
 
@@ -170,9 +219,8 @@ const EndpointConnectionLifecycle = quicz.EndpointConnectionLifecycle;
 // Packet protection: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305
 const protection = quicz.protection;
 
-// Congestion control: NewReno, CUBIC, BBR
+// Congestion control: NewReno, CUBIC
 const cubic = quicz.cubic;
-const bbr = quicz.bbr;
 
 // HTTP/3, QPACK, WebTransport
 const h3 = quicz.h3;
@@ -219,7 +267,7 @@ Requires **Zig 0.16.0**.
 
 ```bash
 zig build                                    # build library
-zig build test --summary all                 # 1793 unit tests
+zig build test --summary all                 # 1820 unit tests
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP loopback
 zig build run-interop-client-standalone      # interop self-test
 zig fmt --check build.zig src examples       # format check
@@ -244,17 +292,18 @@ examples/interop/run_external_interop.sh s2n-quic
 | Path | Description |
 |---|---|
 | `src/quic/api.zig` | **High-level API** — Endpoint / Connection / Stream |
-| `src/quic/connection.zig` | Connection state machine (76K lines) |
+| `src/runtime/` | I/O runtime - async server/client (`std.Io`) |
+| `src/quic/connection.zig` | Connection state machine (11K lines) |
 | `src/quic/endpoint.zig` | Endpoint routing, CID registry, ECN policy |
 | `src/quic/endpoint_lifecycle.zig` | Connection lifecycle management |
 | `src/quic/tls13_client_endpoint.zig` | Client endpoint (handshake + stream I/O) |
 | `src/quic/tls13_server_endpoint.zig` | Server endpoint (multi-connection routing) |
 | `src/quic/udp_event_loop.zig` | UDP socket I/O (IPv4 + IPv6 dual-stack) |
-| `src/tls/tls13.zig` | Pure Zig TLS 1.3 (8K lines, 213 tests) |
+| `src/tls/tls13.zig` | Pure Zig TLS 1.3 (9.4K lines, 222 tests) |
 | `src/tls/pq_kex.zig` | X25519Kyber768 post-quantum key exchange |
 | `src/quic/protection.zig` | Packet protection (AES-GCM, ChaCha20-Poly1305) |
 | `src/quic/recovery.zig` | Loss detection and recovery (RFC 9002) |
-| `src/quic/cubic.zig` / `bbr.zig` | Congestion controllers |
+| `src/quic/cubic.zig` | Congestion controller (NewReno + CUBIC) |
 | `src/h3/` | HTTP/3, QPACK, WebTransport |
 | `src/qlog/` | qlog event logging |
 | `examples/` | Runnable examples and interop probes |
