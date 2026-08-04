@@ -402,7 +402,7 @@ pub const Server = struct {
         var scratch: [8192]u8 = undefined;
 
         const action = self.server_ep.feedDatagram(&scratch, path, data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| {
-            log.debug("drive: feedDatagram: {}", .{e});
+            log.err("drive: feedDatagram ({d} bytes): {}", .{ data.len, e });
             return;
         };
         var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port } };
@@ -414,7 +414,7 @@ pub const Server = struct {
                 var server_scid: [8]u8 = undefined;
                 io.randomSecure(&server_scid) catch {};
                 const record = allocator.create(ServerRecord) catch |e| {
-                    std.debug.print("[drive] step err {}\n", .{e});
+                    log.err("drive: allocate ServerRecord: {}", .{e});
                     return;
                 };
                 const cert_chain = [_][]const u8{self.cert_der};
@@ -432,20 +432,29 @@ pub const Server = struct {
                         .cert_chain_der = &cert_chain,
                         .private_key_bytes = self.private_key,
                         .private_key_algorithm = .ecdsa_p256_sha256,
-                    }) catch {
+                    }) catch |e| {
+                        log.err("drive: Tls13ServerTransport.init: {}", .{e});
                         allocator.destroy(record);
                         return;
                     },
                 };
-                record.transport.connection.validatePeerAddress() catch {};
-                record.transport.setLocalInitialSourceConnectionId(&server_scid) catch {};
-                const initial_info = quicz.protection.peekProtectedLongPacketInfo(data) catch {
+                record.transport.connection.validatePeerAddress() catch |e| {
+                    log.err("drive: validatePeerAddress: {}", .{e});
+                };
+                record.transport.setLocalInitialSourceConnectionId(&server_scid) catch |e| {
+                    log.err("drive: setLocalInitialSourceConnectionId: {}", .{e});
+                };
+                const initial_info = quicz.protection.peekProtectedLongPacketInfo(data) catch |e| {
+                    log.err("drive: peekProtectedLongPacketInfo: {}", .{e});
                     record.transport.deinit();
                     allocator.destroy(record);
                     return;
                 };
-                record.transport.setOriginalDestinationConnectionId(initial_info.dcid) catch {};
-                const accepted = self.server_ep.acceptInitialRecord(handle, record, now, initial_accept, &server_scid, data, .{}, &scratch, &initial_out, &handshake_out) catch {
+                record.transport.setOriginalDestinationConnectionId(initial_info.dcid) catch |e| {
+                    log.err("drive: setOriginalDestinationConnectionId: {}", .{e});
+                };
+                const accepted = self.server_ep.acceptInitialRecord(handle, record, now, initial_accept, &server_scid, data, .{}, &scratch, &initial_out, &handshake_out) catch |e| {
+                    log.err("drive: acceptInitialRecord: {}", .{e});
                     record.transport.deinit();
                     allocator.destroy(record);
                     return;
@@ -460,8 +469,9 @@ pub const Server = struct {
                 self.pending_accept.append(allocator, handle) catch {};
                 self.mutex.unlock();
                 self.accept_sem.post(io);
+                log.info("drive: accepted conn {d}: initial_out={d} handshake={}", .{ handle, accepted.initial.drain.datagrams_written, accepted.handshake != null });
                 for (initial_out[0..accepted.initial.drain.datagrams_written]) |o| {
-                    self.socket.send(io, &dest, o.datagram) catch {};
+                    self.socket.send(io, &dest, o.datagram) catch |e| log.err("drive: send initial response: {}", .{e});
                     allocator.free(o.datagram);
                 }
                 if (accepted.handshake) |hs| {
@@ -488,7 +498,7 @@ pub const Server = struct {
                     .application,
                     &pending_out,
                 ) catch |e| {
-                    log.debug("drive: receiveDatagramStep: {}", .{e});
+                    log.err("drive: receiveDatagramStep ({d} bytes, first 0x{x:0>2}): {}", .{ data.len, data[0], e });
                     return;
                 };
                 switch (step.process) {
@@ -559,7 +569,42 @@ pub const Server = struct {
                             self.mutex.unlock();
                             self.drainOutgoing(io, allocator);
                         },
-                        else => {},
+                        // Long-header packets on an accepted connection:
+                        // Initial-space CRYPTO continuations (ClientHello
+                        // spanning several Initials, e.g. post-quantum key
+                        // shares) and Handshake-space packets. Send the
+                        // drained Initial/Handshake responses.
+                        .long => |long_result| {
+                            switch (long_result) {
+                                .packet => |pkt| switch (pkt) {
+                                    .initial => |ip| {
+                                        for (initial_out[0..ip.initial.backend.backend.drain.datagrams_written]) |o| {
+                                            self.socket.send(io, &dest, o.datagram) catch |e| log.err("drive: send long initial response: {}", .{e});
+                                            allocator.free(o.datagram);
+                                        }
+                                        if (ip.handshake) |hs| {
+                                            for (handshake_out[0..hs.backend.drain.datagrams_written]) |o| {
+                                                self.socket.send(io, &dest, o.datagram) catch |e| log.err("drive: send long handshake response: {}", .{e});
+                                                allocator.free(o.datagram);
+                                            }
+                                        }
+                                    },
+                                    .handshake => |hs| {
+                                        for (handshake_out[0..hs.backend.backend.drain.datagrams_written]) |o| {
+                                            self.socket.send(io, &dest, o.datagram) catch |e| log.err("drive: send routed handshake response: {}", .{e});
+                                            allocator.free(o.datagram);
+                                        }
+                                    },
+                                },
+                                .coalesced_initial_handshake => |ch| {
+                                    for (handshake_out[0..ch.backend.backend.drain.datagrams_written]) |o| {
+                                        self.socket.send(io, &dest, o.datagram) catch |e| log.err("drive: send coalesced response: {}", .{e});
+                                        allocator.free(o.datagram);
+                                    }
+                                },
+                            }
+                            self.drainOutgoing(io, allocator);
+                        },
                     },
                     else => {},
                 }
