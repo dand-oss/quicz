@@ -6,6 +6,11 @@ const protocol_limits = @import("protocol_limits.zig");
 const max_connection_id_len = protocol_limits.max_connection_id_len;
 pub const max_udp_payload_size_default = 65_527;
 const max_stream_count = protocol_limits.max_stream_count;
+/// Upper bound for the max_idle_timeout transport parameter (1<<32 ms ≈ 49 days).
+/// A peer advertising a larger value is rejected before the value reaches
+/// `millisToNanos` (ms * 1_000_000), which would overflow i64 for values
+/// near max_quic_varint (2^62) and crash (ReleaseSafe) or wrap (ReleaseFast).
+pub const max_idle_timeout_ms_cap = @as(u64, 1) << 32;
 const max_quic_varint = protocol_limits.max_quic_varint;
 
 /// RFC 9000 transport parameter identifiers.
@@ -119,6 +124,7 @@ fn validatePreferredAddressConnectionIdLen(cid: []const u8) !void {
 fn validateIntegerParameter(id: ParameterId, value: u64) !void {
     if (value > max_quic_varint) return error.InvalidParameterValue;
     switch (id) {
+        .max_idle_timeout => if (value > max_idle_timeout_ms_cap) return error.InvalidParameterValue,
         .max_udp_payload_size => if (value < 1200 or value > max_udp_payload_size_default) return error.InvalidParameterValue,
         .initial_max_streams_bidi, .initial_max_streams_uni => if (value > max_stream_count) return error.InvalidParameterValue,
         .ack_delay_exponent => if (value > 20) return error.InvalidParameterValue,
@@ -459,6 +465,17 @@ test "transport parameters parse defaults from empty extension" {
     try std.testing.expectEqual(@as(u64, 25), params.max_ack_delay);
     try std.testing.expectEqual(@as(u64, 2), params.active_connection_id_limit);
     try std.testing.expect(!params.disable_active_migration);
+}
+
+test "transport parameters reject max_idle_timeout exceeding cap" {
+    // Exactly the cap (1<<32 ms ~ 49 days) is allowed.
+    try validateIntegerParameter(.max_idle_timeout, max_idle_timeout_ms_cap);
+    // One above the cap is rejected.
+    try std.testing.expectError(error.InvalidParameterValue,
+        validateIntegerParameter(.max_idle_timeout, max_idle_timeout_ms_cap + 1));
+    // A hostile near-max varint (would overflow millisToNanos) is rejected.
+    try std.testing.expectError(error.InvalidParameterValue,
+        validateIntegerParameter(.max_idle_timeout, std.math.maxInt(u64)));
 }
 
 test "reserved transport parameter identifiers follow RFC 9000 greasing pattern" {
