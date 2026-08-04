@@ -32,7 +32,6 @@ pub const webtransport = @import("h3/webtransport.zig");
 pub const h3_limits = @import("h3/limits.zig");
 pub const h3_datagram = @import("h3/datagram.zig");
 const h3_fuzz_test = @import("h3/fuzz_test.zig");
-pub const api = @import("quic/api.zig");
 const h3_integration_test = @import("h3/h3_integration_test.zig");
 const quic_v2_test = @import("quic/quic_v2_test.zig");
 const interop_coverage_test = @import("quic/interop_coverage_test.zig");

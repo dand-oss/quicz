@@ -7,7 +7,46 @@
 
 const std = @import("std");
 const endpoint = @import("endpoint.zig");
-const api = @import("api.zig");
+/// Network address supporting both IPv4 and IPv6.
+pub const Address = struct {
+    pub const Tag = enum { ipv4, ipv6 };
+
+    tag: Tag,
+    port: u16,
+    v4: [4]u8 = .{ 0, 0, 0, 0 },
+    v6: [16]u8 = .{0} ** 16,
+
+    pub fn ipv4(a: [4]u8, port: u16) Address {
+        return .{ .tag = .ipv4, .port = port, .v4 = a };
+    }
+
+    pub fn ipv6(a: [16]u8, port: u16) Address {
+        return .{ .tag = .ipv6, .port = port, .v6 = a };
+    }
+
+    pub fn parseIpv4(s: []const u8, port: u16) ?Address {
+        var octets: [4]u8 = undefined;
+        var parts = std.mem.splitScalar(u8, s, '.');
+        for (&octets) |*o| {
+            const part = parts.next() orelse return null;
+            o.* = std.fmt.parseInt(u8, part, 10) catch return null;
+        }
+        if (parts.next() != null) return null;
+        return ipv4(octets, port);
+    }
+
+    pub fn toUdp4(self: Address) endpoint.Udp4Address {
+        return endpoint.Udp4Address.init(self.v4, self.port);
+    }
+
+    pub fn eql(self: Address, other: Address) bool {
+        if (self.tag != other.tag or self.port != other.port) return false;
+        return switch (self.tag) {
+            .ipv4 => std.mem.eql(u8, &self.v4, &other.v4),
+            .ipv6 => std.mem.eql(u8, &self.v6, &other.v6),
+        };
+    }
+};
 
 /// UDP socket wrapper for QUIC datagram I/O.
 pub const UdpSocket = struct {
@@ -68,7 +107,7 @@ pub const UdpSocket = struct {
     }
 
     /// Send a datagram to a dual-stack Address (IPv4 or IPv6).
-    pub fn sendToAddress(self: *UdpSocket, remote: api.Address, data: []const u8) !void {
+    pub fn sendToAddress(self: *UdpSocket, remote: Address, data: []const u8) !void {
         switch (remote.tag) {
             .ipv4 => {
                 var ip_addr = std.Io.net.IpAddress{
@@ -102,7 +141,7 @@ pub const UdpSocket = struct {
     }
 
     /// Receive a datagram with timeout, returning a dual-stack Address.
-    pub fn receiveFromAddress(self: *UdpSocket, buf: []u8, timeout_ms: u64) !struct { data: []const u8, from: api.Address } {
+    pub fn receiveFromAddress(self: *UdpSocket, buf: []u8, timeout_ms: u64) !struct { data: []const u8, from: Address } {
         const timeout = std.Io.Timeout{
             .duration = .{
                 .clock = .awake,
@@ -110,9 +149,9 @@ pub const UdpSocket = struct {
             },
         };
         const received = try self.socket.receiveTimeout(self.io, buf, timeout);
-        const from: api.Address = switch (received.from) {
-            .ip4 => |v4| api.Address.ipv4(v4.bytes, v4.port),
-            .ip6 => |v6| api.Address.ipv6(v6.bytes, v6.port),
+        const from: Address = switch (received.from) {
+            .ip4 => |v4| Address.ipv4(v4.bytes, v4.port),
+            .ip6 => |v6| Address.ipv6(v6.bytes, v6.port),
         };
         return .{ .data = received.data, .from = from };
     }
