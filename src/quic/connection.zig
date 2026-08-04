@@ -9041,11 +9041,6 @@ pub const Connection = struct {
         }
     }
 
-    fn peerCompletedAddressValidationForPto(self: Connection) bool {
-        if (self.side == .server) return true;
-        return self.handshake_packet_space.largest_acknowledged != null or self.handshake_confirmed;
-    }
-
     fn hasQueuedInitialOrHandshakeAckElicitingData(self: Connection, space: PacketNumberSpace) bool {
         return switch (space) {
             .initial => self.initial_packet_space.crypto_send_queue.items.len != 0 or self.initial_packet_space.pending_ping_count != 0,
@@ -9055,7 +9050,14 @@ pub const Connection = struct {
     }
 
     fn antiDeadlockPtoSpace(self: Connection) ?PacketNumberSpace {
-        if (self.peerCompletedAddressValidationForPto()) return null;
+        // Anti-deadlock PTO stays armed for a client until the handshake is
+        // confirmed. Receiving an ACK validates the peer's address, but the
+        // handshake can still stall on later lost server packets; disarming on
+        // the first ACK leaves the client with no in-flight data and no timer
+        // to drive a retransmit, deadlocking connect() when server packets are
+        // lost. See RFC 9002 §6.2.2.1.
+        if (self.side == .server) return null;
+        if (self.handshake_confirmed) return null;
         if (self.totalBytesInFlight() != 0) return null;
 
         if (self.local_handshake_keys != null and !self.handshake_packet_space.discarded) {

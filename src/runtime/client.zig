@@ -328,22 +328,10 @@ pub const Client = struct {
             // after draining, pairing with notifyDrive's bump: a notifier that
             // already ran changed wake_id, so the wait returns immediately.
             const snapshot = self.wake_id.load(.acquire);
-            const timeout: std.Io.Timeout = blk: {
-                if (self.client.nextDeadline()) |d| {
-                    break :blk .{ .deadline = .{ .raw = .{ .nanoseconds = d.deadline() }, .clock = .awake } };
-                }
-                // The endpoint reports no pending deadline. During the handshake
-                // this is unsafe: a lost Initial/Handshake response must be
-                // retransmitted by PTO, and if the endpoint under-reports its
-                // deadline the drive would park forever and connect() would
-                // hang. Bound the wait so the loop re-evaluates the handshake
-                // (and the endpoint can produce a retransmit on the next pass).
-                if (self.handshake_state.load(.acquire) == handshake_pending) {
-                    log.warn("client drive: handshake pending but endpoint has no deadline; bounding park to 250ms", .{});
-                    break :blk .{ .deadline = .{ .raw = .{ .nanoseconds = self.nowNanos() + 250_000_000 }, .clock = .awake } };
-                }
-                break :blk .none;
-            };
+            const timeout: std.Io.Timeout = if (self.client.nextDeadline()) |d|
+                .{ .deadline = .{ .raw = .{ .nanoseconds = d.deadline() }, .clock = .awake } }
+            else
+                .none;
             // Re-check stopping after the snapshot: a deinit/stop that ran
             // before the snapshot already bumped wake_id (and its futexWake
             // may have had no waiter yet), and one that runs after the
