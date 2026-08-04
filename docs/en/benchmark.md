@@ -11,6 +11,7 @@ secnetperf-style micro-benchmarks measuring raw QUIC transport performance over 
 - **Platform**: Apple M-series macOS, Zig 0.16 (std.Io is cross-platform; on Linux it auto-selects io_uring/sendmmsg, not separately benchmarked)
 - **Congestion control**: CUBIC (RFC 8312/9438)
 - **Pacer**: Token bucket, ns precision (loopback srtt ~1μs, no truncation)
+- **Variance**: loopback throughput swings ±20% run-to-run (system load, CUBIC window dynamics, thermal state); figures below are point measurements — **trends and orders of magnitude matter more than absolutes**. Where multiple runs were taken, a range is given.
 
 ## Running
 
@@ -51,7 +52,7 @@ High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is A
 
 | Metric | Value | Notes |
 |---|---|---|
-| Single-stream throughput | **~313 MB/s** (stddev 19.2%) | Real TLS 1.3 handshake, quic-go style 5 iterations, mean |
+| Single-stream throughput | **~310-440 MB/s** (3 runs: 313/318/440; ±20% run-to-run) | Real TLS 1.3 handshake, quic-go style 5-iter mean per run |
 | Handshake time | ~0.6–1.0 ms/iter | TLS 1.3, transport parameters negotiated (RFC 9000 §7.4) |
 | Transfer | 64 MB/iter | 8900 B datagram, CUBIC, 100μs receiveTimeout (64 MB lets CUBIC pass slow start into steady state, reducing variance) |
 
@@ -138,12 +139,12 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | quiche | Rust | ~1220–1335 Mbit/s (~152–167 MB/s) | 10Gb physical testbed (pairing-dependent) | KIT 2025 |
 | picoquic | C | ~1346–1451 Mbit/s (~168–181 MB/s) | 10Gb physical testbed | KIT 2025 |
 | msquic | C | ~1 Gbps | macOS loopback | secnetperf |
-| **quicz** | **Zig** | **~313 MB/s (~2504 Mbit/s)** | **macOS loopback, real handshake, 8.9KB datagram, no GSO** | **This benchmark** |
+| **quicz** | **Zig** | **~310-440 MB/s (~2480-3520 Mbit/s)** | **macOS loopback, real handshake, 8.9KB datagram, no GSO** | **This benchmark** |
 
 **Key findings (all sourced)**:
 - KIT 2025 measures 10Gb physical testbed goodput in the range **1220–4172 Mbit/s (~152–521 MB/s)**; **MTU 1500→9000 lets some implementations saturate 10 Gbit/s**.
 - The KIT paper states explicitly: **throughput limitations stem primarily from single-core performance constraints** (consistent with quicz being constrained by the ACK clock / shared I/O path on a single core).
-- quicz ~313 MB/s ≈ **2504 Mbit/s**, within the KIT range; conditions differ (macOS loopback no-GSO vs 10Gb physical link), but the magnitude is comparable to mainstream implementations.
+- quicz ~310-440 MB/s ≈ **2480-3520 Mbit/s**, within the KIT range; conditions differ (macOS loopback no-GSO vs 10Gb physical link), but the magnitude is comparable to mainstream implementations.
 - quic-go #3670 user-measured ~1100 Mbit/s (~137 MB/s, Ubuntu two hosts, 10Gb physical link, not loopback).
 
 ## Echo Latency (small request round-trip)
@@ -164,7 +165,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 | msquic | ~3 Gbps | ~70-80% retention | ~40-50% retention | CUBIC/BBR2 | ETH 2024 thesis |
 | quic-go | ~1.1 Gbps | ~60-70% retention | ~30-40% retention | CUBIC | community bench |
 | quinn | ~300-500 MB/s | msquic leads 50%+ | — | CUBIC | ETH 2024 thesis |
-| **quicz** | **~313 MB/s** | **452 MB/s (1%)** | **303 MB/s (5%)** | **CUBIC** | **This benchmark (real handshake)** |
+| **quicz** | **~310-440 MB/s** | **452 MB/s (1%)** | **303 MB/s (5%)** | **CUBIC** | **This benchmark (real handshake)** |
 
 ### Multi-Stream Scaling
 
@@ -178,7 +179,7 @@ Benchmark conditions vary significantly across implementations. Direct number co
 
 ### quicz Performance Bottleneck Analysis (measured)
 
-The real-handshake bench (`quic_bench_hs.zig`) measures **~313 MB/s** single-stream on macOS loopback (stddev 19.2%). The following are verified by measurement:
+The real-handshake bench (`quic_bench_hs.zig`) measures **~310-440 MB/s** single-stream on macOS loopback across runs (intra-run stddev up to 19.2%). The following are verified by measurement:
 
 1. **Handshake is not a bottleneck**: a real TLS 1.3 handshake takes ~0.6–1.0 ms/iter, negligible vs the ~40 ms 16 MB transfer; transport parameters are negotiated correctly (RFC 9000 §7.4).
 2. **Per-packet processing CPU is not the bottleneck**: AES-128-GCM measures 3.5–3.7 GB/s (ARM PMULL hardware accelerated), ~4.9 μs encrypt+decrypt per packet; server per-packet processing capacity is ~900 MB/s, above the measured ~313 MB/s (headroom). Throughput is limited by the ACK clock and the shared I/O path (no scaling even with multi-threaded concurrent connections).
@@ -199,7 +200,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 - Direct comparison is difficult due to different measurement methods, platforms, and configurations.
 - quicz uses an in-memory connection model (no kernel bypass); loopback UDP overhead applies.
 - Go/Rust implementations on Linux benefit from zero-copy sendmsg and GSO.
-- quicz currently reaches ~313 MB/s single-stream on macOS loopback (real handshake, quic-go style multi-iteration, stddev 19.2%; 8.9KB datagram, 100μs timeout).
+- quicz currently reaches ~310-440 MB/s single-stream on macOS loopback (real handshake, quic-go style multi-iteration; ±20% run-to-run, 8.9KB datagram, 100μs timeout).
 - Throughput is limited by the ACK clock and the shared I/O path (server capacity ~900 MB/s with headroom; no scaling with concurrent connections); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP syscalls are not the bottleneck.
 
 ## Planned Benchmarks
