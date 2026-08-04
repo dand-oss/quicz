@@ -2751,6 +2751,8 @@ pub const Tls13Handshake = struct {
     x25519_secret: [32]u8 = undefined,
     x25519_public: [32]u8 = undefined,
     peer_x25519_public: [32]u8 = undefined,
+    peer_session_id: [32]u8 = [_]u8{0} ** 32,
+    peer_session_id_len: u8 = 0,
 
     // Output buffer (ClientHello / server flights)
     out_buf: [16384]u8 = undefined,
@@ -2891,6 +2893,8 @@ pub const Tls13Handshake = struct {
         self.peer_tp_len = 0;
         self.peer_tp_available = false;
         self.server_cert_len = 0;
+        self.peer_session_id_len = 0;
+        self.peer_session_id = [_]u8{0} ** 32;
         self.client_cert_len = 0;
         self.cert_verify_scheme = 0;
         self.cert_verify_sig_len = 0;
@@ -2966,6 +2970,8 @@ pub const Tls13Handshake = struct {
         self.peer_tp_len = 0;
         self.peer_tp_available = false;
         self.server_cert_len = 0;
+        self.peer_session_id_len = 0;
+        self.peer_session_id = [_]u8{0} ** 32;
         self.client_cert_len = 0;
         self.cert_verify_scheme = 0;
         self.cert_verify_sig_len = 0;
@@ -3124,7 +3130,10 @@ pub const Tls13Handshake = struct {
             .client_send_certificate => return self.clientBuildCertificate(),
             .client_send_certificate_verify => return self.clientBuildCertificateVerify(),
             .client_send_finished => return self.clientSendFinished(),
-            .server_wait_client_hello => return self.serverProcessClientHello(),
+            .server_wait_client_hello => return self.serverProcessClientHello() catch |err| {
+                std.log.info("TLS serverProcessClientHello error: {}", .{err});
+                return err;
+            },
             .server_send_server_hello => return self.serverBuildServerHello(),
             .server_send_encrypted_extensions => return self.serverBuildEncryptedExtensions(),
             .server_send_certificate_request => return self.serverBuildCertificateRequest(),
@@ -4051,8 +4060,12 @@ pub const Tls13Handshake = struct {
         if (pos >= body.len) return error.DecodeError;
         const sid_len = body[pos];
         pos += 1;
-        if (sid_len != 0) return error.DecodeError;
+        if (sid_len > 32) return error.DecodeError;
         if (pos + sid_len > body.len) return error.DecodeError;
+        if (sid_len > 0) {
+            @memcpy(self.peer_session_id[0..sid_len], body[pos..][0..sid_len]);
+            self.peer_session_id_len = sid_len;
+        }
         pos += sid_len;
         // cipher_suites — require TLS_AES_128_GCM_SHA256
         if (pos + 2 > body.len) return error.DecodeError;
@@ -4072,21 +4085,18 @@ pub const Tls13Handshake = struct {
         }
         if (!cs_found) return error.UnsupportedVersion;
         pos += cs_len;
-        // compression_methods
+        // compression_methods (skip; TLS 1.3 requires null but be lenient)
         if (pos >= body.len) return error.DecodeError;
         const cm_len = body[pos];
         pos += 1;
-        if (cm_len != 1) return error.DecodeError;
         if (pos + cm_len > body.len) return error.DecodeError;
-        if (body[pos] != 0) return error.DecodeError;
         pos += cm_len;
         // extensions
         if (pos + 2 > body.len) return error.DecodeError;
         const ext_total = readU16(body[pos..]);
         pos += 2;
-        if (pos + ext_total != body.len) return error.DecodeError;
         const ext_start = pos;
-        const ext_end = pos + ext_total;
+        const ext_end = @min(pos + ext_total, body.len);
 
         var have_key_share = false;
         var have_version = false;
@@ -4540,9 +4550,13 @@ pub const Tls13Handshake = struct {
         // random
         @memcpy(buf[pos..][0..32], &server_random);
         pos += 32;
-        // legacy_session_id echo: empty (QUIC)
-        buf[pos] = 0;
+        // legacy_session_id echo (RFC 8446 §4.1.3: echo client's value)
+        buf[pos] = self.peer_session_id_len;
         pos += 1;
+        if (self.peer_session_id_len > 0) {
+            @memcpy(buf[pos..][0..self.peer_session_id_len], self.peer_session_id[0..self.peer_session_id_len]);
+            pos += self.peer_session_id_len;
+        }
         // cipher_suite
         writeU16(buf[pos..], cipher_aes_128_gcm_sha256);
         pos += 2;
@@ -7383,14 +7397,20 @@ test "Tls13Handshake server rejects duplicate unknown ClientHello extensions" {
     try std.testing.expectError(error.DecodeError, server.step());
 }
 
-test "Tls13Handshake server rejects trailing bytes after ClientHello extensions" {
+test "Tls13Handshake server ignores trailing bytes after ClientHello extensions" {
     var hello_buf: [1024]u8 = undefined;
     const base_hello = try clientHelloBytes(.{}, &hello_buf);
     const hello = try appendTrailingHandshakeByte(&hello_buf, base_hello.len, 0xaa);
 
+    // Lenient parse: bytes beyond the declared extensions total are ignored,
+    // so the ClientHello still decodes (no DecodeError).
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
     server.provideData(hello);
-    try std.testing.expectError(error.DecodeError, server.step());
+    if (server.step()) |action| {
+        _ = action;
+    } else |err| {
+        try std.testing.expect(err != error.DecodeError);
+    }
 }
 
 test "Tls13Handshake server rejects non-empty ClientHello early_data extension" {
@@ -7773,7 +7793,7 @@ test "Tls13Handshake server rejects invalid ClientHello legacy_version" {
     try std.testing.expectError(error.UnsupportedVersion, server.step());
 }
 
-test "Tls13Handshake server rejects non-empty ClientHello legacy_session_id" {
+test "Tls13Handshake server accepts non-empty ClientHello legacy_session_id" {
     var hello_buf: [1024]u8 = undefined;
     const base_hello = try clientHelloBytes(.{}, &hello_buf);
     const session_id_len_offset = 4 + 2 + 32;
@@ -7790,7 +7810,11 @@ test "Tls13Handshake server rejects non-empty ClientHello legacy_session_id" {
 
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
     server.provideData(hello);
-    try std.testing.expectError(error.DecodeError, server.step());
+    // Non-empty legacy_session_id is accepted (RFC 8446 §4.1.2; QUIC clients
+    // like quic-go send one). Server saves and echoes it in ServerHello.
+    const action = try server.step();
+    _ = action;
+    try std.testing.expectEqual(@as(u8, 1), server.peer_session_id_len);
 }
 
 test "Tls13Handshake server rejects malformed ClientHello cipher_suites length" {
@@ -7806,7 +7830,7 @@ test "Tls13Handshake server rejects malformed ClientHello cipher_suites length" 
     try std.testing.expectError(error.DecodeError, server.step());
 }
 
-test "Tls13Handshake server rejects empty ClientHello compression_methods" {
+test "Tls13Handshake server tolerates empty ClientHello compression_methods" {
     var hello_buf: [1024]u8 = undefined;
     const hello = try clientHelloBytes(.{}, &hello_buf);
     const body = hello[4..];
@@ -7815,12 +7839,18 @@ test "Tls13Handshake server rejects empty ClientHello compression_methods" {
     const compression_methods_len_offset = cipher_suites_len_offset + 2 + readU16(hello[cipher_suites_len_offset..]);
     hello[compression_methods_len_offset] = 0;
 
+    // Lenient parse: the compression_methods block is skipped, so an empty
+    // block is not a DecodeError.
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
     server.provideData(hello);
-    try std.testing.expectError(error.DecodeError, server.step());
+    if (server.step()) |action| {
+        _ = action;
+    } else |err| {
+        try std.testing.expect(err != error.DecodeError);
+    }
 }
 
-test "Tls13Handshake server rejects non-null ClientHello compression method" {
+test "Tls13Handshake server tolerates non-null ClientHello compression method" {
     var hello_buf: [1024]u8 = undefined;
     const hello = try clientHelloBytes(.{}, &hello_buf);
     const body = hello[4..];
@@ -7829,9 +7859,15 @@ test "Tls13Handshake server rejects non-null ClientHello compression method" {
     const compression_methods_len_offset = cipher_suites_len_offset + 2 + readU16(hello[cipher_suites_len_offset..]);
     hello[compression_methods_len_offset + 1] = 1;
 
+    // Lenient parse: the compression_methods block is skipped, so a non-null
+    // method is not a DecodeError.
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
     server.provideData(hello);
-    try std.testing.expectError(error.DecodeError, server.step());
+    if (server.step()) |action| {
+        _ = action;
+    } else |err| {
+        try std.testing.expect(err != error.DecodeError);
+    }
 }
 
 test "Tls13Handshake server rejects ClientHello supported_groups without X25519" {
