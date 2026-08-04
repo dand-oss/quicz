@@ -280,6 +280,45 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe_interop_external_client);
+    // Runtime-based interop client (validates production API path)
+    const exe_interop_runtime_client = b.addExecutable(.{
+        .name = "quicz-interop-runtime-client",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/interop_runtime_client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_interop_runtime_client);
+    const run_interop_runtime_client = b.step("run-interop-runtime-client", "Run runtime-based interop client");
+    const run_interop_runtime_client_cmd = b.addRunArtifact(exe_interop_runtime_client);
+    run_interop_runtime_client.dependOn(&run_interop_runtime_client_cmd.step);
+    if (b.args) |args| {
+        run_interop_runtime_client_cmd.addArgs(args);
+    }
+
+    // Runtime-based interop server (validates production API path)
+    const exe_interop_runtime_server = b.addExecutable(.{
+        .name = "quicz-interop-runtime-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/interop_runtime_server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_interop_runtime_server);
+    const run_interop_runtime_server = b.step("run-interop-runtime-server", "Run runtime-based interop server");
+    const run_interop_runtime_server_cmd = b.addRunArtifact(exe_interop_runtime_server);
+    run_interop_runtime_server.dependOn(&run_interop_runtime_server_cmd.step);
+    if (b.args) |args| {
+        run_interop_runtime_server_cmd.addArgs(args);
+    }
 
     // zig build run-fuzz — run the fuzz harness
     const exe_fuzz = b.addExecutable(.{

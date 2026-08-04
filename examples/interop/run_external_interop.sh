@@ -1,15 +1,19 @@
 #!/bin/bash
-# External interop test: quicz vs quic-go / quiche / s2n-quic
+# External interop: quicz client vs quic-go / quiche / s2n-quic servers.
+# Cases per implementation:
+#   handshake  - TLS 1.3 handshake completes (quicz-interop-client)
+#   transfer   - handshake + bidirectional stream echo (quicz-interop-client)
+#   verified   - certificate-verified echo on two streams (quicz-interop-runtime-client)
 # Usage: ./examples/interop/run_external_interop.sh [quic-go|quiche|s2n-quic|all] [port]
-set -e
+set -u
 
-IMPL=${1:-quic-go}
+IMPL=${1:-all}
 PORT=${2:-4433}
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
 CERT_DIR="$DIR/testdata"
+BIN="$ROOT/zig-out/bin"
 
-# Generate test certificates if not present
 if [ ! -f "$CERT_DIR/cert.pem" ]; then
     echo "Generating test certificates..."
     mkdir -p "$CERT_DIR"
@@ -17,67 +21,77 @@ if [ ! -f "$CERT_DIR/cert.pem" ]; then
     openssl req -x509 -new -sha256 -nodes -days 30 \
         -key "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
         -subj "/O=quicz interop test/" 2>/dev/null
-    echo "Certificates generated."
 fi
 
-# Build quicz interop client
-echo "Building quicz interop client..."
-cd "$ROOT"
-zig build --global-cache-dir .zig-cache/global -Doptimize=ReleaseFast 2>/dev/null || true
+FAILURES=0
 
-run_test() {
-    local server_cmd="$1"
-    local impl_name="$2"
+run_case() {
+    local server_cmd="$1" impl="$2" case_name="$3" client_cmd="$4"
     echo ""
-    echo "=== quicz vs $impl_name (port $PORT) ==="
-
-    # Start server
-    eval "$server_cmd" &
-    SERVER_PID=$!
+    echo "--- quicz vs $impl [$case_name] (port $PORT) ---"
+    eval "$server_cmd" >/tmp/interop_server_$impl.log 2>&1 &
+    local server_pid=$!
     sleep 2
-
-    # Run quicz client
-    TESTCASE=handshake REQUESTS="https://127.0.0.1:$PORT/test.txt" \
-        CERT="$CERT_DIR/cert.pem" KEY="$CERT_DIR/key.pem" \
-        "$ROOT/zig-out/bin/quicz-interop-runner-client" 2>&1
-    RESULT=$?
-
-    kill $SERVER_PID 2>/dev/null
-    wait $SERVER_PID 2>/dev/null
-
-    if [ $RESULT -eq 0 ]; then
-        echo "=== PASS: quicz <-> $impl_name ==="
-    else
-        echo "=== FAIL: quicz <-> $impl_name ==="
-        return 1
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+        echo "FAIL: server did not start (see /tmp/interop_server_$impl.log)"
+        FAILURES=$((FAILURES + 1))
+        return
     fi
+    if eval "$client_cmd" >/tmp/interop_client_${impl}_${case_name}.log 2>&1; then
+        echo "PASS: quicz <-> $impl [$case_name]"
+    else
+        echo "FAIL: quicz <-> $impl [$case_name] (client log: /tmp/interop_client_${impl}_${case_name}.log)"
+        tail -5 "/tmp/interop_client_${impl}_${case_name}.log"
+        FAILURES=$((FAILURES + 1))
+    fi
+    kill -9 "$server_pid" 2>/dev/null
+    wait "$server_pid" 2>/dev/null
+    sleep 1
+}
+
+run_impl() {
+    local impl="$1" server_cmd="$2"
+    local base=$PORT
+    for case_name in handshake transfer verified; do
+        case "$case_name" in
+            handshake) PORT=$base ;;
+            transfer) PORT=$((base + 1)) ;;
+            verified) PORT=$((base + 2)) ;;
+        esac
+        run_case "$server_cmd" "$impl" "$case_name" \
+            "TESTCASE=$case_name $BIN/quicz-interop-runtime-client 127.0.0.1 $PORT $CERT_DIR/cert.pem localhost"
+    done
+    PORT=$base
 }
 
 case "$IMPL" in
     quic-go)
-        cd "$DIR/quic_go_server"
-        go build -o /tmp/quic-go-interop-server . 2>/dev/null
-        run_test "/tmp/quic-go-interop-server 127.0.0.1:$PORT" "quic-go"
+        run_impl quic-go "CERT=$CERT_DIR/cert.pem KEY=$CERT_DIR/key.pem /tmp/quic-go-interop-server 127.0.0.1:\$PORT"
         ;;
     quiche)
-        cd "$DIR/quiche_server"
-        CERT="$CERT_DIR/cert.pem" KEY="$CERT_DIR/key.pem" \
-            cargo build --release 2>/dev/null
-        run_test "CERT=$CERT_DIR/cert.pem KEY=$CERT_DIR/key.pem ./target/release/quiche-interop-server 127.0.0.1:$PORT" "quiche"
+        run_impl quiche "CERT=$CERT_DIR/cert.pem KEY=$CERT_DIR/key.pem $DIR/quiche_server/target/release/quiche-interop-server 127.0.0.1:\$PORT"
         ;;
     s2n-quic)
-        cd "$DIR/s2n_quic_server"
-        CERT="$CERT_DIR/cert.pem" KEY="$CERT_DIR/key.pem" \
-            cargo build --release 2>/dev/null
-        run_test "CERT=$CERT_DIR/cert.pem KEY=$CERT_DIR/key.pem ./target/release/s2n-quic-interop-server 127.0.0.1:$PORT" "s2n-quic"
+        run_impl s2n-quic "CERT=$CERT_DIR/cert.pem KEY=$CERT_DIR/key.pem $DIR/s2n_quic_server/target/release/s2n-quic-interop-server 127.0.0.1:\$PORT"
         ;;
     all)
-        $0 quic-go $PORT
-        $0 quiche $PORT
-        $0 s2n-quic $PORT
+        "$0" quic-go "$PORT"
+        pkill -9 -f "interop" 2>/dev/null; sleep 3
+        "$0" quiche "$PORT"
+        pkill -9 -f "interop" 2>/dev/null; sleep 3
+        "$0" s2n-quic "$PORT"
+        exit $?
         ;;
     *)
         echo "Usage: $0 [quic-go|quiche|s2n-quic|all] [port]"
-        exit 1
+        exit 2
         ;;
 esac
+
+echo ""
+if [ "$FAILURES" -eq 0 ]; then
+    echo "=== ALL PASS: $IMPL ==="
+else
+    echo "=== $FAILURES FAILURE(S): $IMPL ==="
+    exit 1
+fi

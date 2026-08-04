@@ -144,16 +144,21 @@ fn loadPemPrivateKey(io: std.Io, path: []const u8) ![32]u8 {
             const decoder = std.base64.standard.decoderWithIgnore("\r\n");
             const der_len = decoder.decode(&der_buf, encoded) catch continue;
 
-            // Extract the 32-byte private key from DER
-            // For PKCS#8: look for the octet string containing the key
-            // For EC: the key is at a known offset
-            if (der_len >= 32) {
-                // Try to find the 32-byte key in the DER data
-                // PKCS#8 EC key: the raw key is typically the last 32 bytes
-                // of the nested octet string
-                var key: [32]u8 = undefined;
-                @memcpy(&key, der_buf[der_len - 32 .. der_len]);
-                return key;
+            // Extract the P-256 private key from the DER body. Both SEC1
+            // ("EC PRIVATE KEY") and the inner SEC1 of PKCS#8 ("PRIVATE KEY")
+            // encode: SEQUENCE { INTEGER version=1, OCTET STRING key[32], ... },
+            // so locate the first `02 01 01 04 20` (version 1, 32-byte octet
+            // string) and take the 32 bytes that follow. The trailing "last
+            // 32 bytes" heuristic is wrong for SEC1 keys whose public key
+            // follows the private key.
+            const needle = [_]u8{ 0x02, 0x01, 0x01, 0x04, 0x20 };
+            if (std.mem.indexOf(u8, der_buf[0..der_len], &needle)) |idx| {
+                const start = idx + needle.len;
+                if (start + 32 <= der_len) {
+                    var key: [32]u8 = undefined;
+                    @memcpy(&key, der_buf[start .. start + 32]);
+                    return key;
+                }
             }
         }
     }
@@ -261,6 +266,11 @@ pub fn main(init: std.process.Init) !void {
             .ip4 = .{ .bytes = from_addr.octets, .port = from_addr.port },
         };
         switch (action) {
+            .version_negotiation => |vn_datagram| {
+                // Peer offered only unsupported versions: return the Version
+                // Negotiation packet (required for version-negotiation interop).
+                socket.send(io, &dest, vn_datagram) catch {};
+            },
             .accept_initial => |initial_accept| {
                 // New connection: create heap-allocated record and accept
                 const handle = next_handle;
