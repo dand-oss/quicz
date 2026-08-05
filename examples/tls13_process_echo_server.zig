@@ -33,6 +33,19 @@ const interop_echo_stream_ids = [_]u64{ 0, 4, 8, 12 };
 const interop_echo_payloads = [_][]const u8{ "hello", "world", "again", "more" };
 const echo_total_bytes: usize = 10;
 const flow_control_payload = [_]u8{'f'} ** 12_288;
+/// Active server certificate (DER) and private key: overridden by CERT/KEY
+/// environment variables (PEM, loaded via quicz.tls_pem), otherwise the
+/// embedded test pair.
+var active_cert: []const u8 = undefined;
+var active_key: [32]u8 = undefined;
+
+fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
+    const file = try std.Io.Dir.openFileAbsolute(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, buf, 0);
+    return buf[0..n];
+}
+
 const client_uni_stream_id: u64 = 2;
 const server_uni_stream_id: u64 = 3;
 const client_uni_payload = "uni";
@@ -265,6 +278,7 @@ fn serveConcurrent(
     const runs_continuously = completion_target == 0;
     receive_loop: while (runs_continuously or completed < completion_target) {
         const next_deadline = try server_endpoint.nextDeadline(allocator);
+        if (next_deadline) |dl| {}
         const received = socket.receiveTimeout(
             io,
             &receive_buffer,
@@ -282,7 +296,9 @@ fn serveConcurrent(
                     const managed = connections.get(output.connection_id) orelse continue;
                     try sendToCurrentRoute(io, socket, &server_endpoint, managed, output.datagram);
                 }
-                if (due.drain.first_error) |drain_error| return drain_error;
+                if (due.drain.first_error) |drain_error| {
+                    return drain_error;
+                }
                 if (due.deadline.kind == .recovery) {
                     std.debug.print("zig_process_server: connection={d} concurrent=true pto_serviced=true\n", .{due.deadline.connection_id});
                 }
@@ -368,8 +384,8 @@ fn serveConcurrent(
                     .max_idle_timeout_ms = idle_timeout_nanos,
                 }, .{
                     .alpn = &alpn,
-                    .cert_chain_der = &.{&certificate_der},
-                    .private_key_bytes = &server_private_key,
+                    .cert_chain_der = &.{active_cert},
+                    .private_key_bytes = &active_key,
                     .private_key_algorithm = .ecdsa_p256_sha256,
                 });
                 managed.* = .{
@@ -770,6 +786,23 @@ pub fn main(init: std.process.Init) !void {
     defer socket.close(io);
     std.debug.print("zig_process_server: listening={s}:{d} completion_target={d} max_active_connections={d} idle_timeout_ms={d} mode={s}\n", .{ bind_host, bind_port, completion_target, max_active_connections, idle_timeout_nanos, mode });
 
+    // CERT/KEY environment variables override the embedded test certificate
+    // (PEM loaded via quicz.tls_pem), matching the external server wrappers.
+    var pem_cert_buf: [64 * 1024]u8 = undefined;
+    var cert_der_buf: [8192]u8 = undefined;
+    var key_pem_buf: [64 * 1024]u8 = undefined;
+    var key_der_buf: [512]u8 = undefined;
+    active_cert = &certificate_der;
+    active_key = server_private_key;
+    if (init.environ_map.get("CERT")) |cert_path| {
+        if (init.environ_map.get("KEY")) |key_path| {
+            const cert_pem_data = try readFile(io, cert_path, &pem_cert_buf);
+            active_cert = try quicz.tls_pem.decodeBlock(cert_pem_data, "CERTIFICATE", &cert_der_buf);
+            const key_pem_data = try readFile(io, key_path, &key_pem_buf);
+            active_key = try quicz.tls_pem.parsePrivateKeyP256(key_pem_data, &key_der_buf);
+        }
+    }
+
     if (std.mem.eql(u8, mode, "concurrent") or std.mem.eql(u8, mode, "rolling")) {
         return serveConcurrent(allocator, io, &socket, bind_address, completion_target, max_active_connections, false, 8, false, false, false, false, idle_timeout_nanos);
     }
@@ -808,8 +841,8 @@ pub fn main(init: std.process.Init) !void {
 
         var backend = Tls13Backend.initServer(.{
             .alpn = &alpn,
-            .cert_chain_der = &.{&certificate_der},
-            .private_key_bytes = &server_private_key,
+            .cert_chain_der = &.{active_cert},
+            .private_key_bytes = &active_key,
             .private_key_algorithm = .ecdsa_p256_sha256,
         });
         var scratch: [8192]u8 = undefined;
