@@ -16,15 +16,19 @@ secnetperf 风格微基准，测量 loopback UDP 上的原始 QUIC 传输性能�
 ## 运行方式
 
 ```bash
-# 内存直连基准（单线程，无 UDP 开销）
-zig build-exe -OReleaseFast --dep quicz \
-  -Mroot=examples/quic_bench_simple.zig -Mquicz=src/lib.zig \
-  --name quicz-quic-bench-simple -femit-bin=zig-out/bin/quicz-quic-bench-simple \
-  --cache-dir .zig-cache --global-cache-dir .zig-cache/global
-./zig-out/bin/quicz-quic-bench-simple
+# 标准化套件：ReleaseFast 构建全部 bench，按固定顺序运行，
+# 记录平台/commit 元信息与完整输出到 bench_results/<UTC时间戳>_<commit>.log。
+# 入库的结果文件即对比基线；改动后重跑并 diff 结果。
+scripts/run_bench_suite.sh
+zig build bench-suite        # 相同顺序，不记录结果
 
-# UDP loopback 基准（线程化）
-zig build run-quic-bench
+# 单个 bench
+zig build run-quic-bench             # installed-keys 微基准
+zig build run-quic-bench-hs          # 真实握手吞吐 + 延迟
+zig build run-quic-bench-simple      # 单线程裸处理
+zig build run-quic-bench-datagram    # RFC 9221 DATAGRAM 吞吐
+zig build run-quic-bench-profile     # 分阶段剖析
+zig build run-congestion-bench       # NewReno vs CUBIC 仿真丢包
 ```
 
 ## 内存直连基准（单线程，ReleaseFast）

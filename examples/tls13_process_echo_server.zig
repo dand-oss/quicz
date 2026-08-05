@@ -278,7 +278,6 @@ fn serveConcurrent(
     const runs_continuously = completion_target == 0;
     receive_loop: while (runs_continuously or completed < completion_target) {
         const next_deadline = try server_endpoint.nextDeadline(allocator);
-        if (next_deadline) |dl| {}
         const received = socket.receiveTimeout(
             io,
             &receive_buffer,

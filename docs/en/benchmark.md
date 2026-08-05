@@ -16,15 +16,20 @@ secnetperf-style micro-benchmarks measuring raw QUIC transport performance over 
 ## Running
 
 ```bash
-# In-memory benchmark (single-thread, no UDP overhead)
-zig build-exe -OReleaseFast --dep quicz \
-  -Mroot=examples/quic_bench_simple.zig -Mquicz=src/lib.zig \
-  --name quicz-quic-bench-simple -femit-bin=zig-out/bin/quicz-quic-bench-simple \
-  --cache-dir .zig-cache --global-cache-dir .zig-cache/global
-./zig-out/bin/quicz-quic-bench-simple
+# Standardized suite: builds every benchmark (ReleaseFast), runs all six
+# in fixed order, records platform/commit metadata plus full output under
+# bench_results/<UTC timestamp>_<commit>.log. Committed result files are
+# the comparable baseline; re-run after changes and diff the results.
+scripts/run_bench_suite.sh
+zig build bench-suite        # same order, no result recording
 
-# UDP loopback benchmark (threaded)
-zig build run-quic-bench
+# Individual benchmarks
+zig build run-quic-bench             # installed-keys micro-benchmark
+zig build run-quic-bench-hs          # real-handshake throughput + latency
+zig build run-quic-bench-simple      # single-threaded raw processing
+zig build run-quic-bench-datagram    # RFC 9221 DATAGRAM throughput
+zig build run-quic-bench-profile     # per-phase profiling
+zig build run-congestion-bench       # NewReno vs CUBIC simulated loss
 ```
 
 ## In-memory Benchmark (single-thread, ReleaseFast)

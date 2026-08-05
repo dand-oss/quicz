@@ -1,0 +1,235 @@
+# quicz benchmark suite
+# commit: a5564b807c1272949e113476cd1e896ecec884ba
+# date_utc: 20260805T154937Z
+# os: Darwin arm64
+# cpu: Apple M1
+# zig: 0.16.0
+
+=== quicz-quic-bench (installed-keys micro-benchmark (throughput + latency)) ===
+=== quicz QUIC Transport Benchmark (std.Io threaded) ===
+Transfer: 16 MB | Datagram: 8900 B | CUBIC | 2 threads
+
+         Stream Upload 434.95 MB/s  (received 16/16 MB in 36.786 ms)
+                 Stats 1943 pkts, cwnd=4930 KB, wait_spins=32
+
+  --- Echo Latency (1 KB roundtrip) ---
+          Echo Latency P50=18.6us  P99=54.5us  P99.9=96.1us  (5000 iters)
+
+  --- Multi-Stream Throughput (4 streams) ---
+     Multi-Stream (4x) 557.95 MB/s  (16 MB, 4 streams, 28.676 ms)
+
+  --- DATAGRAM: skipped (requires full handshake) ---
+
+  --- Loss Recovery (simulated packet loss) ---
+    1% loss (loopback) 503.89 MB/s  (4 MB in 7.938 ms, cwnd=89 KB)
+    5% loss (loopback) 112.16 MB/s  (4 MB in 35.665 ms, cwnd=48 KB)
+   1% loss (100us RTT) 133.28 MB/s  (4 MB in 30.013 ms, cwnd=71 KB)
+   5% loss (100us RTT) 67.48 MB/s  (4 MB in 59.281 ms, cwnd=39 KB)
+
+  --- Comparison (loopback, single stream) ---
+    Implementation     Lang   Throughput Notes
+            msquic        C    ~7-8 Gbps Windows XDP, secnetperf
+            msquic        C      ~3 Gbps Linux, no XDP
+            msquic        C      ~1 Gbps macOS loopback
+           quic-go       Go      ~4 Gbps Linux GSO, multi-stream
+           quic-go       Go    ~1.1 Gbps Linux GSO, single
+            lsquic        C    ~2-4 Gbps Linux GSO
+             TQUIC     Rust    ~1-2 Gbps Linux GSO
+          picoquic        C    ~1-2 Gbps Linux
+          s2n-quic     Rust    ~800 MB/s Linux GSO/GRO
+            quiche     Rust 300-500 MB/s Linux, no GSO
+             quinn     Rust 300-500 MB/s Linux tokio
+             quicz      Zig    ~442 MB/s macOS loopback, 8.9KB dgram, 100us timeout
+
+=== Benchmark complete ===
+[suite] quicz-quic-bench: PASS
+
+=== quicz-quic-bench-hs (real-handshake throughput + latency) ===
+=== quicz Benchmark (REAL handshake, RFC 9000/9001) ===
+Datagram: 8900 B | CUBIC | throughput iters: 5
+
+  --- Single-Stream Throughput (real handshake) ---
+  [iter 0] 504.92 MB/s
+  [iter 1] 359.64 MB/s
+  [iter 2] 416.23 MB/s
+  [iter 3] 399.88 MB/s
+  [iter 4] 386.86 MB/s
+         Stream Upload 413.50 MB/s  (stddev 11.9%, 5 iters x 64 MB)
+
+  --- Echo Latency (1 KB roundtrip, real handshake) ---
+          Echo Latency P50=19.3us  P99=46.4us  P99.9=119.0us  (5000 iters)
+
+  --- Multi-Stream Throughput (4 streams, real handshake) ---
+  [iter 0] 385.48 MB/s
+  [iter 1] 362.41 MB/s
+  [iter 2] 406.94 MB/s
+  [iter 3] 406.78 MB/s
+  [iter 4] 399.74 MB/s
+     Multi-Stream (4x) 392.27 MB/s  (stddev 4.3%, 5 iters x 64 MB, 4 streams)
+
+  --- Loss Recovery (real handshake, simulated loss) ---
+      1% loss (loopback) 384.00 MB/s  (4 MB)
+      5% loss (loopback) 384.82 MB/s  (4 MB)
+     1% loss (100us RTT) 128.91 MB/s  (4 MB)
+     5% loss (100us RTT) 123.85 MB/s  (4 MB)
+
+  --- Handshake Latency (real TLS 1.3) ---
+     Handshake Latency P50=502.1us  P99=547.8us  (200 iters)
+
+  --- Handshake Throughput (new connections/s) ---
+        Handshake Rate 822.3 conn/s  (100 handshakes in 0.122 s)
+
+  --- Stream Churn (open rate, real handshake) ---
+      Stream Open Rate 131097337 streams/s  (100000 opened in 0.001 s)
+
+  --- Concurrent Connection Scaling (N threads) ---
+   Aggregate (4 conns) 447.33 MB/s  (4 concurrent conns x 64 MB in 0.572 s)
+
+  --- Concurrent via std.Io Group.concurrent (shared std.Io) ---
+     Async (shared Io) 635.13 MB/s  (4 conns via Group.concurrent in 0.403 s)
+
+  --- DATAGRAM Throughput (RFC 9221, real handshake) ---
+   DATAGRAM (RFC 9221) 205.27 MB/s  (1200 B payload, recv 4195200/4194304 bytes)
+
+=== Benchmark complete ===
+[suite] quicz-quic-bench-hs: PASS
+
+=== quicz-quic-bench-simple (single-threaded raw QUIC processing) ===
+=== quicz Simple Benchmark (single-thread, in-memory) ===
+
+  --- Stream Upload (16 MB, in-memory) ---
+         Stream Upload 0.30 GB/s  (16 MB in 55.836 ms, 13982 pkts)
+                 Stats cwnd=272 KB
+
+  --- Echo Latency (1 KB roundtrip, in-memory) ---
+  P50   = 7.9 us
+  P99   = 12.8 us
+  P99.9 = 168.1 us
+  --- Multi-stream Upload (4 streams x 4 MB, in-memory) ---
+    4-stream aggregate 0.39 GB/s  (16 MB in 42.856 ms)
+
+  Done.
+[suite] quicz-quic-bench-simple: PASS
+
+=== quicz-quic-bench-datagram (RFC 9221 DATAGRAM throughput) ===
+=== quicz DATAGRAM (RFC 9221) Throughput Benchmark ===
+Transfer: 16 MB | Payload: 1200 B | Unreliable | 2 threads
+
+  DATAGRAM Throughput: 0.16 MB/s  (15/16 MB in 98105.572 ms)
+  Stats: 13977 datagrams sent, 1200 B payload each
+
+=== DATAGRAM benchmark complete ===
+[suite] quicz-quic-bench-datagram: PASS
+
+=== quicz-quic-bench-profile (per-phase profiling) ===
+=== quicz Per-Phase Profiling ===
+Transfer: 16 MB | Datagram: 8900 B | CUBIC
+
+  Throughput: 389.93 MB/s  (41.033 ms)
+  Packets: 1940 sent, 117 ACKs, 8 loop iters
+
+  --- Client ---
+                feed (sendOnStream)      2.459 ms  (  6.0%)
+               build (poll+encrypt)     17.691 ms  ( 43.1%)
+                  send (UDP sendto)     13.250 ms  ( 32.3%)
+            ack recv (UDP recvfrom)      1.300 ms  (  3.2%)
+              ack process (decrypt)      1.575 ms  (  3.8%)
+            OTHER (scheduling/gaps)      4.758 ms  ( 11.6%)
+
+  --- Server ---
+                recv (UDP recvfrom)     14.630 ms  ( 35.7%)
+                  process (decrypt)     19.930 ms  ( 48.6%)
+                        stream read      0.024 ms  (  0.1%)
+                ack build (encrypt)      0.113 ms  (  0.3%)
+              ack send (UDP sendto)      0.984 ms  (  2.4%)
+            OTHER (scheduling/gaps)      5.352 ms  ( 13.0%)
+
+  Server processed 1913 packets
+  Per-pkt client: build=9119ns send=6830ns
+  Per-pkt server: recv=7648ns process=10418ns
+
+  Done.
+[suite] quicz-quic-bench-profile: PASS
+
+=== quicz-congestion-bench (NewReno vs CUBIC simulated loss) ===
+=== Congestion Control Comparison Benchmark ===
+Path: RTT=50ms, MDS=1200B, loss every 1000ms, duration=10000ms
+
+[NewReno]
+  Initial cwnd: 12000 B (10 segments)
+     t(ms)      cwnd(B)       segs event
+      +500       133200        111
+     +1000       126600        105 LOSS -> cwnd=126600B
+     +1005       126600        105
+     +1500       126600        105
+     +2000        63900         53 LOSS -> cwnd=63900B
+     +2005        63900         53
+     +2500        65100         54
+     +3000        33750         28 LOSS -> cwnd=33750B
+     +3005        33750         28
+     +3500        37350         31
+     +4000        20475         17 LOSS -> cwnd=20475B
+     +4005        20475         17
+     +4500        25275         21
+     +5000        15637         13 LOSS -> cwnd=15637B
+     +5005        15637         13
+     +5500        21637         18
+     +6000        13818         11 LOSS -> cwnd=13818B
+     +6005        13818         11
+     +6500        21018         17
+     +7000        13509         11 LOSS -> cwnd=13509B
+     +7005        13509         11
+     +7500        20709         17
+     +8000        13354         11 LOSS -> cwnd=13354B
+     +8005        13354         11
+     +8500        20554         17
+     +9000        13277         11 LOSS -> cwnd=13277B
+     +9005        13277         11
+     +9500        20477         17
+  Final cwnd: 26477 B (22 segments), peak: 253200 B, losses: 9
+
+[CUBIC]
+  Initial cwnd: 12000 B (10 segments)
+     t(ms)      cwnd(B)       segs event
+      +500       133200        111
+     +1000       177240        147 LOSS -> cwnd=177240B
+     +1005       177240        147
+     +1500       177525        147
+     +2000       124490        103 LOSS -> cwnd=124490B
+     +2005       124490        103
+     +2500       124775        103
+     +3000        87565         72 LOSS -> cwnd=87565B
+     +3005        87565         72
+     +3500        87850         73
+     +4000        61717         51 LOSS -> cwnd=61717B
+     +4005        61717         51
+     +4500        62003         51
+     +5000        43624         36 LOSS -> cwnd=43624B
+     +5005        43624         36
+     +5500        43910         36
+     +6000        30959         25 LOSS -> cwnd=30959B
+     +6005        30959         25
+     +6500        31245         26
+     +7000        22094         18 LOSS -> cwnd=22094B
+     +7005        22094         18
+     +7500        22379         18
+     +8000        15887         13 LOSS -> cwnd=15887B
+     +8005        15887         13
+     +8500        16173         13
+     +9000        11543          9 LOSS -> cwnd=11543B
+     +9005        11543          9
+     +9500        11829          9
+  Final cwnd: 12144 B (10 segments), peak: 253200 B, losses: 9
+
+
+=== Summary ===
+Algorithm     Peak cwnd   Final cwnd Losses Min after loss
+----------------------------------------------------------
+NewReno        253200 B      26477 B      9        13277 B
+CUBIC          253200 B      12144 B      9        11543 B
+
+Done.
+[suite] quicz-congestion-bench: PASS
+
+results: /Users/venjiang/.openclaw/workspace/quicz/bench_results/20260805T154937Z_a5564b8.log
+=== SUITE PASS (6/6) ===
