@@ -106,7 +106,7 @@
 - 吞吐主要成本为每包 QUIC 处理 CPU（AES-128-GCM 硬件加速 ~4.9 μs/包 + 成帧/解析）；UDP `sendto` ~3.5–4.7 μs/包，非主因。
 - 其他实现的高吞吐依赖 Linux GSO/GRO（3-10x 提升）或 XDP 内核旁路。
 - macOS 不支持 GSO/XDP，msquic 在 macOS loopback 下约 1 Gbps。
-- 外部互通：quic-go + s2n-quic + quiche 握手+证书验证+ALPN+echo 均已通过。
+- 外部互通：双向矩阵 7/7 全绿。正向 quicz client -> quic-go/quiche/s2n-quic server（证书验证+echo）；反向 quic-go/quinn/quiche/s2n-quic client -> quicz runtime server（双流 echo）。
 - 详细对比见 [benchmark.md](benchmark.md)。
 
 ## 生产环境调优

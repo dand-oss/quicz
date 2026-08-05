@@ -127,9 +127,11 @@ const webtransport = quicz.webtransport;
 const qlog = quicz.qlog;
 ```
 
-The interop server (`interop/server.zig`) and client (`interop/client.zig`)
-demonstrate the full low-level wiring: `Tls13ServerEndpoint` for multi-connection
-server routing, `Tls13ClientEndpoint` for client handshake and stream I/O.
+The runtime interop server (`interop_runtime_server.zig`) and client
+(`interop_runtime_client.zig`) demonstrate the production runtime API:
+`Server.serve(handler)` for multi-connection echo, `Client.connect()` for
+handshake and stream I/O. External echo clients (quiche/s2n-quic/quinn/quic-go)
+connect to the runtime server for reverse-direction interop.
 
 ## Performance
 
@@ -171,16 +173,28 @@ zig fmt --check build.zig src examples       # format check
 
 ## Interop Testing
 
-quicz passes certificate-verified interop against three major implementations:
+quicz passes a full bidirectional interop matrix (7/7) against four major
+implementations. All tests use certificate-verified TLS 1.3.
+
+| Direction | Peer | Result |
+|---|---|---|
+| Forward (quicz client → server) | quic-go | echo_bytes=19, cert verified |
+| Forward (quicz client → server) | quiche | echo_bytes=19, cert verified |
+| Forward (quicz client → server) | s2n-quic | echo_bytes=19, cert verified |
+| Reverse (client → quicz server) | quic-go | echo_streams=2, echo_bytes=10 |
+| Reverse (client → quicz server) | quinn | echo_streams=2, echo_bytes=10 |
+| Reverse (client → quicz server) | quiche | echo_streams=2, echo_bytes=10 |
+| Reverse (client → quicz server) | s2n-quic | echo_streams=2, echo_bytes=10 |
 
 ```bash
-# Run all three (requires Go, Rust toolchains)
-examples/interop/run_external_interop.sh all
+# Start the quicz runtime server
+zig build && zig-out/bin/quicz-interop-runtime-server 4433 cert.pem key.pem
 
-# Individual
-examples/interop/run_external_interop.sh quic-go
-examples/interop/run_external_interop.sh quiche
-examples/interop/run_external_interop.sh s2n-quic
+# Forward: quicz client → external server
+zig-out/bin/quicz-interop-runtime-client 127.0.0.1 4433 ca.pem localhost
+
+# Reverse: external client → quicz server
+examples/interop/quiche_echo_client/target/release/quicz-quiche-echo-client 127.0.0.1:4433 ca.pem localhost
 ```
 
 ## Project Structure
@@ -197,6 +211,7 @@ examples/interop/run_external_interop.sh s2n-quic
 | `src/quic/udp_event_loop.zig` | UDP socket I/O (IPv4 + IPv6 dual-stack) |
 | `src/tls/tls13.zig` | Pure Zig TLS 1.3 (9.4K lines, 222 tests) |
 | `src/tls/pq_kex.zig` | X25519Kyber768 post-quantum key exchange |
+| `src/tls/pem.zig` | PEM (RFC 7468) decoding + SEC1/PKCS#8 P-256 private key parsing |
 | `src/quic/protection.zig` | Packet protection (AES-GCM, ChaCha20-Poly1305) |
 | `src/quic/recovery.zig` | Loss detection and recovery (RFC 9002) |
 | `src/quic/cubic.zig` | Congestion controller (NewReno + CUBIC) |

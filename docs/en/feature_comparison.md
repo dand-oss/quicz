@@ -105,7 +105,7 @@ Notes:
 - The main throughput cost is per-packet QUIC processing CPU (AES-128-GCM hardware accelerated ~4.9 μs/packet + framing/parsing); UDP `sendto` ~3.5–4.7 μs/packet is not dominant.
 - quicz multi-stream (~470 MB/s) is comparable to quiche/quinn (300-500 MB/s on Linux).
 - Other implementations rely on Linux GSO/GRO (3-10x improvement) or XDP kernel bypass.
-- External interop: quic-go + s2n-quic + quiche handshake + cert verify + ALPN + echo PASS.
+- External interop: bidirectional matrix 7/7 all green. Forward quicz client -> quic-go/quiche/s2n-quic server (cert verified + echo); reverse quic-go/quinn/quiche/s2n-quic client -> quicz runtime server (dual-stream echo).
 - Detailed benchmarks: [benchmark.md](benchmark.md)
 
 ## Production Tuning
