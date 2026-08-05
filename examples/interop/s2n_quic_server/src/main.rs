@@ -30,15 +30,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(mut conn) = server.accept().await {
         tokio::spawn(async move {
             println!("new connection from {:?}", conn.remote_addr());
-            while let Ok(Some(mut stream)) = conn.accept_bidirectional_stream().await {
-                tokio::spawn(async move {
-                    if let Ok(Some(data)) = stream.receive().await {
-                        println!("request: {:?}", String::from_utf8_lossy(&data));
-                        let response = Bytes::copy_from_slice(&data);
-                        let _ = stream.send(response).await;
-                        let _ = stream.finish();
+            loop {
+                match conn.accept_bidirectional_stream().await {
+                    Ok(Some(mut stream)) => {
+                        tokio::spawn(async move {
+                            if let Ok(Some(data)) = stream.receive().await {
+                                println!("request: {:?}", String::from_utf8_lossy(&data));
+                                let response = Bytes::copy_from_slice(&data);
+                                let _ = stream.send(response).await;
+                                let _ = stream.finish();
+                            }
+                        });
                     }
-                });
+                    Ok(None) => {
+                        println!("connection closed cleanly");
+                        break;
+                    }
+                    Err(err) => {
+                        println!("connection closed with error: {err}");
+                        break;
+                    }
+                }
             }
         });
     }

@@ -680,6 +680,27 @@ pub const Server = struct {
         }
     }
 
+    /// Whether a handler-queued send or a recv-task datagram still waits for
+    /// the drive task. Checked after the park snapshot to close the window
+    /// between draining and the snapshot (see drive()).
+    fn hasPendingWork(self: *Server) bool {
+        while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
+        const datagrams_queued = self.datagram_read_offset < self.datagram_queue.items.len;
+        self.queue_mutex.unlock();
+        if (datagrams_queued) return true;
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        var send_pending = false;
+        var it = self.conns.valueIterator();
+        while (it.next()) |csp| {
+            if (csp.*.send_pending) {
+                send_pending = true;
+                break;
+            }
+        }
+        self.mutex.unlock();
+        return send_pending;
+    }
+
     /// The connection driving task body: drain sends, process queued
     /// datagrams, service due deadlines, then park on the wakeup futex until
     /// the next event or lifecycle deadline.
@@ -702,6 +723,13 @@ pub const Server = struct {
             // changes wake_id so the compare cannot match. Without this
             // check the drive could park forever past a stop request.
             if (@atomicLoad(bool, &self.stopping, .acquire)) break;
+            // Re-check for work parked between this iteration's draining and
+            // the snapshot: its notifyDrive bump is already captured by the
+            // snapshot, so the park below would hold the work until the park
+            // timeout (up to the idle deadline). Work arriving after this
+            // check bumps wake_id past the snapshot, so the park still
+            // returns immediately.
+            if (self.hasPendingWork()) continue;
             const timeout: std.Io.Timeout = timeout: {
                 const deadline = self.server_ep.nextDeadlineWithScratch() catch break :timeout .none;
                 const d = deadline orelse break :timeout .none;

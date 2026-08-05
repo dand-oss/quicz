@@ -3,13 +3,16 @@
 //! external QUIC servers (quic-go / quiche / s2n-quic).
 //!
 //! Usage: quicz-interop-runtime-client <server_ip> <server_port> <ca_pem> [server_name]
-//! Env:   TESTCASE=handshake|transfer|verified|multiconnect (default transfer)
+//! Env:   TESTCASE=handshake|transfer|verified|multiconnect|keyupdate (default transfer)
 //!
 //! handshake    = stop after TLS 1.3 handshake confirmed
 //! transfer     = handshake + bidirectional stream echo
 //! verified     = handshake + certificate-verified stream echo (same as transfer with CA)
 //! multiconnect = three sequential connections, each handshake + stream echo
 //!                (QUIC-Interop-Runner `multiconnect` shape)
+//! keyupdate    = handshake + echo on old keys, then a client-initiated 1-RTT
+//!                key update (RFC 9001 §6) + echo on the updated keys
+//!                (QUIC-Interop-Runner `keyupdate` shape)
 
 const std = @import("std");
 const quicz = @import("quicz");
@@ -17,6 +20,8 @@ const Client = quicz.runtime.client.Client;
 
 const alpn = [_][]const u8{"hq-interop"};
 const echo_payload = "hello quicz interop";
+/// Sent after the key update; the outgoing STREAM packet carries the new keys.
+const post_key_update_payload = "quicz interop after key update";
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -32,6 +37,7 @@ pub fn main(init: std.process.Init) !void {
 
     const testcase = init.environ_map.get("TESTCASE") orelse "transfer";
     const handshake_only = std.mem.eql(u8, testcase, "handshake");
+    const keyupdate = std.mem.eql(u8, testcase, "keyupdate");
     const connections: usize = if (std.mem.eql(u8, testcase, "multiconnect")) 3 else 1;
 
     const server_addr = try std.Io.net.IpAddress.parseIp4(server_ip, server_port);
@@ -44,7 +50,7 @@ pub fn main(init: std.process.Init) !void {
 
     var index: usize = 0;
     while (index < connections) : (index += 1) {
-        try runSession(allocator, io, server_addr.ip4.bytes, server_port, server_name, &ca_bundle, handshake_only);
+        try runSession(allocator, io, server_addr.ip4.bytes, server_port, server_name, &ca_bundle, handshake_only, keyupdate);
         if (connections > 1) {
             std.debug.print("connection {d}/{d} done\n", .{ index + 1, connections });
         }
@@ -56,7 +62,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 /// One connection: handshake, then (unless handshake-only) a FIN-terminated
-/// bidirectional stream echo; closes and deinits the client.
+/// bidirectional stream echo; closes and deinits the client. With `keyupdate`
+/// a second echo runs after a client-initiated 1-RTT key update.
 fn runSession(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -65,6 +72,7 @@ fn runSession(
     server_name: []const u8,
     ca_bundle: *std.crypto.Certificate.Bundle,
     handshake_only: bool,
+    keyupdate: bool,
 ) !void {
     var client = try Client.init(allocator, io, .{
         .server_host = server_host,
@@ -95,6 +103,27 @@ fn runSession(
     }
     if (total != echo_payload.len) return error.MissingStreamEcho;
 
-    std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
+    if (!keyupdate) {
+        std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
+        client.close();
+        return;
+    }
+
+    // keyupdate: initiate a 1-RTT key update, then run a second echo. The
+    // outgoing STREAM packet is protected with the updated keys (that packet
+    // carries the flipped key phase to the server), and the echoed bytes must
+    // come back protected with the server's updated send keys (RFC 9001 §6.2).
+    try client.initiateKeyUpdate();
+    const ku_stream_id = try client.send(post_key_update_payload, true);
+    var ku_total: usize = 0;
+    while (ku_total < post_key_update_payload.len) {
+        const n = try client.receive(ku_stream_id, &buf);
+        if (n == 0) break;
+        if (!std.mem.eql(u8, buf[0..n], post_key_update_payload[ku_total .. ku_total + n])) return error.EchoMismatch;
+        ku_total += n;
+    }
+    if (ku_total != post_key_update_payload.len) return error.MissingStreamEcho;
+
+    std.debug.print("keyupdate_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{ total + ku_total });
     client.close();
 }

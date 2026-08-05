@@ -42,6 +42,11 @@ const SendRequest = struct {
     result: ?u64 = null,
 };
 
+/// One caller key update request, parked until the drive task runs it.
+const KeyUpdateRequest = struct {
+    ok: bool = false,
+};
+
 pub const Client = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -71,11 +76,19 @@ pub const Client = struct {
     close_requested: bool = false,
     /// Drive-task only.
     handshake_started: bool = false,
+    /// Drive-task only: a local APPLICATION_CLOSE has been issued; a later
+    /// closing/closed state is expected and not surfaced as an error.
+    close_initiated: bool = false,
 
     /// Send request slot (one in flight; the caller blocks until done).
     send_mutex: std.atomic.Mutex = .unlocked,
     send_request: ?*SendRequest = null,
     send_done_sem: std.Io.Semaphore = .{ .permits = 0 },
+
+    /// Key update request slot (one in flight; the caller blocks until done).
+    key_update_mutex: std.atomic.Mutex = .unlocked,
+    key_update_request: ?*KeyUpdateRequest = null,
+    key_update_done_sem: std.Io.Semaphore = .{ .permits = 0 },
 
     /// Per-stream receive state, protected by state_mutex.
     state_mutex: std.atomic.Mutex = .unlocked,
@@ -180,6 +193,26 @@ pub const Client = struct {
         self.notifyDrive(self.io);
     }
 
+    /// Whether any caller request or queued datagram still waits for the
+    /// drive task. Checked after the park snapshot to close the window
+    /// between request processing and the snapshot (see drive()).
+    fn hasPendingWork(self: *Client) bool {
+        if (@atomicLoad(bool, &self.close_requested, .acquire)) return true;
+        if (@atomicLoad(bool, &self.connect_requested, .acquire) and !self.handshake_started) return true;
+        while (!self.send_mutex.tryLock()) std.atomic.spinLoopHint();
+        const send_pending = self.send_request != null;
+        self.send_mutex.unlock();
+        if (send_pending) return true;
+        while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
+        const key_update_pending = self.key_update_request != null;
+        self.key_update_mutex.unlock();
+        if (key_update_pending) return true;
+        while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
+        const datagrams_queued = self.datagram_read_offset < self.datagram_queue.items.len;
+        self.queue_mutex.unlock();
+        return datagrams_queued;
+    }
+
     fn nowNanos(self: *const Client) i64 {
         return @intCast(std.Io.Timestamp.now(self.io, .awake).nanoseconds);
     }
@@ -231,6 +264,26 @@ pub const Client = struct {
         self.notifyDrive(self.io);
         self.send_done_sem.waitUncancelable(self.io);
         return req.result orelse error.StreamSendFailed;
+    }
+
+    /// Initiate a 1-RTT key update (RFC 9001 §6). The drive task advances the
+    /// connection's send key phase; the next outgoing packet carries the new
+    /// keys and the flipped key phase bit. Requires a confirmed handshake and
+    /// no key update already awaiting confirmation.
+    pub fn initiateKeyUpdate(self: *Client) !void {
+        try self.startTasks();
+        var req: KeyUpdateRequest = .{};
+        while (true) {
+            while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
+            if (self.key_update_request == null) break;
+            self.key_update_mutex.unlock();
+            std.atomic.spinLoopHint();
+        }
+        self.key_update_request = &req;
+        self.key_update_mutex.unlock();
+        self.notifyDrive(self.io);
+        self.key_update_done_sem.waitUncancelable(self.io);
+        if (!req.ok) return error.KeyUpdateRejected;
     }
 
     /// Receive data on `stream_id` into `buf`. Blocks until data arrives;
@@ -327,10 +380,12 @@ pub const Client = struct {
         const allocator = self.allocator;
         const io = self.io;
         defer self.failPendingSendRequest();
+        defer self.failPendingKeyUpdateRequest();
         while (!@atomicLoad(bool, &self.stopping, .acquire)) {
             self.beginHandshakeOnce();
             self.processCloseRequest();
             self.processSendRequest();
+            self.processKeyUpdateRequest();
             self.drainOutgoing();
             self.drainQueuedDatagrams();
             self.checkHandshakeProgress();
@@ -351,6 +406,13 @@ pub const Client = struct {
             // snapshot changes wake_id so the compare cannot match. Without
             // this check the drive could park forever past a stop request.
             if (@atomicLoad(bool, &self.stopping, .acquire)) break;
+            // Re-check for work parked between this iteration's request
+            // processing and the snapshot: its notifyDrive bump is already
+            // captured by the snapshot, so the park below would hold the
+            // request until the park timeout (up to the idle deadline, tens
+            // of seconds). A request arriving after this check bumps wake_id
+            // past the snapshot, so the park still returns immediately.
+            if (self.hasPendingWork()) continue;
             io.futexWaitTimeout(u32, &self.wake_id.raw, snapshot, timeout) catch return;
         }
         _ = allocator;
@@ -375,6 +437,7 @@ pub const Client = struct {
     fn processCloseRequest(self: *Client) void {
         if (!@atomicLoad(bool, &self.close_requested, .acquire)) return;
         @atomicStore(bool, &self.close_requested, false, .release);
+        self.close_initiated = true;
         const closed = self.client.closeApplicationWithRoutePath(0, "session complete", self.nowNanos()) catch return;
         if (closed) |o| {
             self.socket.send(self.io, &self.server_address, o.datagram) catch {};
@@ -393,8 +456,14 @@ pub const Client = struct {
         self.send_mutex.unlock();
 
         process: {
-            const stream_id = self.client.openStream() catch break :process;
-            const outbound = self.client.sendStreamWithRoutePath(stream_id, req.data, req.fin, self.nowNanos()) catch break :process;
+            const stream_id = self.client.openStream() catch |err| {
+                log.err("client: open stream: {}", .{err});
+                break :process;
+            };
+            const outbound = self.client.sendStreamWithRoutePath(stream_id, req.data, req.fin, self.nowNanos()) catch |err| {
+                log.err("client: send on stream {d}: {}", .{ stream_id, err });
+                break :process;
+            };
             if (outbound) |o| {
                 self.socket.send(self.io, &self.server_address, o.datagram) catch {};
                 self.allocator.free(o.datagram);
@@ -417,6 +486,34 @@ pub const Client = struct {
             r.result = null;
             self.send_done_sem.post(self.io);
         }
+    }
+
+    /// Run the parked key update request on the endpoint (drive task only).
+    fn processKeyUpdateRequest(self: *Client) void {
+        while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.key_update_request orelse {
+            self.key_update_mutex.unlock();
+            return;
+        };
+        self.key_update_request = null;
+        self.key_update_mutex.unlock();
+
+        self.client.transport.connection.initiateOneRttKeyUpdate() catch |err| {
+            log.err("client: initiate key update: {}", .{err});
+            self.key_update_done_sem.post(self.io);
+            return;
+        };
+        req.ok = true;
+        self.key_update_done_sem.post(self.io);
+    }
+
+    /// Complete a parked key update request as failed (drive shutdown path).
+    fn failPendingKeyUpdateRequest(self: *Client) void {
+        while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.key_update_request;
+        self.key_update_request = null;
+        self.key_update_mutex.unlock();
+        if (req != null) self.key_update_done_sem.post(self.io);
     }
 
     /// Drain pending outgoing datagrams to the server. Bounded: the server
@@ -460,7 +557,7 @@ pub const Client = struct {
     /// it returns, deliver stream data, and drain the responses (ACKs).
     fn processDatagram(self: *Client, data: []const u8) void {
         const result = self.client.receiveWithRoutePath(self.nowNanos(), &self.scratch, data) catch |err| {
-            log.debug("client: receive: {}", .{err});
+            log.err("client: receive ({d} bytes): {}", .{ data.len, err });
             return;
         };
         if (result.outbound_initial) |o| {
@@ -563,6 +660,16 @@ pub const Client = struct {
         if (@atomicLoad(bool, &self.conn_closing_or_closed, .acquire)) return;
         if (!self.client.transport.connection.isClosingOrClosed()) return;
         @atomicStore(bool, &self.conn_closing_or_closed, true, .release);
+        const conn = self.client.transport.connection;
+        if (self.close_initiated and conn.peer_close == null) {
+            log.debug("client: connection closing after close request: {}", .{conn.connectionState()});
+        } else {
+            log.err("client: connection entered closing/closed state: {} peer_close={} pending_close={}", .{
+                conn.connectionState(),
+                conn.peer_close != null,
+                conn.pending_close != null,
+            });
+        }
         self.data_sem.post(self.io);
     }
 };
