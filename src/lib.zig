@@ -19,6 +19,7 @@ const crypto_types = @import("quic/crypto_types.zig");
 const tls_backend_module = @import("quic/tls_backend.zig");
 pub const tls13 = @import("tls/tls13.zig");
 pub const pq_kex = @import("tls/pq_kex.zig");
+pub const tls_pem = @import("tls/pem.zig");
 pub const qlog = @import("qlog/qlog.zig");
 pub const cubic = @import("quic/cubic.zig");
 pub const pmtu = @import("quic/pmtu.zig");
