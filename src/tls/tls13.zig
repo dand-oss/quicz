@@ -440,6 +440,15 @@ fn secureRandomBytesLinux(buf: []u8) void {
     }
 }
 
+fn generateP256KeyPair(secret: *[32]u8) [65]u8 {
+    secureRandomBytes(secret);
+    const pub_point = P256.basePoint.mulPublic(secret.*, .big) catch blk: {
+        secureRandomBytes(secret);
+        break :blk P256.basePoint.mulPublic(secret.*, .big) catch unreachable;
+    };
+    return pub_point.toUncompressedSec1();
+}
+
 fn generateX25519KeyPair(secret: *[32]u8) [32]u8 {
     while (true) {
         secureRandomBytes(secret);
@@ -2102,6 +2111,8 @@ const ExtType = enum(u16) {
 
 const cipher_aes_128_gcm_sha256: u16 = 0x1301;
 const group_x25519: u16 = 0x001D;
+const group_secp256r1: u16 = 0x0017;
+const P256 = crypto.ecc.P256;
 const legacy_version_tls_1_2: u16 = 0x0303;
 const version_tls_1_3: u16 = 0x0304;
 const hello_retry_request_random = [_]u8{
@@ -2751,6 +2762,10 @@ pub const Tls13Handshake = struct {
     x25519_secret: [32]u8 = undefined,
     x25519_public: [32]u8 = undefined,
     peer_x25519_public: [32]u8 = undefined,
+    p256_secret: [32]u8 = undefined,
+    p256_public: [65]u8 = undefined,
+    peer_p256_public: [65]u8 = undefined,
+    negotiated_group: u16 = group_x25519,
     peer_session_id: [32]u8 = [_]u8{0} ** 32,
     peer_session_id_len: u8 = 0,
 
@@ -2931,8 +2946,9 @@ pub const Tls13Handshake = struct {
         @memcpy(self.tp_encoded[0..tp_len], transport_params[0..tp_len]);
         self.tp_encoded_len = tp_len;
 
-        // Generate X25519 key pair.
+        // Generate key pairs for both supported groups.
         self.x25519_public = generateX25519KeyPair(&self.x25519_secret);
+        self.p256_public = generateP256KeyPair(&self.p256_secret);
 
         return self;
     }
@@ -3008,8 +3024,9 @@ pub const Tls13Handshake = struct {
         @memcpy(self.tp_encoded[0..tp_len], transport_params[0..tp_len]);
         self.tp_encoded_len = tp_len;
 
-        // Generate X25519 key pair.
+        // Generate key pairs for both supported groups.
         self.x25519_public = generateX25519KeyPair(&self.x25519_secret);
+        self.p256_public = generateP256KeyPair(&self.p256_secret);
 
         return self;
     }
@@ -3247,17 +3264,27 @@ pub const Tls13Handshake = struct {
         writeU16(buf[pos..], version_tls_1_3);
         pos += 2;
 
-        // key_share (X25519)
-        const share_len = 2 + 2 + 32; // group + len + key
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.key_share), 2 + share_len);
-        writeU16(buf[pos..], @intCast(share_len));
+        // key_share (X25519 + P-256)
+        const x25519_share_len = 2 + 2 + 32;
+        const p256_share_len = 2 + 2 + 65;
+        const total_shares_len = x25519_share_len + p256_share_len;
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.key_share), 2 + total_shares_len);
+        writeU16(buf[pos..], @intCast(total_shares_len));
         pos += 2;
+        // X25519 share
         writeU16(buf[pos..], group_x25519);
         pos += 2;
         writeU16(buf[pos..], 32);
         pos += 2;
         @memcpy(buf[pos..][0..32], &self.x25519_public);
         pos += 32;
+        // P-256 share (uncompressed SEC1: 0x04 + X + Y = 65 bytes)
+        writeU16(buf[pos..], group_secp256r1);
+        pos += 2;
+        writeU16(buf[pos..], 65);
+        pos += 2;
+        @memcpy(buf[pos..][0..65], &self.p256_public);
+        pos += 65;
 
         // signature_algorithms
         pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.signature_algorithms), 2 + 8);
@@ -3272,11 +3299,13 @@ pub const Tls13Handshake = struct {
         writeU16(buf[pos..], sig_rsa_pss_rsae_sha256);
         pos += 2;
 
-        // supported_groups
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.supported_groups), 2 + 2);
-        writeU16(buf[pos..], 2);
+        // supported_groups (X25519 + secp256r1)
+        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.supported_groups), 2 + 4);
+        writeU16(buf[pos..], 4);
         pos += 2;
         writeU16(buf[pos..], group_x25519);
+        pos += 2;
+        writeU16(buf[pos..], group_secp256r1);
         pos += 2;
 
         // SNI (server_name)
@@ -3482,6 +3511,8 @@ pub const Tls13Handshake = struct {
         var have_key_share = false;
         var selected_psk = false;
         var parsed_peer_x25519_public: [32]u8 = undefined;
+        var parsed_peer_p256_public: [65]u8 = undefined;
+        var parsed_negotiated_group: u16 = 0;
         var seen_known_extensions: u16 = 0;
         while (pos < ext_end) {
             if (pos + 4 > ext_end) return error.DecodeError;
@@ -3509,11 +3540,19 @@ pub const Tls13Handshake = struct {
                 @intFromEnum(ExtType.key_share) => {
                     // ServerHello key_share: 2-byte group + 2-byte key length + key
                     if (el < 4) return error.DecodeError;
-                    if (readU16(ext[0..2]) != group_x25519) return error.NoKeyShare;
+                    const selected_group = readU16(ext[0..2]);
                     const klen = readU16(ext[2..4]);
-                    if (klen != 32 or el != 4 + 32) return error.DecodeError;
-                    @memcpy(&parsed_peer_x25519_public, ext[4..36]);
-                    have_key_share = true;
+                    if (selected_group == group_x25519) {
+                        if (klen != 32 or el != 4 + 32) return error.DecodeError;
+                        @memcpy(&parsed_peer_x25519_public, ext[4..36]);
+                        parsed_negotiated_group = group_x25519;
+                        have_key_share = true;
+                    } else if (selected_group == group_secp256r1) {
+                        if (klen != 65 or el != 4 + 65) return error.DecodeError;
+                        @memcpy(&parsed_peer_p256_public, ext[4..69]);
+                        parsed_negotiated_group = group_secp256r1;
+                        have_key_share = true;
+                    } else return error.NoKeyShare;
                 },
                 @intFromEnum(ExtType.pre_shared_key) => {
                     // ServerHello pre_shared_key selects one offered identity
@@ -3532,16 +3571,24 @@ pub const Tls13Handshake = struct {
         if (!have_version) return error.MissingExtension;
         if (!have_key_share) return error.NoKeyShare;
 
-        // ECDHE shared secret: client secret × server public. If the current
-        // ClientHello offered a PSK but the server did not select it, TLS 1.3
-        // falls back to the no-PSK early secret before deriving Handshake keys.
-        const shared = X25519.scalarmult(self.x25519_secret, parsed_peer_x25519_public) catch return error.DecodeError;
+        // ECDHE shared secret based on negotiated group.
+        var shared: [32]u8 = undefined;
+        if (parsed_negotiated_group == group_secp256r1) {
+            const peer_point = P256.fromSec1(&parsed_peer_p256_public) catch return error.DecodeError;
+            const shared_point = peer_point.mulPublic(self.p256_secret, .big) catch return error.DecodeError;
+            const shared_uncompressed = shared_point.toUncompressedSec1();
+            @memcpy(&shared, shared_uncompressed[1..33]);
+        } else {
+            shared = X25519.scalarmult(self.x25519_secret, parsed_peer_x25519_public) catch return error.DecodeError;
+        }
         var next_key_schedule = self.key_schedule;
         if (!selected_psk and self.has_psk) {
             next_key_schedule = KeySchedule.init();
         }
 
         self.peer_x25519_public = parsed_peer_x25519_public;
+        self.peer_p256_public = parsed_peer_p256_public;
+        self.negotiated_group = parsed_negotiated_group;
         self.server_random = parsed_server_random;
         self.server_random_available = true;
         self.psk_selected = selected_psk;
@@ -4108,9 +4155,12 @@ pub const Tls13Handshake = struct {
         var offered_early_data = false;
         var offered_psk = false;
         var client_supports_x25519 = false;
+        var client_supports_secp256r1 = false;
         var client_supports_server_sig = false;
         var client_supports_psk_dhe_ke = false;
         var parsed_peer_x25519_public: [32]u8 = undefined;
+        var parsed_peer_p256_public: [65]u8 = undefined;
+        var have_p256_key_share = false;
         var selected_alpn: [256]u8 = undefined;
         var selected_alpn_len: usize = 0;
         var offered_sni: [256]u8 = undefined;
@@ -4192,6 +4242,10 @@ pub const Tls13Handshake = struct {
                             if (klen != 32 or sp + 32 > el) return error.DecodeError;
                             @memcpy(&parsed_peer_x25519_public, ext[sp..][0..32]);
                             have_key_share = true;
+                        } else if (group == group_secp256r1) {
+                            if (klen != 65 or sp + 65 > el) return error.DecodeError;
+                            @memcpy(&parsed_peer_p256_public, ext[sp..][0..65]);
+                            have_p256_key_share = true;
                         }
                         sp += klen;
                     }
@@ -4240,6 +4294,8 @@ pub const Tls13Handshake = struct {
                         }
                         if (group == group_x25519) {
                             client_supports_x25519 = true;
+                        } else if (group == group_secp256r1) {
+                            client_supports_secp256r1 = true;
                         }
                     }
                 },
@@ -4403,7 +4459,7 @@ pub const Tls13Handshake = struct {
         if (!have_key_share) return error.NoKeyShare;
         if (!have_supported_groups) return error.MissingExtension;
         if (!have_quic_transport_parameters) return error.MissingExtension;
-        if (have_supported_groups and !client_supports_x25519) return error.NoKeyShare;
+        if (have_supported_groups and !client_supports_x25519 and !client_supports_secp256r1) return error.NoKeyShare;
         if (self.config.alpn.len > 0 and selected_alpn_len == 0) return error.NoApplicationProtocol;
         if (self.config.server_name != null and !have_server_name) return error.UnrecognizedName;
         if (offered_early_data and !offered_psk) return error.DecodeError;
@@ -4499,6 +4555,11 @@ pub const Tls13Handshake = struct {
         }
         if (have_key_share) {
             self.peer_x25519_public = parsed_peer_x25519_public;
+            self.negotiated_group = group_x25519;
+        } else if (have_p256_key_share) {
+            self.peer_p256_public = parsed_peer_p256_public;
+            self.negotiated_group = group_secp256r1;
+            have_key_share = true;
         }
         self.peer_offered_early_data = offered_early_data;
         self.peer_offered_psk = offered_psk;
@@ -4533,10 +4594,16 @@ pub const Tls13Handshake = struct {
     /// Build a ServerHello, complete the X25519 key exchange, and derive
     /// handshake traffic secrets (RFC 8446 §4.1.3 + §7.1).
     fn serverBuildServerHello(self: *Tls13Handshake) HandshakeError!Action {
-        // The peer key is authenticated input to the ServerHello flight. Reject
-        // invalid X25519 material before writing any outbound bytes or
-        // committing the fresh server random to observable handshake state.
-        const shared = X25519.scalarmult(self.x25519_secret, self.peer_x25519_public) catch return error.DecodeError;
+        // Compute ECDHE shared secret based on negotiated group.
+        var shared: [32]u8 = undefined;
+        if (self.negotiated_group == group_secp256r1) {
+            const peer_point = P256.fromSec1(&self.peer_p256_public) catch return error.DecodeError;
+            const shared_point = peer_point.mulPublic(self.p256_secret, .big) catch return error.DecodeError;
+            const shared_uncompressed = shared_point.toUncompressedSec1();
+            @memcpy(&shared, shared_uncompressed[1..33]);
+        } else {
+            shared = X25519.scalarmult(self.x25519_secret, self.peer_x25519_public) catch return error.DecodeError;
+        }
 
         var server_random: [32]u8 = undefined;
         secureRandomBytes(&server_random);
@@ -4570,14 +4637,24 @@ pub const Tls13Handshake = struct {
         pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.supported_versions), 2);
         writeU16(buf[pos..], version_tls_1_3);
         pos += 2;
-        // key_share (server: group + 2-byte key length + key)
-        pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.key_share), 2 + 2 + 32);
-        writeU16(buf[pos..], group_x25519);
-        pos += 2;
-        writeU16(buf[pos..], 32);
-        pos += 2;
-        @memcpy(buf[pos..][0..32], &self.x25519_public);
-        pos += 32;
+        // key_share (server: selected group + 2-byte key length + key)
+        if (self.negotiated_group == group_secp256r1) {
+            pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.key_share), 2 + 2 + 65);
+            writeU16(buf[pos..], group_secp256r1);
+            pos += 2;
+            writeU16(buf[pos..], 65);
+            pos += 2;
+            @memcpy(buf[pos..][0..65], &self.p256_public);
+            pos += 65;
+        } else {
+            pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.key_share), 2 + 2 + 32);
+            writeU16(buf[pos..], group_x25519);
+            pos += 2;
+            writeU16(buf[pos..], 32);
+            pos += 2;
+            @memcpy(buf[pos..][0..32], &self.x25519_public);
+            pos += 32;
+        }
         if (self.psk_selected) {
             pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.pre_shared_key), 2);
             writeU16(buf[pos..], self.psk_selected_identity);
@@ -5838,7 +5915,7 @@ test "Tls13Handshake client rejects unsupported ServerHello key_share group with
     var sh_buf: [128]u8 = undefined;
     const sh_len = buildServerHello(&sh_buf, server_public, cipher_aes_128_gcm_sha256, true, true);
     const key_share = try serverHelloExtension(sh_buf[0..sh_len], @intFromEnum(ExtType.key_share));
-    writeU16(sh_buf[key_share.body_offset..][0..2], 0x0017);
+    writeU16(sh_buf[key_share.body_offset..][0..2], 0x0018); // secp384r1 (unsupported)
     hs.provideData(sh_buf[0..sh_len]);
 
     try std.testing.expectError(error.NoKeyShare, hs.step());
