@@ -155,8 +155,11 @@ pub fn main() !void {
     try require(server.peerOneRttKeyPhase().?);
     const server_peer_update_count = server.peerOneRttKeyUpdateCount() orelse return error.UnexpectedState;
     try require(server_peer_update_count == 1);
+    // RFC 9001 §6.5: the previous-generation peer receive key is retained
+    // for one PTO after the key update so delayed packets with the old key
+    // phase can still be opened.
     const server_peer_retains_initial = server.peerOneRttRetainsKeyGeneration(0) orelse return error.UnexpectedState;
-    try require(!server_peer_retains_initial);
+    try require(server_peer_retains_initial);
     try require(server.pendingAckLargest(.application) == 0);
 
     const ack = (try server_lifecycle.pollProtectedShortDatagramWithInstalledKeys(
@@ -188,8 +191,10 @@ pub fn main() !void {
     try require(client.localOneRttKeyPhase().? == false);
     const second_client_update_count = client.localOneRttKeyUpdateCount() orelse return error.UnexpectedState;
     try require(second_client_update_count == 2);
+    // RFC 9001 §6.5: the previous-generation local send key is retained
+    // for one PTO after the key update.
     const client_retains_first_update = client.localOneRttRetainsKeyGeneration(1) orelse return error.UnexpectedState;
-    try require(!client_retains_first_update);
+    try require(client_retains_first_update);
     const client_retains_current = client.localOneRttRetainsKeyGeneration(second_client_update_count) orelse return error.UnexpectedState;
     try require(client_retains_current);
     const second_update_ack_threshold = client.pendingOneRttKeyUpdateAckThreshold() orelse return error.UnexpectedState;
@@ -220,8 +225,9 @@ pub fn main() !void {
     try require(server.peerOneRttKeyPhase().? == false);
     const server_peer_second_update_count = server.peerOneRttKeyUpdateCount() orelse return error.UnexpectedState;
     try require(server_peer_second_update_count == 2);
+    // RFC 9001 §6.5: previous-generation peer key retained for one PTO.
     const server_peer_retains_first_update = server.peerOneRttRetainsKeyGeneration(1) orelse return error.UnexpectedState;
-    try require(!server_peer_retains_first_update);
+    try require(server_peer_retains_first_update);
 
     const second_update_timer = client_lifecycle.earliestRecoveryDeadline() orelse return error.UnexpectedState;
     try require(second_update_timer.connection_id == 41);
