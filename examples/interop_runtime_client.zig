@@ -3,11 +3,13 @@
 //! external QUIC servers (quic-go / quiche / s2n-quic).
 //!
 //! Usage: quicz-interop-runtime-client <server_ip> <server_port> <ca_pem> [server_name]
-//! Env:   TESTCASE=handshake|transfer|verified (default transfer)
+//! Env:   TESTCASE=handshake|transfer|verified|multiconnect (default transfer)
 //!
-//! handshake = stop after TLS 1.3 handshake confirmed
-//! transfer  = handshake + bidirectional stream echo
-//! verified  = handshake + certificate-verified stream echo (same as transfer with CA)
+//! handshake    = stop after TLS 1.3 handshake confirmed
+//! transfer     = handshake + bidirectional stream echo
+//! verified     = handshake + certificate-verified stream echo (same as transfer with CA)
+//! multiconnect = three sequential connections, each handshake + stream echo
+//!                (QUIC-Interop-Runner `multiconnect` shape)
 
 const std = @import("std");
 const quicz = @import("quicz");
@@ -30,21 +32,46 @@ pub fn main(init: std.process.Init) !void {
 
     const testcase = init.environ_map.get("TESTCASE") orelse "transfer";
     const handshake_only = std.mem.eql(u8, testcase, "handshake");
+    const connections: usize = if (std.mem.eql(u8, testcase, "multiconnect")) 3 else 1;
 
     const server_addr = try std.Io.net.IpAddress.parseIp4(server_ip, server_port);
 
-    // Load CA bundle (caller-owned; must outlive Client).
+    // Load CA bundle (caller-owned; must outlive every Client).
     const now = std.Io.Clock.real.now(io);
     var ca_bundle: std.crypto.Certificate.Bundle = .empty;
     defer ca_bundle.deinit(allocator);
     try ca_bundle.addCertsFromFilePathAbsolute(allocator, io, now, ca_pem);
 
+    var index: usize = 0;
+    while (index < connections) : (index += 1) {
+        try runSession(allocator, io, server_addr.ip4.bytes, server_port, server_name, &ca_bundle, handshake_only);
+        if (connections > 1) {
+            std.debug.print("connection {d}/{d} done\n", .{ index + 1, connections });
+        }
+    }
+
+    if (connections > 1) {
+        std.debug.print("multiconnect_done=true certificate_verified=true alpn=hq-interop connections={d}\n", .{connections});
+    }
+}
+
+/// One connection: handshake, then (unless handshake-only) a FIN-terminated
+/// bidirectional stream echo; closes and deinits the client.
+fn runSession(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    server_host: [4]u8,
+    server_port: u16,
+    server_name: []const u8,
+    ca_bundle: *std.crypto.Certificate.Bundle,
+    handshake_only: bool,
+) !void {
     var client = try Client.init(allocator, io, .{
-        .server_host = server_addr.ip4.bytes,
+        .server_host = server_host,
         .server_port = server_port,
         .server_name = server_name,
         .alpn = &alpn,
-        .ca_bundle = &ca_bundle,
+        .ca_bundle = ca_bundle,
     });
     defer client.deinit();
 
@@ -68,6 +95,6 @@ pub fn main(init: std.process.Init) !void {
     }
     if (total != echo_payload.len) return error.MissingStreamEcho;
 
-    std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d} testcase={s}\n", .{ total, testcase });
+    std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
     client.close();
 }
