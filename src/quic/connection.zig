@@ -4152,6 +4152,18 @@ pub const Connection = struct {
                 // protected with the previous key phase can still be opened
                 // (RFC 9001 §6.5 / RFC 9002 §6.2).
                 self.schedulePreviousKeyDiscard(key_phase_state, now_nanos);
+                // RFC 9001 §6.2: the responding endpoint MUST update its send
+                // keys to the corresponding key phase before acknowledging the
+                // packet that carried the new phase. Skip when the local send
+                // phase already matches the packet phase: this packet is then
+                // the peer's response to a locally initiated update (or a
+                // simultaneous initiation), not a fresh peer-initiated update.
+                if (self.local_one_rtt_key_phase_state) |*local_state| {
+                    if (local_state.currentKeyPhase() != decoded.packet.header.key_phase) {
+                        local_state.initiateKeyUpdate();
+                        self.schedulePreviousKeyDiscard(local_state, now_nanos);
+                    }
+                }
             }
         }
     }
