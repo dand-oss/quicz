@@ -482,6 +482,17 @@ pub const Server = struct {
                 }
             },
             .routed => {
+                // Detect packet type from first byte to select the correct key space.
+                const space: quicz.EndpointInstalledKeyDatagramSpace = blk: {
+                    if (data.len == 0) break :blk .application;
+                    if (data[0] & 0x80 != 0) {
+                        break :blk switch ((data[0] >> 4) & 0x03) {
+                            2 => .handshake,
+                            else => .application,
+                        };
+                    }
+                    break :blk .application;
+                };
                 const step = self.server_ep.receiveDatagramStepWithRoutePath(
                     allocator,
                     path,
@@ -489,13 +500,13 @@ pub const Server = struct {
                     data,
                     &[_]u8{},
                     &[_]quic_packet.Version{.v1},
-                    .{ .space = .application, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
+                    .{ .space = space, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
                     &scratch,
                     &[_]u8{},
                     &initial_out,
                     &handshake_out,
                     &installed_out,
-                    .application,
+                    space,
                     &pending_out,
                 ) catch |e| {
                     log.err("drive: receiveDatagramStep ({d} bytes, first 0x{x:0>2}): {}", .{ data.len, data[0], e });

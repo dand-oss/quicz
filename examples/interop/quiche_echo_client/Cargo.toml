@@ -1,0 +1,7 @@
+[package]
+name = "quicz-quiche-echo-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quiche = "0.24"

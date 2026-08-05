@@ -3604,22 +3604,42 @@ pub const Connection = struct {
         if (!try self.prepareInboundDatagramProcessing(now_nanos)) return 0;
         try self.validateReceivedUdpDatagramSize(datagram);
 
+        // Validation pass: walk the coalesced packets. RFC 9000 §12.2 lets a
+        // receiver discard an unparseable datagram remainder, which stacks use
+        // for datagram-level padding after a client Initial (e.g. quiche fills
+        // the tail with null bytes), so stop at the first unsupported packet
+        // after at least one valid packet instead of rejecting the datagram.
         var offset: usize = 0;
         var packet_count: usize = 0;
+        var coalesced_end: usize = 0;
         while (offset < datagram.len) {
-            const info = protection.peekProtectedLongPacketInfo(datagram[offset..]) catch return error.InvalidPacket;
-            if (@intFromEnum(info.version) != @intFromEnum(self.config.chosen_version) or info.len == 0) return error.InvalidPacket;
-            const route = protectedLongPacketRouteFor(keys, info.packet_type) orelse return error.InvalidPacket;
+            const info = protection.peekProtectedLongPacketInfo(datagram[offset..]) catch {
+                if (offset > 0) break;
+                return error.InvalidPacket;
+            };
+            if (@intFromEnum(info.version) != @intFromEnum(self.config.chosen_version) or info.len == 0) {
+                if (offset > 0) break;
+                return error.InvalidPacket;
+            }
+            const route = protectedLongPacketRouteFor(keys, info.packet_type) orelse {
+                if (offset > 0) break;
+                return error.InvalidPacket;
+            };
             const packet_space = self.packetNumberSpace(route.space);
-            if (packet_space.discarded.*) return error.InvalidPacket;
+            if (packet_space.discarded.*) {
+                if (offset > 0) break;
+                return error.InvalidPacket;
+            }
             offset = std.math.add(usize, offset, info.len) catch return error.InvalidPacket;
             packet_count += 1;
+            coalesced_end = offset;
         }
 
         offset = 0;
         var processed_count: usize = 0;
-        while (offset < datagram.len) {
+        while (offset < coalesced_end) {
             const info = protection.peekProtectedLongPacketInfo(datagram[offset..]) catch return error.InvalidPacket;
+            if (@intFromEnum(info.version) != @intFromEnum(self.config.chosen_version) or info.len == 0) return error.InvalidPacket;
             const route = protectedLongPacketRouteFor(keys, info.packet_type) orelse return error.InvalidPacket;
             try self.processProtectedLongDatagramWithRoute(
                 route,

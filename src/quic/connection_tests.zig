@@ -49162,7 +49162,7 @@ test "processProtectedLongDatagram routes coalesced Initial and Handshake packet
     try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.handshake));
 }
 
-test "processProtectedLongDatagram validates coalesced keys before mutation" {
+test "processProtectedLongDatagram processes supported packet and discards unsupported coalesced remainder" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
     const server_scid = [_]u8{ 0x55, 0x66, 0x77, 0x88 };
@@ -49201,16 +49201,20 @@ test "processProtectedLongDatagram validates coalesced keys before mutation" {
     @memcpy(coalesced[0..initial.len], initial);
     @memcpy(coalesced[initial.len..], handshake);
 
-    try std.testing.expectError(error.InvalidPacket, client.processProtectedLongDatagram(12, .{
+    // RFC 9000 §12.2: each coalesced packet is processed independently; the
+    // Handshake packet has no keys here, so the Initial is processed and the
+    // unsupported remainder is discarded.
+    try std.testing.expectEqual(@as(usize, 1), try client.processProtectedLongDatagram(12, .{
         .initial = secrets.server,
     }, coalesced));
 
     var crypto_buf: [32]u8 = undefined;
-    try std.testing.expectEqual(@as(?usize, null), try client.recvCryptoInSpace(.initial, &crypto_buf));
+    const initial_len = (try client.recvCryptoInSpace(.initial, &crypto_buf)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("server initial", crypto_buf[0..initial_len]);
     try std.testing.expectEqual(@as(?usize, null), try client.recvCryptoInSpace(.handshake, &crypto_buf));
-    try std.testing.expectEqual(@as(u64, 0), client.nextPeerPacketNumber(.initial));
+    try std.testing.expectEqual(@as(u64, 1), client.nextPeerPacketNumber(.initial));
     try std.testing.expectEqual(@as(u64, 0), client.nextPeerPacketNumber(.handshake));
-    try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.initial));
+    try std.testing.expectEqual(@as(?u64, 0), client.pendingAckLargest(.initial));
     try std.testing.expectEqual(@as(?u64, null), client.pendingAckLargest(.handshake));
 }
 
@@ -50010,7 +50014,7 @@ test "server discards zero RTT keys after successful one RTT receive" {
     try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
 }
 
-test "pollProtectedLongDatagram coalesces Initial and 0-RTT packets with key validation" {
+test "pollProtectedLongDatagram coalesces Initial and 0-RTT packets with per-packet key validation" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const client_scid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
     const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
@@ -50044,30 +50048,50 @@ test "pollProtectedLongDatagram coalesces Initial and 0-RTT packets with key val
     try std.testing.expectEqual(@as(u64, 1), client.nextPacketNumber(.initial));
     try std.testing.expectEqual(@as(u64, 1), client.nextPacketNumber(.application));
 
-    try std.testing.expectError(error.InvalidPacket, server.processProtectedLongDatagram(11, .{
+    // Without 0-RTT keys the Initial is processed and the 0-RTT remainder is
+    // discarded (RFC 9000 §12.2 per-packet handling).
+    try std.testing.expectEqual(@as(usize, 1), try server.processProtectedLongDatagram(11, .{
         .initial = secrets.client,
     }, coalesced));
     var initial_buf: [32]u8 = undefined;
-    try std.testing.expectEqual(@as(?usize, null), try server.recvCryptoInSpace(.initial, &initial_buf));
-    try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.initial));
+    const first_initial_len = (try server.recvCryptoInSpace(.initial, &initial_buf)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("client initial", initial_buf[0..first_initial_len]);
+    var stream_buf: [16]u8 = undefined;
+    try std.testing.expectEqual(@as(?usize, null), try server.recvOnStream(stream_id, &stream_buf));
+    try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.initial));
     try std.testing.expectEqual(@as(u64, 0), server.nextPeerPacketNumber(.application));
-    try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.initial));
+    try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.initial));
     try std.testing.expectEqual(@as(?u64, null), server.pendingAckLargest(.application));
 
-    try std.testing.expectEqual(@as(usize, 2), try server.processProtectedLongDatagram(12, .{
+    // Fresh coalesced datagram with both keys available processes both packets.
+    try client.sendCryptoInSpace(.initial, "client initial two");
+    const stream_id_two = try client.openStream();
+    try client.sendOnStream(stream_id_two, "early two", true);
+    const coalesced_two = (try client.pollProtectedLongDatagram(
+        12,
+        &original_dcid,
+        &client_scid,
+        &[_]u8{},
+        .{
+            .initial = secrets.client,
+            .zero_rtt = secrets.client,
+        },
+    )) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(coalesced_two);
+
+    try std.testing.expectEqual(@as(usize, 2), try server.processProtectedLongDatagram(13, .{
         .initial = secrets.client,
         .zero_rtt = secrets.client,
-    }, coalesced));
+    }, coalesced_two));
 
     const initial_len = (try server.recvCryptoInSpace(.initial, &initial_buf)) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("client initial", initial_buf[0..initial_len]);
-    var stream_buf: [16]u8 = undefined;
-    const stream_len = (try server.recvOnStream(stream_id, &stream_buf)) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("early", stream_buf[0..stream_len]);
-    try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.initial));
-    try std.testing.expectEqual(@as(u64, 1), server.nextPeerPacketNumber(.application));
-    try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.initial));
-    try std.testing.expectEqual(@as(?u64, 0), server.pendingAckLargest(.application));
+    try std.testing.expectEqualStrings("client initial two", initial_buf[0..initial_len]);
+    const stream_len = (try server.recvOnStream(stream_id_two, &stream_buf)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("early two", stream_buf[0..stream_len]);
+    try std.testing.expectEqual(@as(u64, 2), server.nextPeerPacketNumber(.initial));
+    try std.testing.expectEqual(@as(u64, 2), server.nextPeerPacketNumber(.application));
+    try std.testing.expectEqual(@as(?u64, 1), server.pendingAckLargest(.initial));
+    try std.testing.expectEqual(@as(?u64, 1), server.pendingAckLargest(.application));
 }
 
 test "processProtectedZeroRttDatagram rejects protected ACK frame" {

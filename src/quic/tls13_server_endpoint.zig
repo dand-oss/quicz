@@ -3269,14 +3269,32 @@ pub fn Tls13ServerEndpoint(
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
             if (info.len < datagram.len) {
-                if (info.packet_type != .initial) return error.InvalidPacket;
-                if (!connection_of(record).hasHandshakeProtectionKeys()) return error.InvalidPacket;
-                return .{ .coalesced_initial_handshake = try self.processInitialWithHandshakeKeysWithRoutePath(
+                if (info.packet_type == .initial) {
+                    if (!connection_of(record).hasHandshakeProtectionKeys()) return error.InvalidPacket;
+                    return .{ .coalesced_initial_handshake = try self.processInitialWithHandshakeKeysWithRoutePath(
+                        connection_id,
+                        path,
+                        now_nanos,
+                        datagram,
+                        scratch,
+                        handshake_out,
+                    ) };
+                }
+                // Coalesced long-header + trailing bytes where the first
+                // packet is Handshake (not Initial). RFC 9000 §12.2 allows
+                // coalescing any combination of packet types. Process the
+                // first long-header packet with a slice so the trailing
+                // bytes (1-RTT short header or padding) do not cause the
+                // entire datagram to be rejected. The caller's coalesced
+                // long+short dispatch processes any trailing 1-RTT data.
+                return .{ .packet = try self.processLongPacketWithRoutePath(
                     connection_id,
                     path,
                     now_nanos,
-                    datagram,
+                    datagram[0..info.len],
                     scratch,
+                    initial_token,
+                    out,
                     handshake_out,
                 ) };
             }
