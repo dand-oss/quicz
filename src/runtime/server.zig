@@ -482,11 +482,43 @@ pub const Server = struct {
                 }
             },
             .routed => {
+                // RFC 9000 §12.2: a datagram may coalesce long-header and
+                // short-header packets.  When the first long-header packet
+                // doesn't fill the datagram and the trailing byte is a short
+                // header, re-queue the trailing 1-RTT bytes for the next
+                // drive iteration and process only the long-header portion.
+                var effective_data = data;
+                if (data.len > 1 and (data[0] & 0x80) != 0) {
+                    const pi = quicz.protection.peekProtectedLongPacketInfo(data) catch null;
+                    if (pi) |pi_val| {
+                        // Only split Handshake-first coalesced datagrams with
+                        // a trailing short-header (1-RTT) packet.  Initial-first
+                        // coalesced datagrams are handled by the endpoint's
+                        // processInitialWithHandshakeKeys path; padding (0x00)
+                        // is excluded by the fixed-bit check.
+                        if (pi_val.packet_type == .handshake and
+                            pi_val.len > 0 and pi_val.len < data.len and
+                            (data[pi_val.len] & 0x80) == 0 and
+                            (data[pi_val.len] & 0x40) != 0)
+                        {
+                            const trailing = data[pi_val.len..];
+                            const tc = allocator.dupe(u8, trailing) catch null;
+                            if (tc) |copy| {
+                                while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
+                                self.datagram_queue.append(allocator, .{ .from = dest, .data = copy }) catch {
+                                    allocator.free(copy);
+                                };
+                                self.queue_mutex.unlock();
+                                effective_data = data[0..pi_val.len];
+                            }
+                        }
+                    }
+                }
                 // Detect packet type from first byte to select the correct key space.
                 const space: quicz.EndpointInstalledKeyDatagramSpace = blk: {
-                    if (data.len == 0) break :blk .application;
-                    if (data[0] & 0x80 != 0) {
-                        break :blk switch ((data[0] >> 4) & 0x03) {
+                    if (effective_data.len == 0) break :blk .application;
+                    if (effective_data[0] & 0x80 != 0) {
+                        break :blk switch ((effective_data[0] >> 4) & 0x03) {
                             2 => .handshake,
                             else => .application,
                         };
@@ -497,7 +529,7 @@ pub const Server = struct {
                     allocator,
                     path,
                     now,
-                    data,
+                    effective_data,
                     &[_]u8{},
                     &[_]quic_packet.Version{.v1},
                     .{ .space = space, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
@@ -509,7 +541,7 @@ pub const Server = struct {
                     space,
                     &pending_out,
                 ) catch |e| {
-                    log.err("drive: receiveDatagramStep ({d} bytes, first 0x{x:0>2}): {}", .{ data.len, data[0], e });
+                    log.err("drive: receiveDatagramStep ({d} bytes, first 0x{x:0>2}): {}", .{ effective_data.len, effective_data[0], e });
                     return;
                 };
                 switch (step.process) {

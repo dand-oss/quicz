@@ -128,6 +128,10 @@ fn main() {
                         }
                     }
                     Err(quiche::Error::Done) => break,
+                    // After the stream is fully read (data + FIN consumed),
+                    // quiche collects it and returns InvalidStreamState on
+                    // the next call.  Treat it as "no more data".
+                    Err(quiche::Error::InvalidStreamState(_)) => break,
                     Err(err) => {
                         eprintln!("stream {stream_id} recv error: {err}");
                         std::process::exit(1);
