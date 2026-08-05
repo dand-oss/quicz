@@ -2711,6 +2711,15 @@ pub fn Tls13ServerEndpoint(
             try self.records.adopt(connection_id, record);
             record_adopted = true;
             if (accepted.drain.first_error != null or !accepted.backend.handshake_keys_installed) {
+                // Re-arm after the Initial flight was drained: the arm inside
+                // processAcceptedProtectedInitialDatagram ran before any
+                // packet was in flight, so without this refresh the endpoint
+                // never schedules the Initial-space PTO that retransmits a
+                // lost server flight.
+                self.lifecycle.armRecoveryTimerFromConnection(connection_id, connection_of(record)) catch |err| {
+                    _ = self.records.retire(&self.lifecycle, connection_id) catch return error.Internal;
+                    return err;
+                };
                 return .{ .initial = accepted };
             }
             const handshake = self.driveBackend(
@@ -2720,6 +2729,11 @@ pub fn Tls13ServerEndpoint(
                 now_nanos,
                 handshake_out,
             ) catch |err| {
+                _ = self.records.retire(&self.lifecycle, connection_id) catch return error.Internal;
+                return err;
+            };
+            // Re-arm again: the Handshake flight is now in flight too.
+            self.lifecycle.armRecoveryTimerFromConnection(connection_id, connection_of(record)) catch |err| {
                 _ = self.records.retire(&self.lifecycle, connection_id) catch return error.Internal;
                 return err;
             };
@@ -3979,4 +3993,3 @@ pub fn Tls13ServerEndpoint(
         }
     };
 }
-

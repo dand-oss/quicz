@@ -3793,7 +3793,11 @@ pub const Connection = struct {
         if (@intFromEnum(decoded.packet.header.version) != @intFromEnum(self.config.chosen_version) or decoded.packet.header.packet_type != route.packet_type) {
             return error.InvalidPacket;
         }
-        if (!packet_space.received_packet_ranges.canRecord(decoded.packet.header.packet_number)) return error.InvalidPacket;
+        // RFC 9000 §13.1: packets with an already-received or below-window
+        // packet number are discarded, not treated as a connection error
+        // (e.g. a client Initial retransmitted while the server flight was
+        // lost).
+        if (!packet_space.received_packet_ranges.canRecord(decoded.packet.header.packet_number)) return;
 
         const pending_original_destination_dcid = if (route.space == .initial and self.side == .server and self.original_destination_connection_id_len == null)
             decoded.packet.header.dcid
@@ -4196,7 +4200,9 @@ pub const Connection = struct {
     ) Error!void {
         if (decoded.len != datagram_len) return error.InvalidPacket;
         const packet_space = self.packetNumberSpace(.application);
-        if (!packet_space.received_packet_ranges.canRecord(decoded.packet.header.packet_number)) return error.InvalidPacket;
+        // Duplicate or below-window 1-RTT packets are discarded per
+        // RFC 9000 §13.1, not connection errors.
+        if (!packet_space.received_packet_ranges.canRecord(decoded.packet.header.packet_number)) return;
         try self.processDatagramInSpaceWithPacketTypeMaybeClose(
             .application,
             .one_rtt,
@@ -4487,14 +4493,19 @@ pub const Connection = struct {
                 self.initial_packet_space.pending_ping_count != 0 or
                 self.initial_packet_space.pending_ack_largest != null)
             {
-                initial_packet = try self.buildNextProtectedLongPacketInSpace(
-                    .initial,
-                    dcid,
-                    scid,
-                    initial_token,
-                    keys.initial orelse return error.InvalidPacket,
-                    0,
-                );
+                // Spaces without caller-provided keys are skipped, not
+                // errors: the pending data stays queued for a later drain
+                // that holds those keys (RFC 9002 per-space probing).
+                if (keys.initial) |initial_keys| {
+                    initial_packet = try self.buildNextProtectedLongPacketInSpace(
+                        .initial,
+                        dcid,
+                        scid,
+                        initial_token,
+                        initial_keys,
+                        0,
+                    );
+                }
             }
             if (keys.zero_rtt) |zero_rtt_keys| {
                 if (self.hasPendingProtectedZeroRttFrames()) {
@@ -4509,14 +4520,20 @@ pub const Connection = struct {
                 self.handshake_packet_space.pending_ping_count != 0 or
                 self.handshake_packet_space.pending_ack_largest != null)
             {
-                handshake_packet = try self.buildNextProtectedLongPacketInSpace(
-                    .handshake,
-                    dcid,
-                    scid,
-                    &[_]u8{},
-                    keys.handshake orelse return error.InvalidPacket,
-                    0,
-                );
+                // Skip when the caller did not provide Handshake keys: a
+                // peer-space PTO probe queued by an Initial-space PTO must
+                // not fail an Initial-only drain; the re-queued data stays
+                // pending until a drain with Handshake keys runs.
+                if (keys.handshake) |handshake_keys| {
+                    handshake_packet = try self.buildNextProtectedLongPacketInSpace(
+                        .handshake,
+                        dcid,
+                        scid,
+                        &[_]u8{},
+                        handshake_keys,
+                        0,
+                    );
+                }
             }
         }
 

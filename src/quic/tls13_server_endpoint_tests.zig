@@ -1695,20 +1695,32 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
         else => return error.TestUnexpectedResult,
     }
 
-    const unsupported_coalesced = try std.testing.allocator.alloc(u8, handshake_datagram.len + initial_datagram.len);
-    defer std.testing.allocator.free(unsupported_coalesced);
-    @memcpy(unsupported_coalesced[0..handshake_datagram.len], handshake_datagram);
-    @memcpy(unsupported_coalesced[handshake_datagram.len..], initial_datagram);
-    try std.testing.expectError(error.InvalidPacket, endpoint_owner.processLongDatagramWithRoutePath(
+    // Duplicate coalesced Handshake+Initial packets are discarded per
+    // RFC 9000 §13.1, not rejected.
+    const duplicate_coalesced = try std.testing.allocator.alloc(u8, handshake_datagram.len + initial_datagram.len);
+    defer std.testing.allocator.free(duplicate_coalesced);
+    @memcpy(duplicate_coalesced[0..handshake_datagram.len], handshake_datagram);
+    @memcpy(duplicate_coalesced[handshake_datagram.len..], initial_datagram);
+    const duplicate_dispatch = try endpoint_owner.processLongDatagramWithRoutePath(
         record.handle,
         path,
         4,
-        unsupported_coalesced,
+        duplicate_coalesced,
         &scratch,
         &[_]u8{},
         &initial_out,
         &handshake_out,
-    ));
+    );
+    switch (duplicate_dispatch) {
+        .packet => |pkt| switch (pkt) {
+            .handshake => |handshake| {
+                try std.testing.expectEqual(record.handle, handshake.route.connection_id);
+                try std.testing.expectEqual(@as(usize, 0), handshake.backend.backend.drain.datagrams_written);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
 }
 
 test "Tls13ServerEndpoint dispatches coalesced long datagrams with installed Handshake keys" {
