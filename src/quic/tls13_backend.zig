@@ -158,6 +158,7 @@ pub const Tls13Backend = struct {
             .context = self,
             .receive = receive,
             .pull = pull,
+            .negotiated_cipher_suite = negotiatedCipherSuiteCallback,
             .set_local_transport_parameters = setLocalTransportParameters,
             .pull_peer_transport_parameters = pullPeerTransportParameters,
             .pull_handshake_traffic_secrets = pullHandshakeTrafficSecrets,
@@ -171,6 +172,11 @@ pub const Tls13Backend = struct {
     }
 
     // ─── Callbacks ───────────────────────────────────────────────────
+
+    fn negotiatedCipherSuiteCallback(context: *anyopaque) u16 {
+        const self: *Tls13Backend = @ptrCast(@alignCast(context));
+        return self.hs.negotiatedCipherSuite();
+    }
 
     fn receive(context: *anyopaque, space: PacketNumberSpace, data: []const u8) Error!void {
         const self: *Tls13Backend = @ptrCast(@alignCast(context));
@@ -334,6 +340,11 @@ pub const Tls13Backend = struct {
     /// `Tls13Handshake.initWithPsk` for a future resumed session with 0-RTT.
     pub fn resumptionPsk(self: *const Tls13Backend) ?[tls13.secret_len]u8 {
         return self.hs.resumption_psk;
+    }
+
+    /// Return the negotiated TLS cipher suite (0x1301 = AES-128-GCM, 0x1303 = ChaCha20-Poly1305).
+    pub fn negotiatedCipherSuite(self: *const Tls13Backend) u16 {
+        return self.hs.negotiatedCipherSuite();
     }
 
     /// Return the client early traffic secret for 0-RTT, or null when the

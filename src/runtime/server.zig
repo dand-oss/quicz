@@ -130,6 +130,7 @@ pub const Server = struct {
     alpn: []const []const u8,
     cert_der: []const u8,
     private_key: []const u8,
+    prefer_chacha20: bool = false,
 
     mutex: std.atomic.Mutex = .unlocked,
     conns: std.AutoHashMap(u64, *ConnState),
@@ -153,6 +154,7 @@ pub const Server = struct {
         alpn: []const []const u8,
         cert_der: []const u8,
         private_key: []const u8,
+        prefer_chacha20: bool = false,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Server {
@@ -171,6 +173,7 @@ pub const Server = struct {
             .alpn = config.alpn,
             .cert_der = config.cert_der,
             .private_key = config.private_key,
+            .prefer_chacha20 = config.prefer_chacha20,
             .conns = std.AutoHashMap(u64, *ConnState).init(allocator),
             .datagram_queue = .empty,
         };
@@ -432,6 +435,7 @@ pub const Server = struct {
                         .cert_chain_der = &cert_chain,
                         .private_key_bytes = self.private_key,
                         .private_key_algorithm = .ecdsa_p256_sha256,
+                        .prefer_chacha20 = self.prefer_chacha20,
                     }) catch |e| {
                         log.err("drive: Tls13ServerTransport.init: {}", .{e});
                         allocator.destroy(record);

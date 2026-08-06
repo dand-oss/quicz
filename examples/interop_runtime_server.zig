@@ -70,11 +70,15 @@ pub fn main(init: std.process.Init) !void {
     var key_der_buf: [512]u8 = undefined;
     const private_key = try quicz.tls_pem.parsePrivateKeyP256(key_pem_data, &key_der_buf);
 
+    // PREFER_CHACHA20=1 negotiates ChaCha20-Poly1305 packet protection.
+    const prefer_chacha20 = init.environ_map.get("PREFER_CHACHA20") != null;
+
     var server = try Server.init(allocator, io, .{
         .port = port,
         .alpn = &alpn,
         .cert_der = cert_der,
         .private_key = &private_key,
+        .prefer_chacha20 = prefer_chacha20,
     });
     defer server.deinit();
     try server.serve(&echoHandler);

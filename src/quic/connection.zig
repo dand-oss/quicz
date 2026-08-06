@@ -763,6 +763,8 @@ pub const Connection = struct {
     local_one_rtt_key_phase_state: ?protection.Aes128KeyPhaseState,
     peer_one_rtt_key_phase_state: ?protection.Aes128KeyPhaseState,
     local_one_rtt_key_update_ack_threshold: ?u64,
+    /// Negotiated TLS cipher suite for Handshake/1-RTT key derivation.
+    negotiated_cipher: protection.CipherSuite = .aes_128_gcm,
     handshake_state: HandshakeState,
     handshake_confirmed: bool,
     pending_handshake_done: bool,
@@ -1543,8 +1545,8 @@ pub const Connection = struct {
     ) Error!void {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.handshake_packet_space.discarded) return error.InvalidPacket;
-        self.local_handshake_keys = protection.deriveAes128PacketProtectionKeysForVersion(secrets.local, self.config.chosen_version);
-        self.peer_handshake_keys = protection.deriveAes128PacketProtectionKeysForVersion(secrets.peer, self.config.chosen_version);
+        self.local_handshake_keys = protection.deriveForCipher(secrets.local, self.config.chosen_version, self.negotiated_cipher);
+        self.peer_handshake_keys = protection.deriveForCipher(secrets.peer, self.config.chosen_version, self.negotiated_cipher);
     }
 
     /// Return whether both local send and peer receive Handshake keys exist.
@@ -1566,10 +1568,10 @@ pub const Connection = struct {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (secrets.local == null and secrets.peer == null) return error.InvalidPacket;
         if (secrets.local) |local| {
-            self.local_zero_rtt_keys = protection.deriveAes128PacketProtectionKeysForVersion(local, self.config.chosen_version);
+            self.local_zero_rtt_keys = protection.deriveForCipher(local, self.config.chosen_version, self.negotiated_cipher);
         }
         if (secrets.peer) |peer| {
-            self.peer_zero_rtt_keys = protection.deriveAes128PacketProtectionKeysForVersion(peer, self.config.chosen_version);
+            self.peer_zero_rtt_keys = protection.deriveForCipher(peer, self.config.chosen_version, self.negotiated_cipher);
             self.peer_zero_rtt_accepted = false;
         }
     }
@@ -1646,12 +1648,12 @@ pub const Connection = struct {
             self.discardZeroRttProtectionKeyState();
         }
         self.local_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.initForVersion(
-            protection.deriveAes128PacketProtectionKeysForVersion(secrets.local, self.config.chosen_version),
+            protection.deriveForCipher(secrets.local, self.config.chosen_version, self.negotiated_cipher),
             false,
             self.config.chosen_version,
         );
         self.peer_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.initForVersion(
-            protection.deriveAes128PacketProtectionKeysForVersion(secrets.peer, self.config.chosen_version),
+            protection.deriveForCipher(secrets.peer, self.config.chosen_version, self.negotiated_cipher),
             false,
             self.config.chosen_version,
         );
@@ -8082,6 +8084,12 @@ pub const Connection = struct {
         }
 
         if (try backend.pullHandshakeTrafficSecrets()) |secrets| {
+            if (backend.negotiated_cipher_suite) |fn_ptr| {
+                self.negotiated_cipher = switch (fn_ptr(backend.context)) {
+                    0x1303 => .chacha20_poly1305,
+                    else => .aes_128_gcm,
+                };
+            }
             try self.installHandshakeTrafficSecrets(secrets);
             progress.handshake_keys_installed = true;
         }

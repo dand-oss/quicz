@@ -135,6 +135,8 @@ pub const CryptoBackend = struct {
     /// protection keys and installs endpoint-owned key-phase state from the
     /// returned secrets.
     pull_1rtt_traffic_secrets: ?*const fn (context: *anyopaque) Error!?OneRttTrafficSecrets = null,
+    /// Optional hook returning the TLS-negotiated cipher suite (0x1301 or 0x1303).
+    negotiated_cipher_suite: ?*const fn (context: *anyopaque) u16 = null,
     /// Optional hook returning the TLS-negotiated ALPN protocol bytes.
     ///
     /// Return null when negotiation has not completed or the backend does not

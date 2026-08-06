@@ -117,6 +117,8 @@ pub const Client = struct {
         insecure_skip_verify: bool = false,
         /// QUIC version for the Initial handshake (RFC 9369 v2 = 0x6b3343cf).
         version: quic_packet.Version = .v1,
+        /// Offer TLS_CHACHA20_POLY1305_SHA256 in the ClientHello.
+        prefer_chacha20: bool = false,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
@@ -139,6 +141,7 @@ pub const Client = struct {
             .skip_cert_verify = config.insecure_skip_verify or config.ca_bundle == null,
             .now_sec = now.toSeconds(),
             .client_ca_bundle = config.ca_bundle,
+            .prefer_chacha20 = config.prefer_chacha20,
         };
         const available_versions: []const quic_packet.Version = switch (config.version) {
             .v2 => &[_]quic_packet.Version{ .v1, .v2 },

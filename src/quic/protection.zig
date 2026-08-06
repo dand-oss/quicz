@@ -5,6 +5,7 @@ const protocol_limits = @import("protocol_limits.zig");
 
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const Aes128Gcm = std.crypto.aead.aes_gcm.Aes128Gcm;
+const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 
 const max_connection_id_len = protocol_limits.max_connection_id_len;
 
@@ -25,6 +26,8 @@ pub const traffic_secret_len = HkdfSha256.prk_length;
 pub const aes_128_key_len = 16;
 pub const iv_len = 12;
 pub const aes_128_hp_key_len = 16;
+pub const chacha20_key_len = 32;
+pub const chacha20_hp_key_len = 32;
 pub const aead_tag_len = Aes128Gcm.tag_length;
 pub const header_protection_sample_len = 16;
 pub const header_protection_mask_len = 5;
@@ -96,16 +99,27 @@ const RetryIntegrityProfile = struct {
     nonce: [iv_len]u8,
 };
 
+/// TLS cipher suite for QUIC packet protection.
+pub const CipherSuite = enum {
+    aes_128_gcm,
+    chacha20_poly1305,
+};
+
 /// Packet protection material derived from one QUIC packet protection secret.
+///
+/// Uses 32-byte key/HP fields to accommodate both AES-128-GCM (16 bytes)
+/// and ChaCha20-Poly1305 (32 bytes). The `cipher` field selects the algorithm.
 pub const Aes128PacketProtectionKeys = struct {
     /// Packet protection secret for one endpoint direction.
     secret: [traffic_secret_len]u8,
-    /// AEAD_AES_128_GCM packet protection key.
-    key: [aes_128_key_len]u8,
+    /// Cipher suite for this key set.
+    cipher: CipherSuite = .aes_128_gcm,
+    /// Packet protection key (32 bytes; AES-128 uses first 16).
+    key: [chacha20_key_len]u8,
     /// Per-direction packet protection IV.
     iv: [iv_len]u8,
-    /// AES header protection key.
-    hp: [aes_128_hp_key_len]u8,
+    /// Header protection key (32 bytes; AES-128 uses first 16).
+    hp: [chacha20_hp_key_len]u8,
 };
 
 /// RFC 9001 Initial packet protection keys for both endpoint directions.
@@ -331,7 +345,10 @@ pub const Aes128KeyPhaseState = struct {
         self.previous_discard_deadline_nanos = null;
         self.current = self.next;
         const next_secret = hkdfExpandLabel(self.current.secret, self.labels.ku, traffic_secret_len);
-        var next = deriveAes128PacketProtectionKeysWithLabels(next_secret, self.labels);
+        var next = switch (self.current.cipher) {
+            .aes_128_gcm => deriveAes128PacketProtectionKeysWithLabels(next_secret, self.labels),
+            .chacha20_poly1305 => deriveChaCha20PacketProtectionKeysWithLabels(next_secret, self.labels),
+        };
         next.hp = self.current.hp;
         self.next = next;
         self.current_key_phase = !self.current_key_phase;
@@ -410,11 +427,45 @@ fn deriveAes128PacketProtectionKeysWithLabels(
     secret: [traffic_secret_len]u8,
     labels: HkdfLabelSet,
 ) Aes128PacketProtectionKeys {
+    var keys: Aes128PacketProtectionKeys = .{
+        .secret = secret,
+        .key = [_]u8{0} ** chacha20_key_len,
+        .iv = hkdfExpandLabel(secret, labels.iv, iv_len),
+        .hp = [_]u8{0} ** chacha20_hp_key_len,
+    };
+    const key_bytes = hkdfExpandLabel(secret, labels.key, aes_128_key_len);
+    @memcpy(keys.key[0..aes_128_key_len], &key_bytes);
+    const hp_bytes = hkdfExpandLabel(secret, labels.hp, aes_128_hp_key_len);
+    @memcpy(keys.hp[0..aes_128_hp_key_len], &hp_bytes);
+    return keys;
+}
+
+fn deriveChaCha20PacketProtectionKeysWithLabels(
+    secret: [traffic_secret_len]u8,
+    labels: HkdfLabelSet,
+) Aes128PacketProtectionKeys {
     return .{
         .secret = secret,
-        .key = hkdfExpandLabel(secret, labels.key, aes_128_key_len),
+        .cipher = .chacha20_poly1305,
+        .key = hkdfExpandLabel(secret, labels.key, chacha20_key_len),
         .iv = hkdfExpandLabel(secret, labels.iv, iv_len),
-        .hp = hkdfExpandLabel(secret, labels.hp, aes_128_hp_key_len),
+        .hp = hkdfExpandLabel(secret, labels.hp, chacha20_hp_key_len),
+    };
+}
+
+/// Derive packet protection keys for a specific cipher suite and QUIC version.
+pub fn deriveForCipher(
+    secret: [traffic_secret_len]u8,
+    version: packet.Version,
+    cipher: CipherSuite,
+) Aes128PacketProtectionKeys {
+    const labels = switch (version) {
+        .v2 => hkdf_labels_v2,
+        else => hkdf_labels_v1,
+    };
+    return switch (cipher) {
+        .aes_128_gcm => deriveAes128PacketProtectionKeysWithLabels(secret, labels),
+        .chacha20_poly1305 => deriveChaCha20PacketProtectionKeysWithLabels(secret, labels),
     };
 }
 
@@ -453,7 +504,14 @@ pub fn nextAes128PacketProtectionKeysForVersion(
     version: packet.Version,
 ) Aes128PacketProtectionKeys {
     const next_secret = nextAes128TrafficSecretForVersion(current.secret, version);
-    var next = deriveAes128PacketProtectionKeysForVersion(next_secret, version);
+    const labels = switch (version) {
+        .v2 => hkdf_labels_v2,
+        else => hkdf_labels_v1,
+    };
+    var next = switch (current.cipher) {
+        .aes_128_gcm => deriveAes128PacketProtectionKeysWithLabels(next_secret, labels),
+        .chacha20_poly1305 => deriveChaCha20PacketProtectionKeysWithLabels(next_secret, labels),
+    };
     next.hp = current.hp;
     return next;
 }
@@ -463,13 +521,38 @@ pub fn nextAes128PacketProtectionKeysForVersion(
 /// AES-GCM QUIC cipher suites use AES-ECB over a 16-byte ciphertext sample and
 /// consume the first five mask bytes for the first header byte and packet number.
 pub fn aes128HeaderProtectionMask(
-    hp_key: [aes_128_hp_key_len]u8,
+    hp_key: [chacha20_hp_key_len]u8,
     sample: [header_protection_sample_len]u8,
 ) [header_protection_mask_len]u8 {
-    const aes = std.crypto.core.aes.Aes128.initEnc(hp_key);
+    const aes = std.crypto.core.aes.Aes128.initEnc(hp_key[0..aes_128_hp_key_len].*);
     var block: [header_protection_sample_len]u8 = undefined;
     aes.encrypt(&block, &sample);
     return block[0..header_protection_mask_len].*;
+}
+
+/// Compute the header protection mask for ChaCha20-Poly1305 (RFC 9001 §5.4.4).
+pub fn chacha20HeaderProtectionMask(
+    hp_key: [chacha20_hp_key_len]u8,
+    sample: [header_protection_sample_len]u8,
+) [header_protection_mask_len]u8 {
+    const counter = std.mem.readInt(u32, sample[0..4], .little);
+    var nonce: [12]u8 = undefined;
+    @memcpy(nonce[0..], sample[4..16]);
+    var mask: [header_protection_mask_len]u8 = [_]u8{0} ** header_protection_mask_len;
+    const ChaCha20IETF = std.crypto.stream.chacha.ChaCha20IETF;
+    ChaCha20IETF.stream(&mask, counter, hp_key, nonce);
+    return mask;
+}
+
+/// Compute the header protection mask for the cipher suite in `keys`.
+pub fn headerProtectionMaskForKey(
+    keys: Aes128PacketProtectionKeys,
+    sample: [header_protection_sample_len]u8,
+) [header_protection_mask_len]u8 {
+    return switch (keys.cipher) {
+        .aes_128_gcm => aes128HeaderProtectionMask(keys.hp, sample),
+        .chacha20_poly1305 => chacha20HeaderProtectionMask(keys.hp, sample),
+    };
 }
 
 /// Apply or remove a QUIC header protection mask in place.
@@ -519,7 +602,10 @@ pub fn protectAes128Payload(
 ) ProtectionError!void {
     if (ciphertext.len != plaintext.len) return error.InvalidPayloadLength;
     const nonce = try packetProtectionNonce(keys.iv, packet_number);
-    Aes128Gcm.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key);
+    switch (keys.cipher) {
+        .aes_128_gcm => Aes128Gcm.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key[0..aes_128_key_len].*),
+        .chacha20_poly1305 => ChaCha20Poly1305.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key),
+    }
 }
 
 /// Remove AEAD_AES_128_GCM protection from a QUIC packet payload.
@@ -533,7 +619,10 @@ pub fn unprotectAes128Payload(
 ) ProtectionError!void {
     if (plaintext.len != ciphertext.len) return error.InvalidPayloadLength;
     const nonce = try packetProtectionNonce(keys.iv, packet_number);
-    Aes128Gcm.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key) catch return error.AuthenticationFailed;
+    switch (keys.cipher) {
+        .aes_128_gcm => Aes128Gcm.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key[0..aes_128_key_len].*) catch return error.AuthenticationFailed,
+        .chacha20_poly1305 => ChaCha20Poly1305.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key) catch return error.AuthenticationFailed,
+    }
 }
 
 /// Compute the Retry Integrity Tag for a transmitted Retry packet.
@@ -825,7 +914,7 @@ pub fn peekShortPacketSpinBit(datagram: []const u8) ProtectionError!bool {
 /// authenticate the packet payload; use it only to select the AEAD key for a
 /// subsequent open attempt.
 pub fn peekShortPacketKeyPhaseAes128(
-    hp_key: [aes_128_hp_key_len]u8,
+    hp_key: [chacha20_hp_key_len]u8,
     datagram: []const u8,
     dcid_len: usize,
 ) ProtectionError!bool {
@@ -987,7 +1076,7 @@ fn validateHeaderProtectionSample(packet_len: usize, pn_offset: usize) Protectio
 }
 
 fn unmaskShortPacketFirstByte(
-    hp_key: [aes_128_hp_key_len]u8,
+    hp_key: [chacha20_hp_key_len]u8,
     datagram: []const u8,
     dcid_len: usize,
 ) ProtectionError!u8 {
@@ -1134,14 +1223,14 @@ test "deriveInitialSecrets matches RFC 9001 Appendix A.1 vectors" {
     try expectHex("7db5df06e7a69e432496adedb00851923595221596ae2ae9fb8115c1e9ed0a44", &secrets.initial_secret);
 
     try expectHex("c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea", &secrets.client.secret);
-    try expectHex("1f369613dd76d5467730efcbe3b1a22d", &secrets.client.key);
+    try expectHex("1f369613dd76d5467730efcbe3b1a22d", secrets.client.key[0..aes_128_key_len]);
     try expectHex("fa044b2f42a3fd3b46fb255c", &secrets.client.iv);
-    try expectHex("9f50449e04a0e810283a1e9933adedd2", &secrets.client.hp);
+    try expectHex("9f50449e04a0e810283a1e9933adedd2", secrets.client.hp[0..aes_128_hp_key_len]);
 
     try expectHex("3c199828fd139efd216c155ad844cc81fb82fa8d7446fa7d78be803acdda951b", &secrets.server.secret);
-    try expectHex("cf3a5331653c364c88f0f379b6067e37", &secrets.server.key);
+    try expectHex("cf3a5331653c364c88f0f379b6067e37", secrets.server.key[0..aes_128_key_len]);
     try expectHex("0ac1493ca1905853b0bba03e", &secrets.server.iv);
-    try expectHex("c206b8d9b9f0f37644430b490eeaa314", &secrets.server.hp);
+    try expectHex("c206b8d9b9f0f37644430b490eeaa314", secrets.server.hp[0..aes_128_hp_key_len]);
 }
 
 test "deriveInitialSecrets matches RFC 9369 Appendix A.1 vectors" {
@@ -1151,14 +1240,14 @@ test "deriveInitialSecrets matches RFC 9369 Appendix A.1 vectors" {
     try expectHex("2062e8b3cd8d52092614b8071d0aa1fb7c2e3ac193f78b280e72d8f5751f6aba", &secrets.initial_secret);
 
     try expectHex("14ec9d6eb9fd7af83bf5a668bc17a7e283766aade7ecd0891f70f9ff7f4bf47b", &secrets.client.secret);
-    try expectHex("8b1a0bc121284290a29e0971b5cd045d", &secrets.client.key);
+    try expectHex("8b1a0bc121284290a29e0971b5cd045d", secrets.client.key[0..aes_128_key_len]);
     try expectHex("91f73e2351d8fa91660e909f", &secrets.client.iv);
-    try expectHex("45b95e15235d6f45a6b19cbcb0294ba9", &secrets.client.hp);
+    try expectHex("45b95e15235d6f45a6b19cbcb0294ba9", secrets.client.hp[0..aes_128_hp_key_len]);
 
     try expectHex("0263db1782731bf4588e7e4d93b7463907cb8cd8200b5da55a8bd488eafc37c1", &secrets.server.secret);
-    try expectHex("82db637861d55e1d011f19ea71d5d2a7", &secrets.server.key);
+    try expectHex("82db637861d55e1d011f19ea71d5d2a7", secrets.server.key[0..aes_128_key_len]);
     try expectHex("dd13c276499c0249d3310652", &secrets.server.iv);
-    try expectHex("edf6d05c83121201b436e16877593c3a", &secrets.server.hp);
+    try expectHex("edf6d05c83121201b436e16877593c3a", secrets.server.hp[0..aes_128_hp_key_len]);
 }
 
 test "deriveInitialSecrets rejects unsupported versions and invalid CID length" {
@@ -1177,9 +1266,9 @@ test "nextAes128PacketProtectionKeys derives QUIC key update material" {
     const next_client = nextAes128PacketProtectionKeys(secrets.client);
 
     try expectHex("4428ffa195ad665b9ebf9456945b99e8ff848512cab93d0426436409047d666c", &next_client.secret);
-    try expectHex("e85fece7a6f1b06576c46503cabcfa0d", &next_client.key);
+    try expectHex("e85fece7a6f1b06576c46503cabcfa0d", next_client.key[0..aes_128_key_len]);
     try expectHex("994107a30fb5ed593e8976f2", &next_client.iv);
-    try expectHex("9f50449e04a0e810283a1e9933adedd2", &next_client.hp);
+    try expectHex("9f50449e04a0e810283a1e9933adedd2", next_client.hp[0..aes_128_hp_key_len]);
 
     const direct_next_secret = nextAes128TrafficSecret(secrets.client.secret);
     try std.testing.expectEqualSlices(u8, &next_client.secret, &direct_next_secret);
@@ -1801,150 +1890,77 @@ test "protected long header length rejects oversized connection IDs" {
     try std.testing.expectError(error.InvalidConnectionIdLength, longHeaderLen(header, 4, 4));
 }
 
-// ── ChaCha20-Poly1305 packet protection (RFC 9001 §5.4) ──
+// ── ChaCha20-Poly1305 packet protection helpers (RFC 9001 §5.4) ──
 
-const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+pub const chacha20_tag_len = aead_tag_len;
 
-pub const chacha20_key_len = 32;
-pub const chacha20_tag_len = ChaCha20Poly1305.tag_length;
-
-/// Cipher suite selection for QUIC packet protection.
-pub const CipherSuite = enum {
-    aes_128_gcm,
-    chacha20_poly1305,
-};
-
-/// ChaCha20-Poly1305 packet protection keys (RFC 9001 §5.4).
-pub const ChaCha20PacketProtectionKeys = struct {
-    /// 32-byte AEAD key.
-    key: [chacha20_key_len]u8,
-    /// 12-byte IV.
-    iv: [iv_len]u8,
-    /// 32-byte header protection key.
-    hp: [chacha20_key_len]u8,
-};
-
-/// Derive ChaCha20-Poly1305 packet protection keys from a traffic secret.
-/// Derive ChaCha20-Poly1305 packet protection keys from a traffic secret.
-pub fn deriveChaCha20PacketProtectionKeys(secret: [traffic_secret_len]u8) ChaCha20PacketProtectionKeys {
-    var keys: ChaCha20PacketProtectionKeys = undefined;
-    const key_result = hkdfExpandLabel(secret, "quic key", chacha20_key_len);
-    @memcpy(keys.key[0..], key_result[0..chacha20_key_len]);
-    const iv_result = hkdfExpandLabel(secret, "quic iv", iv_len);
-    @memcpy(keys.iv[0..], iv_result[0..iv_len]);
-    const hp_result = hkdfExpandLabel(secret, "quic hp", chacha20_key_len);
-    @memcpy(keys.hp[0..], hp_result[0..chacha20_key_len]);
-    return keys;
-}
-
-/// Build the RFC 9001 AEAD nonce for ChaCha20-Poly1305.
+/// Build the RFC 9001 AEAD nonce (same construction for all cipher suites).
 pub fn chacha20Nonce(iv: [iv_len]u8, packet_number: u64) [iv_len]u8 {
     return packetProtectionNonce(iv, packet_number) catch @panic("invalid packet number");
 }
 
-/// Protect a QUIC packet payload with AEAD_CHACHA20_POLY1305.
-pub fn protectChaCha20Payload(
-    keys: ChaCha20PacketProtectionKeys,
-    packet_number: u64,
-    associated_data: []const u8,
-    plaintext: []const u8,
-    ciphertext: []u8,
-    tag: *[chacha20_tag_len]u8,
-) void {
-    const nonce = chacha20Nonce(keys.iv, packet_number);
-    ChaCha20Poly1305.encrypt(ciphertext, tag, plaintext, associated_data, nonce, keys.key);
-}
-
-/// Remove AEAD_CHACHA20_POLY1305 protection from a QUIC packet payload.
-pub fn unprotectChaCha20Payload(
-    keys: ChaCha20PacketProtectionKeys,
-    packet_number: u64,
-    associated_data: []const u8,
-    ciphertext: []const u8,
-    tag: [chacha20_tag_len]u8,
-    plaintext: []u8,
-) !void {
-    const nonce = chacha20Nonce(keys.iv, packet_number);
-    ChaCha20Poly1305.decrypt(plaintext, ciphertext, tag, associated_data, nonce, keys.key) catch
-        return error.AuthenticationFailed;
-}
-
-/// Compute the ChaCha20 header protection mask (RFC 9001 §5.4.4).
-pub fn chacha20HeaderProtectionMask(
-    hp_key: [chacha20_key_len]u8,
-    sample: [header_protection_sample_len]u8,
-) [header_protection_mask_len]u8 {
-    const counter = std.mem.readInt(u32, sample[0..4], .little);
-    var nonce: [12]u8 = undefined;
-    @memcpy(nonce[0..], sample[4..16]);
-    var mask: [header_protection_mask_len]u8 = undefined;
-    const ChaCha20IETF = std.crypto.stream.chacha.ChaCha20IETF;
-    ChaCha20IETF.stream(&mask, counter, hp_key, nonce);
-    return mask;
-}
-
 test "ChaCha20-Poly1305 packet protection roundtrip" {
     const secret = [_]u8{0x42} ** 32;
-    const keys = deriveChaCha20PacketProtectionKeys(secret);
+    const keys = deriveForCipher(secret, .v1, .chacha20_poly1305);
 
     const plaintext = "Hello ChaCha20 QUIC!";
     const aad = "header bytes";
     var ciphertext: [plaintext.len]u8 = undefined;
-    var tag: [chacha20_tag_len]u8 = undefined;
+    var tag: [aead_tag_len]u8 = undefined;
 
-    protectChaCha20Payload(keys, 42, aad, plaintext, &ciphertext, &tag);
+    try protectAes128Payload(keys, 42, aad, plaintext, &ciphertext, &tag);
 
     // Ciphertext should differ from plaintext
     try std.testing.expect(!std.mem.eql(u8, plaintext, &ciphertext));
 
     // Decrypt
     var decrypted: [plaintext.len]u8 = undefined;
-    try unprotectChaCha20Payload(keys, 42, aad, &ciphertext, tag, &decrypted);
+    try unprotectAes128Payload(keys, 42, aad, &ciphertext, tag, &decrypted);
     try std.testing.expectEqualStrings(plaintext, &decrypted);
 }
 
 test "ChaCha20-Poly1305 wrong packet number fails authentication" {
     const secret = [_]u8{0x42} ** 32;
-    const keys = deriveChaCha20PacketProtectionKeys(secret);
+    const keys = deriveForCipher(secret, .v1, .chacha20_poly1305);
 
     const plaintext = "test data";
     const aad = "aad";
     var ciphertext: [plaintext.len]u8 = undefined;
-    var tag: [chacha20_tag_len]u8 = undefined;
+    var tag: [aead_tag_len]u8 = undefined;
 
-    protectChaCha20Payload(keys, 1, aad, plaintext, &ciphertext, &tag);
+    try protectAes128Payload(keys, 1, aad, plaintext, &ciphertext, &tag);
 
     // Wrong packet number should fail
     var decrypted: [plaintext.len]u8 = undefined;
     try std.testing.expectError(
         error.AuthenticationFailed,
-        unprotectChaCha20Payload(keys, 2, aad, &ciphertext, tag, &decrypted),
+        unprotectAes128Payload(keys, 2, aad, &ciphertext, tag, &decrypted),
     );
 }
 
 test "ChaCha20-Poly1305 tampered ciphertext fails authentication" {
     const secret = [_]u8{0x42} ** 32;
-    const keys = deriveChaCha20PacketProtectionKeys(secret);
+    const keys = deriveForCipher(secret, .v1, .chacha20_poly1305);
 
     const plaintext = "test data";
     const aad = "aad";
     var ciphertext: [plaintext.len]u8 = undefined;
-    var tag: [chacha20_tag_len]u8 = undefined;
+    var tag: [aead_tag_len]u8 = undefined;
 
-    protectChaCha20Payload(keys, 0, aad, plaintext, &ciphertext, &tag);
+    try protectAes128Payload(keys, 0, aad, plaintext, &ciphertext, &tag);
 
     // Tamper
     ciphertext[0] ^= 0xff;
     var decrypted: [plaintext.len]u8 = undefined;
     try std.testing.expectError(
         error.AuthenticationFailed,
-        unprotectChaCha20Payload(keys, 0, aad, &ciphertext, tag, &decrypted),
+        unprotectAes128Payload(keys, 0, aad, &ciphertext, tag, &decrypted),
     );
 }
 
 test "ChaCha20 header protection mask is deterministic" {
     const hp_key = [_]u8{0xAB} ** 32;
-    const sample = [_]u8{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10};
+    const sample = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10 };
 
     const mask1 = chacha20HeaderProtectionMask(hp_key, sample);
     const mask2 = chacha20HeaderProtectionMask(hp_key, sample);
@@ -1957,11 +1973,27 @@ test "ChaCha20 header protection mask is deterministic" {
 test "ChaCha20 vs AES-128-GCM produce different ciphertext" {
     const secret = [_]u8{0x42} ** 32;
     const aes_keys = deriveAes128PacketProtectionKeys(secret);
-    const chacha_keys = deriveChaCha20PacketProtectionKeys(secret);
+    const chacha_keys = deriveForCipher(secret, .v1, .chacha20_poly1305);
 
-    // Keys should differ (different output lengths and derivation)
-    // IVs use the same HKDF label so they match; keys differ in length
-    try std.testing.expect(aes_keys.key.len != chacha_keys.key.len);
+    // Same secret, same labels -> IVs match, but keys differ
+    // (AES-128 uses first 16 bytes of HKDF output, ChaCha20 uses 32 bytes)
+    try std.testing.expect(!std.mem.eql(u8, &aes_keys.key, &chacha_keys.key));
+    try std.testing.expectEqual(aes_keys.cipher, .aes_128_gcm);
+
+    try std.testing.expectEqual(aes_keys.iv, chacha_keys.iv);
+
+    // Ciphertext must differ
+    const plaintext = "test";
+    const aad = "aad";
+    var aes_ct: [plaintext.len]u8 = undefined;
+    var aes_tag: [aead_tag_len]u8 = undefined;
+    try protectAes128Payload(aes_keys, 0, aad, plaintext, &aes_ct, &aes_tag);
+
+    var chacha_ct: [plaintext.len]u8 = undefined;
+    var chacha_tag: [aead_tag_len]u8 = undefined;
+    try protectAes128Payload(chacha_keys, 0, aad, plaintext, &chacha_ct, &chacha_tag);
+
+    try std.testing.expect(!std.mem.eql(u8, &aes_ct, &chacha_ct));
 }
 
 test "CipherSuite enum values" {
@@ -2059,8 +2091,10 @@ test "AES-256-GCM keys differ from AES-128-GCM keys" {
     const secret = [_]u8{0x42} ** 32;
     const aes128 = deriveAes128PacketProtectionKeys(secret);
     const aes256 = deriveAes256PacketProtectionKeys(secret);
-    // Different key lengths
-    try std.testing.expect(aes128.key.len != aes256.key.len);
+    // Different cipher suites
+
+    // AES-128 uses first 16 bytes; AES-256 uses all 32
+    try std.testing.expect(!std.mem.eql(u8, aes128.key[0..aes_128_key_len], aes256.key[0..aes_128_key_len]));
     // IVs use same label so they match
     try std.testing.expectEqual(aes128.iv, aes256.iv);
 }

@@ -298,6 +298,8 @@ pub const TlsConfig = struct {
     private_key_bytes: ?[]const u8 = null,
     private_key_algorithm: PrivateKeyAlgorithm = .ecdsa_p256_sha256,
     skip_cert_verify: bool = true,
+    /// Offer TLS_CHACHA20_POLY1305_SHA256 (client) or prefer it (server).
+    prefer_chacha20: bool = false,
     /// Optional wall-clock seconds since epoch for certificate validity-period
     /// checks. When null, validity is not checked.
     now_sec: ?i64 = null,
@@ -2110,6 +2112,7 @@ const ExtType = enum(u16) {
 };
 
 const cipher_aes_128_gcm_sha256: u16 = 0x1301;
+const cipher_chacha20_poly1305_sha256: u16 = 0x1303;
 const group_x25519: u16 = 0x001D;
 const group_secp256r1: u16 = 0x0017;
 const P256 = crypto.ecc.P256;
@@ -2789,6 +2792,8 @@ pub const Tls13Handshake = struct {
     // Negotiated ALPN
     negotiated_alpn: [256]u8 = undefined,
     negotiated_alpn_len: usize = 0,
+    // Negotiated cipher suite (0x1301 = AES-128-GCM, 0x1303 = ChaCha20-Poly1305)
+    negotiated_cipher_suite: u16 = cipher_aes_128_gcm_sha256,
 
     // Server-side: SNI host_name offered by the client.
     client_sni: [256]u8 = undefined,
@@ -2886,6 +2891,11 @@ pub const Tls13Handshake = struct {
     // Client-side marker set only after a syntactically valid server
     // CertificateRequest has selected one of this client's signing schemes.
     client_auth_requested: bool = false,
+
+    /// Return the negotiated TLS cipher suite (0x1301 = AES-128-GCM, 0x1303 = ChaCha20-Poly1305).
+    pub fn negotiatedCipherSuite(self: *const Tls13Handshake) u16 {
+        return self.negotiated_cipher_suite;
+    }
 
     /// Initialize as a TLS 1.3 client.
     pub fn initClient(config: TlsConfig, transport_params: []const u8) Tls13Handshake {
@@ -3241,11 +3251,16 @@ pub const Tls13Handshake = struct {
         buf[pos] = 0;
         pos += 1;
 
-        // cipher_suites: TLS_AES_128_GCM_SHA256 only
-        writeU16(buf[pos..], 2);
+        // cipher_suites: offer AES-128-GCM (and ChaCha20 if prefer_chacha20)
+        const cs_count: usize = if (self.config.prefer_chacha20) 2 else 1;
+        writeU16(buf[pos..], @intCast(cs_count * 2));
         pos += 2;
         writeU16(buf[pos..], cipher_aes_128_gcm_sha256);
         pos += 2;
+        if (self.config.prefer_chacha20) {
+            writeU16(buf[pos..], cipher_chacha20_poly1305_sha256);
+            pos += 2;
+        }
 
         // compression_methods: null
         buf[pos] = 1;
@@ -3491,9 +3506,11 @@ pub const Tls13Handshake = struct {
         if (sid_len != 0) return error.DecodeError;
         if (pos + sid_len > msg.len) return error.DecodeError;
         pos += sid_len;
-        // cipher_suite (must be TLS_AES_128_GCM_SHA256)
+        // cipher_suite (AES-128-GCM or ChaCha20-Poly1305)
         if (pos + 2 > msg.len) return error.DecodeError;
-        if (readU16(msg[pos..]) != cipher_aes_128_gcm_sha256) return error.DecodeError;
+        const selected_cipher = readU16(msg[pos..]);
+        if (selected_cipher != cipher_aes_128_gcm_sha256 and selected_cipher != cipher_chacha20_poly1305_sha256) return error.DecodeError;
+        self.negotiated_cipher_suite = selected_cipher;
         pos += 2;
         // legacy_compression_method (null)
         if (pos + 1 > msg.len) return error.DecodeError;
@@ -4114,23 +4131,40 @@ pub const Tls13Handshake = struct {
             self.peer_session_id_len = sid_len;
         }
         pos += sid_len;
-        // cipher_suites — require TLS_AES_128_GCM_SHA256
+        // cipher_suites — accept AES-128-GCM and ChaCha20-Poly1305; select
+        // based on prefer_chacha20 (fall back to the other offered suite).
         if (pos + 2 > body.len) return error.DecodeError;
         const cs_len = readU16(body[pos..]);
         pos += 2;
         if (cs_len == 0 or cs_len % 2 != 0) return error.DecodeError;
         if (pos + cs_len > body.len) return error.DecodeError;
-        var cs_found = false;
+        var offered_chacha = false;
+        var offered_aes = false;
         {
             var cs_pos: usize = 0;
             while (cs_pos + 2 <= cs_len) : (cs_pos += 2) {
-                if (readU16(body[pos + cs_pos ..]) == cipher_aes_128_gcm_sha256) {
-                    cs_found = true;
-                    break;
-                }
+                const cs = readU16(body[pos + cs_pos ..]);
+                if (cs == cipher_chacha20_poly1305_sha256) offered_chacha = true;
+                if (cs == cipher_aes_128_gcm_sha256) offered_aes = true;
             }
         }
-        if (!cs_found) return error.UnsupportedVersion;
+        if (self.config.prefer_chacha20) {
+            if (offered_chacha) {
+                self.negotiated_cipher_suite = cipher_chacha20_poly1305_sha256;
+            } else if (offered_aes) {
+                self.negotiated_cipher_suite = cipher_aes_128_gcm_sha256;
+            } else {
+                return error.UnsupportedVersion;
+            }
+        } else {
+            if (offered_aes) {
+                self.negotiated_cipher_suite = cipher_aes_128_gcm_sha256;
+            } else if (offered_chacha) {
+                self.negotiated_cipher_suite = cipher_chacha20_poly1305_sha256;
+            } else {
+                return error.UnsupportedVersion;
+            }
+        }
         pos += cs_len;
         // compression_methods (skip; TLS 1.3 requires null but be lenient)
         if (pos >= body.len) return error.DecodeError;
@@ -4624,8 +4658,8 @@ pub const Tls13Handshake = struct {
             @memcpy(buf[pos..][0..self.peer_session_id_len], self.peer_session_id[0..self.peer_session_id_len]);
             pos += self.peer_session_id_len;
         }
-        // cipher_suite
-        writeU16(buf[pos..], cipher_aes_128_gcm_sha256);
+        // cipher_suite (negotiated above)
+        writeU16(buf[pos..], self.negotiated_cipher_suite);
         pos += 2;
         // legacy_compression_method: null
         buf[pos] = 0;
