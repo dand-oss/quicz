@@ -15,3 +15,4 @@ fuzz/
 bench_analysis.md
 reference/
 docs/zttp-analysis.md
+examples/interop/go_echo_client/go_echo_client

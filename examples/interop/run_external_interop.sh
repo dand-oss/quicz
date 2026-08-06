@@ -17,10 +17,20 @@ BIN="$ROOT/zig-out/bin"
 if [ ! -f "$CERT_DIR/cert.pem" ]; then
     echo "Generating test certificates..."
     mkdir -p "$CERT_DIR"
+    # Proper CA (quicz-echo-ca.pem, CA:TRUE) + CA-signed leaf (CN=localhost,
+    # SAN, CA:FALSE). Strict webpki clients (s2n-quic / rustls) reject a
+    # CA:FALSE leaf used as a trust anchor, so the client must trust the CA.
+    openssl ecparam -name prime256v1 -genkey -noout -out "$CERT_DIR/ca_key.pem" 2>/dev/null
+    openssl req -x509 -new -sha256 -nodes -days 30 -key "$CERT_DIR/ca_key.pem" \
+        -out "$CERT_DIR/quicz-echo-ca.pem" -subj "/CN=quicz-interop-ca/" \
+        -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
     openssl ecparam -name prime256v1 -genkey -noout -out "$CERT_DIR/key.pem" 2>/dev/null
-    openssl req -x509 -new -sha256 -nodes -days 30 \
-        -key "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
-        -subj "/O=quicz interop test/" 2>/dev/null
+    openssl req -new -sha256 -nodes -key "$CERT_DIR/key.pem" \
+        -out "$CERT_DIR/leaf.csr" -subj "/CN=localhost" 2>/dev/null
+    openssl x509 -req -in "$CERT_DIR/leaf.csr" -CA "$CERT_DIR/quicz-echo-ca.pem" \
+        -CAkey "$CERT_DIR/ca_key.pem" -CAcreateserial -out "$CERT_DIR/cert.pem" \
+        -days 30 -sha256 -extfile <(printf "basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n") 2>/dev/null
+    rm -f "$CERT_DIR/leaf.csr" "$CERT_DIR/ca_key.pem" "$CERT_DIR/ca.srl"
 fi
 
 FAILURES=0
@@ -59,7 +69,7 @@ run_impl() {
             verified) PORT=$((base + 2)) ;;
         esac
         run_case "$server_cmd" "$impl" "$case_name" \
-            "TESTCASE=$case_name $BIN/quicz-interop-runtime-client 127.0.0.1 $PORT $CERT_DIR/cert.pem localhost"
+            "TESTCASE=$case_name $BIN/quicz-interop-runtime-client 127.0.0.1 $PORT $CERT_DIR/quicz-echo-ca.pem localhost"
     done
     PORT=$base
 }

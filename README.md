@@ -174,7 +174,10 @@ zig fmt --check build.zig src examples       # format check
 ## Interop Testing
 
 quicz passes a full bidirectional interop matrix (7/7) against four major
-implementations. All tests use certificate-verified TLS 1.3.
+implementations. All tests use certificate-verified TLS 1.3. Certificates are
+a proper CA (`testdata/quicz-echo-ca.pem`) + CA-signed leaf
+(`testdata/cert.pem`), so strict webpki-based clients (s2n-quic, rustls/quinn)
+accept the trust chain.
 
 | Direction | Peer | Result |
 |---|---|---|
@@ -191,10 +194,10 @@ implementations. All tests use certificate-verified TLS 1.3.
 zig build && zig-out/bin/quicz-interop-runtime-server 4433 cert.pem key.pem
 
 # Forward: quicz client → external server
-zig-out/bin/quicz-interop-runtime-client 127.0.0.1 4433 ca.pem localhost
+zig-out/bin/quicz-interop-runtime-client 127.0.0.1 4433 quicz-echo-ca.pem localhost
 
-# Reverse: external client → quicz server
-examples/interop/quiche_echo_client/target/release/quicz-quiche-echo-client 127.0.0.1:4433 ca.pem localhost
+# Reverse matrix (external clients → quicz server), all four peers
+examples/interop/run_reverse_interop.sh all 4433
 ```
 
 ## Project Structure
