@@ -25,6 +25,7 @@ const fuzz_targets = quicz.fuzz_targets;
 ///   8 = connection state-machine driver (handshake/transfer/stream/key-update)
 ///   9 = QPACK dynamic-table state machine (insert/duplicate/evict/lookup)
 ///   10 = WebTransport wire decode (uni/bidi/close capsule/datagram)
+///   11 = H3 connection orchestration state machine (streams/goaway/prune)
 ///   otherwise = drain through all targets.
 pub export fn quicz_fuzz_drive(mode: c_uint, data: [*]const u8, size: usize) callconv(.c) void {
     const slice = data[0..size];
@@ -40,6 +41,7 @@ pub export fn quicz_fuzz_drive(mode: c_uint, data: [*]const u8, size: usize) cal
         8 => fuzz_targets.fuzzDriveConnectionStateMachine(slice),
         9 => fuzz_targets.fuzzDriveQpackDynamicTable(slice),
         10 => fuzz_targets.fuzzDecodeWebTransport(slice),
+        11 => fuzz_targets.fuzzDriveH3Connection(slice),
         else => {
             fuzz_targets.fuzzParseLongHeader(slice);
             fuzz_targets.fuzzParseShortHeader(slice);
@@ -52,6 +54,7 @@ pub export fn quicz_fuzz_drive(mode: c_uint, data: [*]const u8, size: usize) cal
             fuzz_targets.fuzzDecodeWebTransport(slice);
             fuzz_targets.fuzzDriveConnectionStateMachine(slice);
             fuzz_targets.fuzzDriveQpackDynamicTable(slice);
+            fuzz_targets.fuzzDriveH3Connection(slice);
         },
     }
 }

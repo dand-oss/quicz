@@ -8,6 +8,7 @@ const packet = @import("packet.zig");
 const frame = @import("frame.zig");
 const protection = @import("protection.zig");
 const h3_frame = @import("../h3/frame.zig");
+const h3_connection = @import("../h3/connection.zig");
 const qpack = @import("../h3/qpack.zig");
 const h3_limits = @import("../h3/limits.zig");
 const h3_request = @import("../h3/request.zig");
@@ -66,6 +67,51 @@ pub fn fuzzDecodeWebTransport(data: []const u8) void {
     _ = webtransport.decodeBidiStreamPrefix(data) catch return;
     _ = webtransport.decodeCloseCapsule(data) catch return;
     _ = webtransport.decodeWtDatagram(data) catch return;
+}
+
+/// Map a byte to an H3 stream state (adversarially choosable by the fuzzer).
+fn streamStateFromByte(byte: u8) h3_connection.StreamState {
+    return switch (byte & 0x07) {
+        0 => .open,
+        1 => .headers_done,
+        2 => .data_transfer,
+        3 => .complete,
+        else => .reset,
+    };
+}
+
+/// Fuzz target: drive the H3 connection orchestration state machine (RFC 9114
+/// §4-6). The fuzzer opens request streams, forces arbitrary stream-state
+/// transitions (which must be rejected unless valid), toggles GOAWAY, and
+/// prunes finished streams — the per-connection bookkeeping an attacker
+/// controls via frame streams. No input may crash.
+pub fn fuzzDriveH3Connection(data: []const u8) void {
+    if (data.len == 0) return;
+    const allocator = std.heap.page_allocator;
+    var h3 = h3_connection.H3Connection.init(allocator);
+    defer h3.deinit();
+
+    var stream_id: u64 = 0;
+    var i: usize = 0;
+    while (i < data.len) : (i += 1) {
+        const byte = data[i];
+        const param = data[(i + 1) % data.len];
+        switch (byte & 0x07) {
+            0 => stream_id = h3.openRequestStream() catch 0,
+            1 => if (h3.getStream(stream_id)) |s| {
+                _ = s.transition(streamStateFromByte(byte)) catch {};
+            },
+            2 => h3.receiveGoaway(param),
+            3 => h3.markSettingsReceived(.{}),
+            4 => h3.pruneFinishedStreams(),
+            5 => h3.sendGoaway(param),
+            6 => {
+                _ = h3.activeStreamCount();
+                _ = h3.isReady();
+            },
+            else => _ = h3.getStream(stream_id),
+        }
+    }
 }
 
 // ── State-machine driver (interactive surface) ──
@@ -262,6 +308,17 @@ test "fuzz WebTransport handles garbage and valid-prefixed input" {
     // Valid capsule type with truncated length.
     fuzzDecodeWebTransport(&[_]u8{ 0x9c, 0x43, 0x00, 0x01 });
     fuzzDecodeWebTransport(&[_]u8{ 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x68, 0x69 });
+}
+
+test "H3 connection driver handles empty and garbage input" {
+    fuzzDriveH3Connection(&.{});
+    const garbage = [_]u8{ 0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8 };
+    fuzzDriveH3Connection(&garbage);
+}
+
+test "H3 connection driver exercises stream + goaway + prune" {
+    fuzzDriveH3Connection(&[_]u8{ 0x00, 0x01, 0x0a, 0x02, 0x03, 0x19, 0x04, 0x05 });
+    fuzzDriveH3Connection(&[_]u8{ 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f });
 }
 
 test "fuzz targets handle garbage input" {
