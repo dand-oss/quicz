@@ -11,6 +11,7 @@ const h3_frame = @import("../h3/frame.zig");
 const qpack = @import("../h3/qpack.zig");
 const h3_limits = @import("../h3/limits.zig");
 const h3_request = @import("../h3/request.zig");
+const webtransport = @import("../h3/webtransport.zig");
 const buffer = @import("buffer.zig");
 const Connection = @import("connection.zig").Connection;
 
@@ -57,6 +58,14 @@ pub fn fuzzDecodeH3Request(data: []const u8) void {
 /// Fuzz target: decode an HTTP/3 response from arbitrary bytes.
 pub fn fuzzDecodeH3Response(data: []const u8) void {
     _ = h3_request.decodeResponse(data) catch return;
+}
+
+/// Fuzz target: decode WebTransport wire primitives (draft-ietf-webtrans-http3).
+pub fn fuzzDecodeWebTransport(data: []const u8) void {
+    _ = webtransport.decodeUniStreamHeader(data) catch return;
+    _ = webtransport.decodeBidiStreamPrefix(data) catch return;
+    _ = webtransport.decodeCloseCapsule(data) catch return;
+    _ = webtransport.decodeWtDatagram(data) catch return;
 }
 
 // ── State-machine driver (interactive surface) ──
@@ -242,6 +251,17 @@ test "fuzz targets handle empty input" {
     fuzzDecodeQpack(&.{});
     fuzzDecodeH3Request(&.{});
     fuzzDecodeH3Response(&.{});
+    fuzzDecodeWebTransport(&.{});
+}
+
+test "fuzz WebTransport handles garbage and valid-prefixed input" {
+    const garbage = [_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    fuzzDecodeWebTransport(&garbage);
+    // Valid uni stream header prefix (0x54) with truncated session varint.
+    fuzzDecodeWebTransport(&[_]u8{ 0x54, 0xff, 0xff });
+    // Valid capsule type with truncated length.
+    fuzzDecodeWebTransport(&[_]u8{ 0x9c, 0x43, 0x00, 0x01 });
+    fuzzDecodeWebTransport(&[_]u8{ 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x68, 0x69 });
 }
 
 test "fuzz targets handle garbage input" {
