@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const buffer = @import("../quic/buffer.zig");
+const limits = @import("limits.zig");
 
 /// HTTP/3 frame types (RFC 9114 §7.2).
 pub const FrameType = enum(u64) {
@@ -57,6 +58,10 @@ pub fn decodeFrame(data: []const u8) !struct { frame: Frame, consumed: usize } {
     const len_result = try decodeVarInt(data[type_result.consumed..]);
     const header_len = type_result.consumed + len_result.consumed;
     const payload_len: usize = @intCast(len_result.value);
+    // Reject oversize frames on the declared length first (RFC 9114 §4.6): a
+    // receiver that buffers/reserves by the declared length must not be made
+    // to allocate for an attacker-inflated frame.
+    try limits.validateFrameSize(payload_len);
     if (header_len + payload_len > data.len) return error.IncompleteFrame;
     return .{
         .frame = .{
@@ -170,6 +175,17 @@ test "HTTP/3 frame wire length calculation" {
 test "HTTP/3 decode incomplete frame returns error" {
     const data = [_]u8{ 0x00, 0x0a, 0x01, 0x02 }; // type=0, len=10, but only 2 bytes payload
     try std.testing.expectError(error.IncompleteFrame, decodeFrame(&data));
+}
+
+test "HTTP/3 oversized frame payload is rejected" {
+    // Declared payload length exceeds max_frame_payload_size (16 MiB); the
+    // buffer need not actually contain that many bytes — the cap triggers on
+    // the declared length before any downstream allocation.
+    var data: [9]u8 = undefined;
+    data[0] = 0x00; // DATA frame
+    data[1] = 0xC0; // 8-byte varint length prefix
+    @memset(data[2..9], 0xff); // length = 2^62 - 1
+    try std.testing.expectError(error.FrameTooLarge, decodeFrame(&data));
 }
 
 test "HTTP/3 stream type values" {

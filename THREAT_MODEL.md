@@ -60,6 +60,24 @@ quicz 的威胁模型：明确 trust boundary、每种在本库范围内可防�
   - 代码：`src/quic/endpoint.zig` / `endpoint_lifecycle.zig`（token 签发与校验）、`src/quic/protection.zig`。
   - 测试：`connection_tests.zig` retry token 伪造拒绝。
 
+### H3/QPACK 应用层资源耗尽（RFC 9114 §4.6 / RFC 9204 §3.2）
+
+HTTP/3 在 QUIC 之上，入站 HEADERS/SETTINGS/DATA 帧与 QPACK header block 同样 hostile。已接线资源上限，防 header 字段数、frame 载荷、header 名/值长度、SETTINGS 参数数导致的分配放大：
+
+- **frame 载荷大小上限**：`decodeFrame` 在声明长度上 enforce `max_frame_payload_size`（16 MiB），超长帧先于任何下游分配被拒（`validateFrameSize`）。
+  - 代码：`src/h3/frame.zig`（`decodeFrame`）、`src/h3/limits.zig`（`validateFrameSize`）。
+  - 测试：`frame.zig` "HTTP/3 oversized frame payload is rejected"。
+- **header 字段数上限**：QPACK 解码写固定 `out_fields` 数组，超限 `error.TooManyFields`（调用方 request 用 `[32]` 数组）。
+  - 代码：`src/h3/qpack.zig`（`decodeHeaderBlock`）、`src/h3/request.zig`。
+- **header 名/值长度 + 大小写**：request/response 解码循环对每个字段 enforce `validateHeaderField`（name≤256、value≤8192、无大写）。
+  - 代码：`src/h3/request.zig`、`src/h3/limits.zig`（`validateHeaderField`）。
+  - 测试：`request.zig` "HTTP/3 request rejects uppercase header name"。
+- **SETTINGS 参数数上限**：`decodePayload` 计数并 enforce `max_settings_params`（32），防无限 SETTINGS 参数 DoS。
+  - 代码：`src/h3/connection.zig`（`decodePayload`）、`src/h3/limits.zig`（`validateSettingsCount`）。
+  - 测试：`connection.zig` "Settings decode rejects oversized parameter count"。
+- **QPACK 静态表索引越界 / 字符串越界**：QPACK 解码校验静态表索引与字符串长度，越界返回错误而非溢出。
+  - 代码：`src/h3/qpack.zig`（`decodeHeaderBlock` / `decodeString`）。
+
 ## Integrator responsibilities
 
 以下不在 quicz 库内，由嵌入方（runtime / 应用）负责：
@@ -71,8 +89,8 @@ quicz 的威胁模型：明确 trust boundary、每种在本库范围内可防�
 
 ## Residual risks
 
-1. **fuzz 覆盖不足**：现有 fuzz 主要覆盖解析层，无 handshake/transfer 交互 fuzz，无 OSS-Fuzz 持续集成。加大交互面 fuzz + OSS-Fuzz 是首要加固项。
-2. **HTTP/3 应用层**：RFC 9114 在 scope 内，但 QPACK 等应用层解析的威胁面未单独建模。
+1. **fuzz 交互面已上、OSS-Fuzz 未接入**：`fuzzDriveConnectionStateMachine`（1-RTT 连接状态机交互）+ C ABI `quicz_fuzz_drive` + `.oss-fuzz/` 脚手架已落地（见 `src/quic/fuzz_c_abi.zig`），但实际接入 OSS-Fuzz 需向 oss-fuzz 项目提交（外部队列，非仓库内可完成）。
+2. **QPACK 动态表**：`DynamicTable` 有容量上限 + eviction，但动态表增删改的端到端解码路径未纳入交互 fuzz。
 3. **证书策略默认值**：`insecure_skip_verify` 或空 `ca_bundle` 会跳过证书验证，属 integrator 责任，但库默认应偏保守。
 
 ## 攻防对照小结
@@ -85,3 +103,4 @@ quicz 的威胁模型：明确 trust boundary、每种在本库范围内可防�
 | 版本降级 | version_information 校验 | 已实现 + 测试 |
 | transport parameter 恶意值 | 范围校验 + max_idle_timeout cap | 已实现 + 测试 |
 | Retry token 伪造 | AEAD 认证 | 已实现 + 测试 |
+| H3/QPACK 资源耗尽 | frame/header/settings 上限 | 已实现 + 测试 |

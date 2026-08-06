@@ -6,6 +6,7 @@
 const std = @import("std");
 const h3_frame = @import("frame.zig");
 const qpack = @import("qpack.zig");
+const h3_limits = @import("limits.zig");
 
 /// HTTP/3 error codes (RFC 9114 §8.1).
 pub const ErrorCode = enum(u64) {
@@ -88,7 +89,11 @@ pub const Settings = struct {
     pub fn decodePayload(data: []const u8) !Settings {
         var settings = Settings{};
         var pos: usize = 0;
+        var param_count: usize = 0;
         while (pos < data.len) {
+            param_count += 1;
+            // Cap total SETTINGS parameters (RFC 9114 §7.2.4.1) to bound decode work.
+            try h3_limits.validateSettingsCount(param_count);
             const id_result = try decodeVarIntFromSlice(data, pos);
             pos = id_result.end;
             const val_result = try decodeVarIntFromSlice(data, pos);
@@ -431,6 +436,21 @@ test "Settings decode ignores unknown IDs" {
 
     const decoded = try Settings.decodePayload(buf[0..pos]);
     try std.testing.expectEqual(@as(u64, 8192), decoded.max_field_section_size);
+}
+
+test "Settings decode rejects oversized parameter count" {
+    // 33 sequential settings (one more than max_settings_params=32), each a
+    // known ID with a 1-byte value. The decoder must reject on the 33rd.
+    var buf: [128]u8 = undefined;
+    var pos: usize = 0;
+    var i: usize = 0;
+    while (i < 33) : (i += 1) {
+        buf[pos] = 0x06; // max_field_section_size
+        pos += 1;
+        buf[pos] = 1; // value
+        pos += 1;
+    }
+    try std.testing.expectError(error.TooManySettings, Settings.decodePayload(buf[0..pos]));
 }
 
 test "GOAWAY payload encode/decode" {

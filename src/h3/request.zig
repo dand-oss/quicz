@@ -6,6 +6,7 @@
 const std = @import("std");
 const h3_frame = @import("frame.zig");
 const qpack = @import("qpack.zig");
+const h3_limits = @import("limits.zig");
 
 /// An HTTP request.
 pub const Request = struct {
@@ -245,6 +246,8 @@ pub fn decodeRequest(data: []const u8) !struct { request: DecodedRequest, consum
     const field_count = try qpack.decodeHeaderBlock(headers_result.frame.payload, &fields);
 
     for (fields[0..field_count]) |field| {
+        // Enforce per-field length + casing limits before use (RFC 9204 §3.1).
+        try h3_limits.validateHeaderField(field.name, field.value);
         if (std.mem.eql(u8, field.name, ":method")) {
             method = field.value;
         } else if (std.mem.eql(u8, field.name, ":path")) {
@@ -365,6 +368,26 @@ test "HTTP/3 request encode/decode roundtrip" {
     try std.testing.expect(result.request.body == null);
 }
 
+test "HTTP/3 request rejects uppercase header name" {
+    // Build a QPACK header block with a literal field whose name contains an
+    // uppercase byte (RFC 9114 §4.2 forbids). wrap it in a HEADERS frame and
+    // assert decodeRequest enforces the casing limit via validateHeaderField.
+    var block: [64]u8 = undefined;
+    block[0] = 0x00; // Required Insert Count = 0
+    block[1] = 0x00; // Delta Base = 0
+    block[2] = 0x20; // Literal without Name Reference, 001NXXXX (N=0)
+    block[3] = 5; // name length
+    @memcpy(block[4..9], "X-Big"); // uppercase name
+    block[9] = 1; // value length
+    block[10] = 'v';
+
+    var buf: [64]u8 = undefined;
+    buf[0] = @intFromEnum(h3_frame.FrameType.headers); // HEADERS
+    buf[1] = 11; // 1-byte length
+    @memcpy(buf[2 .. 2 + 11], block[0..11]);
+    try std.testing.expectError(error.UppercaseHeaderName, decodeRequest(buf[0..13]));
+}
+
 test "HTTP/3 response encode/decode roundtrip" {
     const resp = Response{
         .status = 200,
@@ -483,6 +506,8 @@ pub fn decodeRequestWithDynamic(
     const field_count = try qpack.decodeHeaderBlockWithDynamic(headers_result.frame.payload, &fields, dynamic_table);
 
     for (fields[0..field_count]) |field| {
+        // Enforce per-field length + casing limits before use (RFC 9204 §3.1).
+        try h3_limits.validateHeaderField(field.name, field.value);
         if (std.mem.eql(u8, field.name, ":method")) {
             method = field.value;
         } else if (std.mem.eql(u8, field.name, ":path")) {
