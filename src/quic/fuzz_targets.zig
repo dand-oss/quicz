@@ -20,20 +20,23 @@ const transport_parameters = @import("transport_parameters.zig");
 /// Fuzz target: parse a QUIC long header from arbitrary bytes.
 pub fn fuzzParseLongHeader(data: []const u8) void {
     var reader = buffer.fixedReader(data);
-    _ = packet.parseLongHeader(reader.reader(), std.heap.c_allocator) catch return;
+    var header = packet.parseLongHeader(reader.reader(), std.heap.c_allocator) catch return;
+    defer packet.deinitLongHeader(&header, std.heap.c_allocator);
 }
 
 /// Fuzz target: parse a QUIC short header from arbitrary bytes.
 pub fn fuzzParseShortHeader(data: []const u8) void {
     for ([_]usize{ 4, 8, 16, 20 }) |dcid_len| {
         var reader = buffer.fixedReader(data);
-        _ = packet.parseShortHeader(reader.reader(), std.heap.c_allocator, dcid_len) catch continue;
+        var header = packet.parseShortHeader(reader.reader(), std.heap.c_allocator, dcid_len) catch continue;
+        defer packet.deinitShortHeader(&header, std.heap.c_allocator);
     }
 }
 
 /// Fuzz target: decode a QUIC frame from arbitrary bytes.
 pub fn fuzzDecodeFrame(data: []const u8) void {
-    _ = frame.decodeFrameSlice(data, std.heap.c_allocator) catch return;
+    var decoded = frame.decodeFrameSlice(data, std.heap.c_allocator) catch return;
+    defer frame.deinitFrame(&decoded.frame, std.heap.c_allocator);
 }
 
 /// Fuzz target: parse a QUIC transport parameters block (RFC 9000 §18).
