@@ -51810,6 +51810,70 @@ test "installed one RTT key update requires handshake confirmation and ACK befor
     try std.testing.expectEqual(@as(?u64, null), client.pendingOneRttKeyUpdateAckThreshold());
 }
 
+test "key update recovers via PTO when the key-update packet is lost" {
+    // RFC 9001 §6.2 under real loss: the client initiates a 1-RTT key update
+    // and sends an ack-eliciting packet protected with the flipped key phase.
+    // That packet is dropped, so the server never sees the update; the client
+    // must recover by PTO retransmission (RFC 9002 §6.2), after which the server
+    // observes the key-phase flip and the update is confirmed.
+    const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const client_dcid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    var client = try Connection.init(std.testing.allocator, .client, .{
+        .initial_rtt_ns = 100 * ms,
+        .enable_rtt_update = false,
+    });
+    defer client.deinit();
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    try client.installOneRttTrafficSecrets(.{
+        .local = secrets.client.secret,
+        .peer = secrets.server.secret,
+    });
+    try server.installOneRttTrafficSecrets(.{
+        .local = secrets.server.secret,
+        .peer = secrets.client.secret,
+    });
+    try client.confirmHandshake();
+    try server.confirmHandshake();
+
+    // Client initiates a 1-RTT key update and sends an ack-eliciting ping.
+    try client.initiateOneRttKeyUpdate();
+    try std.testing.expectEqual(@as(?u64, 1), client.localOneRttKeyUpdateCount());
+    try client.sendPing();
+    const ku_packet = (try client.pollProtectedShortDatagramWithInstalledKeys(10 * ms, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(ku_packet);
+
+    // The key-update packet is lost: never delivered to the server. The client
+    // has an in-flight ack-eliciting packet, so the application PTO is armed.
+    const deadline = client.lossDetectionTimerDeadline() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(PacketNumberSpace.application, deadline.space);
+    try std.testing.expectEqual(LossDetectionTimerKind.pto, deadline.kind);
+
+    // Fire the PTO: the client re-queues a probe carrying the pending ping.
+    const serviced = (try client.serviceLossDetectionTimer(deadline.deadline_nanos)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(PacketNumberSpace.application, serviced.space);
+    try std.testing.expectEqual(LossDetectionTimerKind.pto, serviced.kind);
+
+    // The retransmission carries the flipped key phase to the server.
+    const retransmit = (try client.pollProtectedShortDatagramWithInstalledKeys(deadline.deadline_nanos + 1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(retransmit);
+
+    // Deliver the retransmission: the server sees the flip, updates its keys,
+    // and ACKs.
+    try server.processProtectedShortDatagramWithInstalledKeys(deadline.deadline_nanos + 2, server_dcid.len, retransmit);
+    try std.testing.expectEqual(@as(?u64, 1), server.peerOneRttKeyUpdateCount());
+
+    const ack = (try server.pollProtectedShortDatagramWithInstalledKeys(deadline.deadline_nanos + 3, &client_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(ack);
+    try client.processProtectedShortDatagramWithInstalledKeys(deadline.deadline_nanos + 4, client_dcid.len, ack);
+    try std.testing.expectEqual(@as(?u64, null), client.pendingOneRttKeyUpdateAckThreshold());
+}
+
 test "EndpointConnectionLifecycle wakes to discard expired retained 1 RTT keys" {
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
