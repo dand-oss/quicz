@@ -1344,6 +1344,54 @@ pub fn encodeHeaderBlockWithDynamic(
     return pos;
 }
 
+/// Encode a header block with dynamic-table insertion (RFC 9204 §4.3).
+///
+/// Unlike `encodeHeaderBlockWithDynamic`, this encoder actively maintains the
+/// dynamic table: fields not already representable by a static/dynamic index
+/// are queued for insertion. The Insert instructions are written to
+/// `encoder_stream_out` (to be sent on the QPACK encoder stream) and applied to
+/// the local `dynamic_table` so the emitted Required Insert Count and the
+/// reference indexes match what the decoder will have after it consumes the
+/// same instructions. Returns the header-block length.
+pub const DynamicEncodeResult = struct {
+    header_block_len: usize,
+    encoder_stream_len: usize,
+};
+
+pub fn encodeHeaderBlockWithDynamicInserting(
+    out: []u8,
+    encoder_stream_out: []u8,
+    fields: []const HeaderField,
+    dynamic_table: *DynamicTable,
+) !DynamicEncodeResult {
+    var instr_pos: usize = 0;
+    for (fields) |field| {
+        // Already exactly representable — no insertion needed.
+        if (dynamic_table.findExact(field.name, field.value) != null) continue;
+        if (findStaticIndex(field.name, field.value) != null) continue;
+
+        const instr = if (dynamic_table.findName(field.name)) |name_index|
+            EncoderInstruction{ .insert_name_ref = .{ .is_static = false, .name_index = name_index, .value = field.value } }
+        else if (findStaticNameIndex(field.name)) |name_index|
+            EncoderInstruction{ .insert_name_ref = .{ .is_static = true, .name_index = name_index, .value = field.value } }
+        else
+            EncoderInstruction{ .insert_literal = .{ .name = field.name, .value = field.value } };
+
+        // Encode the instruction and apply it to the local table so the header
+        // block below references the post-insertion state.
+        try encodeEncoderInstructionToBuffer(encoder_stream_out, &instr_pos, instr);
+        try dynamic_table.insert(field.name, field.value);
+    }
+    const block_len = try encodeHeaderBlockWithDynamic(out, fields, dynamic_table);
+    return .{ .header_block_len = block_len, .encoder_stream_len = instr_pos };
+}
+
+/// Encode an encoder instruction, advancing `pos` and erroring on overflow.
+fn encodeEncoderInstructionToBuffer(buf: []u8, pos: *usize, instruction: EncoderInstruction) !void {
+    const n = try encodeEncoderInstruction(buf[pos.*..], instruction);
+    pos.* += n;
+}
+
 /// Decode a header block that may contain dynamic table references.
 /// The dynamic table must be in the same state as when the block was encoded.
 pub fn decodeHeaderBlockWithDynamic(
@@ -1612,4 +1660,74 @@ test "decodeHeaderBlockWithDynamic: 0xff Required Insert Count prefix does not o
     try std.testing.expectError(error.IncompleteString, decodeHeaderBlockWithDynamic(&[_]u8{ 0xff, 0x01 }, &decoded, &dt));
     // Escape with a truncated trailing varint (length guard rejects first).
     try std.testing.expectError(error.InvalidHeaderBlock, decodeHeaderBlockWithDynamic(&[_]u8{0xff}, &decoded, &dt));
+}
+
+test "encoder insertion roundtrip: instructions fill decoder table" {
+    // Encoder side: a fresh table, first request inserts fields.
+    var enc_table = DynamicTable.init(std.testing.allocator);
+    defer enc_table.deinit();
+    enc_table.setCapacity(4096);
+
+    const fields = [_]HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = ":path", .value = "/index.html" },
+        .{ .name = "x-custom", .value = "my-value" },
+    };
+
+    var block: [512]u8 = undefined;
+    var instr: [512]u8 = undefined;
+    const enc_res = try encodeHeaderBlockWithDynamicInserting(&block, &instr, &fields, &enc_table);
+    const block_len = enc_res.header_block_len;
+    const instr_len = enc_res.encoder_stream_len;
+    // All three fields were inserted.
+    try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count); // :method GET is a static exact match, not inserted
+
+    // Decoder side: consume the encoder stream instructions, then the block.
+    var dec_table = DynamicTable.init(std.testing.allocator);
+    defer dec_table.deinit();
+    dec_table.setCapacity(4096);
+    var pos: usize = 0;
+    while (pos < instr_len) {
+        const decoded = try decodeEncoderInstruction(instr[pos..]);
+        switch (decoded.instruction) {
+            .insert_name_ref => |ins| try dec_table.insert(
+                if (ins.is_static) static_table[@intCast(ins.name_index)].name else (try dec_table.lookup(ins.name_index)).name,
+                ins.value,
+            ),
+            .insert_literal => |ins| try dec_table.insert(ins.name, ins.value),
+            .set_capacity => |cap| dec_table.setCapacity(@intCast(@min(cap, 4096))),
+            .duplicate => |idx| try dec_table.duplicate(idx),
+        }
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+
+    var decoded: [8]HeaderField = undefined;
+    const count = try decodeHeaderBlockWithDynamic(block[0..block_len], &decoded, &dec_table);
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expectEqualStrings(":method", decoded[0].name);
+    try std.testing.expectEqualStrings("GET", decoded[0].value);
+    try std.testing.expectEqualStrings("x-custom", decoded[2].name);
+    try std.testing.expectEqualStrings("my-value", decoded[2].value);
+
+    // Second request: all fields now exactly match the dynamic table, so the
+    // encoder emits dynamic indexes and no new insert instructions.
+    const fields2 = [_]HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = ":path", .value = "/index.html" },
+        .{ .name = "x-custom", .value = "my-value" },
+    };
+    var block2: [512]u8 = undefined;
+    var instr2: [512]u8 = undefined;
+    const enc_res2 = try encodeHeaderBlockWithDynamicInserting(&block2, &instr2, &fields2, &enc_table);
+    const block2_len = enc_res2.header_block_len;
+    try std.testing.expectEqual(@as(usize, 0), enc_res2.encoder_stream_len); // no instructions needed
+    // Insert count unchanged (nothing new inserted).
+    try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count); // :method GET is a static exact match, not inserted
+
+    var decoded2: [8]HeaderField = undefined;
+    const count2 = try decodeHeaderBlockWithDynamic(block2[0..block2_len], &decoded2, &dec_table);
+    try std.testing.expectEqual(@as(usize, 3), count2);
+    try std.testing.expectEqualStrings(":method", decoded2[0].name);
+    try std.testing.expectEqualStrings("GET", decoded2[0].value);
 }
