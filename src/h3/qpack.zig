@@ -1066,11 +1066,13 @@ pub fn decodeDecoderInstruction(data: []const u8) !struct { instruction: Decoder
 
 test "Encoder instruction: insert with static name reference" {
     var buf: [64]u8 = undefined;
-    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
-        .is_static = true,
-        .name_index = 8, // :method
-        .value = "PATCH",
-    }});
+    const len = try encodeEncoderInstruction(&buf, .{
+        .insert_name_ref = .{
+            .is_static = true,
+            .name_index = 8, // :method
+            .value = "PATCH",
+        },
+    });
 
     // Decode and verify
     const result = try decodeEncoderInstruction(buf[0..len]);
@@ -1086,11 +1088,13 @@ test "Encoder instruction: insert with static name reference" {
 
 test "Encoder instruction: insert with dynamic name reference" {
     var buf: [64]u8 = undefined;
-    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
-        .is_static = false,
-        .name_index = 2, // dynamic relative index 2
-        .value = "custom-value",
-    }});
+    const len = try encodeEncoderInstruction(&buf, .{
+        .insert_name_ref = .{
+            .is_static = false,
+            .name_index = 2, // dynamic relative index 2
+            .value = "custom-value",
+        },
+    });
 
     const result = try decodeEncoderInstruction(buf[0..len]);
     switch (result.instruction) {
@@ -1108,7 +1112,7 @@ test "Encoder instruction: insert with literal name" {
     const len = try encodeEncoderInstruction(&buf, .{ .insert_literal = .{
         .name = "x-custom-header",
         .value = "custom-value",
-    }});
+    } });
 
     const result = try decodeEncoderInstruction(buf[0..len]);
     switch (result.instruction) {
@@ -1187,11 +1191,13 @@ test "Decoder instruction: insert count increment" {
 
 test "Encoder instruction: large name index (>= 63)" {
     var buf: [64]u8 = undefined;
-    const len = try encodeEncoderInstruction(&buf, .{ .insert_name_ref = .{
-        .is_static = true,
-        .name_index = 72, // :status 204
-        .value = "",
-    }});
+    const len = try encodeEncoderInstruction(&buf, .{
+        .insert_name_ref = .{
+            .is_static = true,
+            .name_index = 72, // :status 204
+            .value = "",
+        },
+    });
 
     const result = try decodeEncoderInstruction(buf[0..len]);
     switch (result.instruction) {
@@ -1330,7 +1336,10 @@ pub fn decodeHeaderBlockWithDynamic(
         pos += 1;
     }
 
-    // Skip Delta Base (sign bit + 7-bit prefix varint)
+    // Skip Delta Base (sign bit + 7-bit prefix varint). Guard pos: the
+    // Required Insert Count 0xff branch (or a short block) can advance pos to
+    // data.len, and an attacker-controlled header block must not index past it.
+    if (pos >= data.len) return error.IncompleteString;
     if (data[pos] & 0x7f == 0x7f) {
         pos += 1;
         const v = try decodeVarintFromBuf(data, pos);
@@ -1559,4 +1568,20 @@ test "encodeHeaderBlockWithDynamic: large dynamic index (>= 63)" {
     try std.testing.expectEqual(@as(usize, 1), count);
     try std.testing.expectEqualStrings("hdr-0", decoded[0].name);
     try std.testing.expectEqualStrings("val-0", decoded[0].value);
+}
+
+test "decodeHeaderBlockWithDynamic: 0xff Required Insert Count prefix does not overrun" {
+    // A header block whose Required Insert Count uses the 0xff escape advances
+    // pos toward data.len; the Delta Base read must not index past the end.
+    // Regression for an out-of-bounds read found by the QPACK dynamic-table
+    // fuzz driver (index 5, len 5).
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    var decoded: [4]HeaderField = undefined;
+    // [0xff escape][varint=1] -> Required Insert Count consumes the whole
+    // block; the Delta Base read must not index past data.len.
+    try std.testing.expectError(error.IncompleteString, decodeHeaderBlockWithDynamic(&[_]u8{ 0xff, 0x01 }, &decoded, &dt));
+    // Escape with a truncated trailing varint (length guard rejects first).
+    try std.testing.expectError(error.InvalidHeaderBlock, decodeHeaderBlockWithDynamic(&[_]u8{0xff}, &decoded, &dt));
 }

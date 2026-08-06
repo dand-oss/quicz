@@ -9,6 +9,7 @@ const frame = @import("frame.zig");
 const protection = @import("protection.zig");
 const h3_frame = @import("../h3/frame.zig");
 const qpack = @import("../h3/qpack.zig");
+const h3_limits = @import("../h3/limits.zig");
 const h3_request = @import("../h3/request.zig");
 const buffer = @import("buffer.zig");
 const Connection = @import("connection.zig").Connection;
@@ -187,6 +188,50 @@ pub fn fuzzDriveConnectionStateMachine(data: []const u8) void {
     }
 }
 
+/// Fuzz target: drive the QPACK dynamic table state machine (RFC 9204 §4.3).
+///
+/// The static-table targets above (`fuzzDecodeQpack`) never touch the dynamic
+/// table, so insert/duplicate/evict/lookup and cross-referencing header blocks
+/// go unexercised. This driver builds a `DynamicTable`, feeds one half of the
+/// input as an encoder instruction stream (Insert / Set Capacity / Duplicate)
+/// applied as it decodes, then feeds the other half as a header block that
+/// references dynamic-table indices. The fuzzer controls the table lifecycle
+/// end to end; no input may crash.
+pub fn fuzzDriveQpackDynamicTable(data: []const u8) void {
+    if (data.len < 2) return;
+    const allocator = std.heap.page_allocator;
+    var table = qpack.DynamicTable.init(allocator);
+    defer table.deinit();
+    table.setCapacity(h3_limits.max_dynamic_table_capacity);
+
+    // Front half: encoder instruction stream, applied greedily.
+    const instr_end = @min(data.len / 2, data.len - 1);
+    var fields: [h3_limits.max_header_fields]qpack.HeaderField = undefined;
+
+    var pos: usize = 1;
+    while (pos < instr_end) {
+        const decoded = qpack.decodeEncoderInstruction(data[pos..]) catch break;
+        switch (decoded.instruction) {
+            .insert_name_ref => |ins| {
+                // Static name table only; dynamic refs are exercised by feed.
+                if (ins.is_static and ins.name_index < qpack.static_table.len) {
+                    table.insert(qpack.static_table[@intCast(ins.name_index)].name, ins.value) catch {};
+                }
+            },
+            .insert_literal => |ins| table.insert(ins.name, ins.value) catch {},
+            .set_capacity => |cap| table.setCapacity(@intCast(@min(cap, h3_limits.max_dynamic_table_capacity))),
+            .duplicate => |idx| table.duplicate(idx) catch {},
+        }
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+
+    // Back half: header block referencing the (possibly populated) table.
+    if (pos < data.len) {
+        _ = qpack.decodeHeaderBlockWithDynamic(data[pos..], &fields, &table) catch return;
+    }
+}
+
 // ── Unit tests for fuzz targets ──
 
 test "fuzz targets handle empty input" {
@@ -255,4 +300,33 @@ test "fuzz state-machine driver exercises frame + stream paths" {
     fuzzDriveConnectionStateMachine(&[_]u8{ 0x10, 0x68, 0x69 });
     fuzzDriveConnectionStateMachine(&[_]u8{ 0x90, 0x01 });
     fuzzDriveConnectionStateMachine(&[_]u8{ 0x3f, 0x00, 0x01, 0x02, 0x03 });
+}
+
+test "QPACK dynamic-table driver handles empty and tiny input" {
+    fuzzDriveQpackDynamicTable(&.{});
+    fuzzDriveQpackDynamicTable(&.{0x00});
+}
+
+test "QPACK dynamic-table driver never crashes on garbage" {
+    const garbage = [_]u8{
+        0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8,
+        0xf7, 0xf6, 0xf5, 0xf4, 0xf3, 0xf2, 0xf1, 0xf0,
+        0xef, 0xee, 0xed, 0xec, 0xeb, 0xea, 0xe9, 0xe8,
+    };
+    fuzzDriveQpackDynamicTable(&garbage);
+}
+
+test "QPACK dynamic-table driver exercises insert + set-capacity + block" {
+    // Insert-with-literal-name (0x41), then a Set Capacity (0x3f ...), then a
+    // header block referencing the dynamic table.
+    fuzzDriveQpackDynamicTable(&[_]u8{
+        0x41, 0x02, 'f', 'o', 0x03, 'b', 'a', 'r', // insert literal "foo"="bar"
+        0x00, 0x00, // header block: req insert count 0, delta base 0
+        0x80, // indexed field line, dynamic (T=0)
+    });
+    fuzzDriveQpackDynamicTable(&[_]u8{
+        0x3f, 0x01, 0x00, // set capacity varint
+        0x00, 0x00, 0x00, // empty-ish block
+    });
+    fuzzDriveQpackDynamicTable(&[_]u8{ 0x5f, 0x01, 0x01, 'x', 0x00, 0x00, 0x40 });
 }
