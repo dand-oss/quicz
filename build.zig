@@ -24,6 +24,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Benchmark executables must measure production-like throughput, so force
+    // ReleaseFast instead of inheriting the default (Debug) optimize. Without
+    // this, `zig build bench-suite` reports misleadingly low numbers (~50 MB/s
+    // Debug vs ~470 MB/s ReleaseFast).
+    const quicz_bench_mod = b.addModule("quicz_bench", .{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
     const lib = b.addLibrary(.{
         .name = "quicz",
         .root_module = quicz_mod,
@@ -208,9 +218,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/congestion_bench.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });
@@ -224,9 +234,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/quic_bench.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });
@@ -240,9 +250,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/quic_bench_hs.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });
@@ -256,9 +266,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/quic_bench_simple.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });
@@ -272,9 +282,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/quic_bench_datagram.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });
@@ -288,9 +298,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/quic_bench_profile.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "quicz", .module = quicz_mod },
+                .{ .name = "quicz", .module = quicz_bench_mod },
             },
         }),
     });

@@ -26,6 +26,7 @@ LOG="$OUT_DIR/${STAMP}_${COMMIT}.log"
     echo "# os: $(uname -sm)"
     echo "# cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)"
     echo "# zig: $(zig version)"
+    echo "# optimize: ReleaseFast (bench modules force it in build.zig)"
 } > "$LOG"
 cat "$LOG"
 
