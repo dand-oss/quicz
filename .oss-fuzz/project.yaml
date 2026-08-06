@@ -2,9 +2,9 @@
 # See https://google.github.io/oss-fuzz/getting-started/new-project-guide/
 homepage: "https://github.com/venjiang/quicz"
 language: c++   # libFuzzer harness is C++; the target under test is pure Zig.
-primary_contact: "venjiang@example.com"   # REPLACE with the maintainer email.
+primary_contact: "venjiang@gmail.com"
 auto_ccs:
-  - "venjiang@example.com"   # REPLACE with a backup contact.
+  - "venjiang@gmail.com"
 sanitizers:
   - address
   - undefined
