@@ -86,6 +86,12 @@ const StreamSendState = struct {
     fin: bool = false,
 };
 
+/// A queued STOP_SENDING request (stream id + application error code).
+const StopSendingReq = struct {
+    id: u64,
+    code: u64,
+};
+
 /// Per-connection server state.
 const ConnState = struct {
     conn: *Connection,
@@ -95,6 +101,17 @@ const ConnState = struct {
     recv_streams: std.ArrayList(StreamRecvState) = .empty,
     pending_streams: std.ArrayList(u64) = .empty,
     send_streams: std.ArrayList(StreamSendState) = .empty,
+    /// Queued STOP_SENDING requests (stream id + error code), drained by the
+    /// drive task.
+    stop_sendings: std.ArrayList(StopSendingReq) = .empty,
+    /// True while the handler has queued an openUniStream request the drive
+    /// task has not served yet.
+    uni_open_requested: bool = false,
+    /// Result of the most recent openUniStream request (set by the drive task
+    /// before posting uni_open_sem).
+    next_uni_stream: u64 = 0,
+    /// Posted by the drive task once an openUniStream request is served.
+    uni_open_sem: std.Io.Semaphore = .{ .permits = 0 },
     /// Posted by the drive task when stream data or EOF arrives.
     data_sem: std.Io.Semaphore = .{ .permits = 0 },
     /// Set by releaseConnection; the drive task reclaims the state once
@@ -117,6 +134,7 @@ const ConnState = struct {
         self.pending_streams.deinit(alloc);
         for (self.send_streams.items) |*s| s.queue.deinit(alloc);
         self.send_streams.deinit(alloc);
+        self.stop_sendings.deinit(alloc);
     }
 };
 
@@ -317,6 +335,15 @@ pub const Server = struct {
                     sq.queue.clearRetainingCapacity();
                     sq.fin = false;
                 }
+            }
+            for (st.stop_sendings.items) |req| {
+                st.conn.stopSending(req.id, req.code) catch {};
+            }
+            st.stop_sendings.clearRetainingCapacity();
+            if (st.uni_open_requested) {
+                st.next_uni_stream = st.conn.openUniStream() catch 0;
+                st.uni_open_requested = false;
+                st.uni_open_sem.post(self.io);
             }
             st.send_pending = false;
             st.mutex.unlock();
@@ -568,7 +595,12 @@ pub const Server = struct {
                                 var stream_buf: [4096]u8 = undefined;
                                 var sid: u64 = 0;
                                 var pushed = false;
-                                while (sid < 512) : (sid += 4) {
+                                // Poll every client-initiated stream (even sid):
+                                // bidirectional (0,4,8,...) and unidirectional
+                                // (2,6,10,...). Server-initiated (odd) sids are
+                                // send-only here and skipped.
+                                while (sid < 1024) : (sid += 1) {
+                                    if ((sid & 1) != 0) continue;
                                     while (true) {
                                         const n = conn.recvOnStream(sid, &stream_buf) catch break;
                                         const len = n orelse break;
@@ -857,6 +889,43 @@ pub const Server = struct {
         self.mutex.unlock();
         if (notify) self.notifyDrive(self.io);
     }
+
+    /// Queue a STOP_SENDING (RFC 9000 §3.5) for one stream; the drive task
+    /// sends it to the peer. Blocks the handler until the drive task drains it.
+    pub fn stopSendingRequest(self: *Server, conn_id: u64, stream_id: u64, code: u64) !void {
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock();
+            return error.NoConnection;
+        };
+        while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+        cs.stop_sendings.append(self.allocator, .{ .id = stream_id, .code = code }) catch {};
+        const notify = !cs.send_pending;
+        cs.send_pending = true;
+        cs.mutex.unlock();
+        self.mutex.unlock();
+        if (notify) self.notifyDrive(self.io);
+    }
+
+    /// Open a server-initiated unidirectional stream. The drive task performs
+    /// the actual open (the transport is single-threaded) and posts a result;
+    /// this blocks the handler until the stream id is known.
+    pub fn openUniStreamRequest(self: *Server, conn_id: u64) !u64 {
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock();
+            return error.NoConnection;
+        };
+        while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+        cs.uni_open_requested = true;
+        const notify = !cs.send_pending;
+        cs.send_pending = true;
+        cs.mutex.unlock();
+        self.mutex.unlock();
+        if (notify) self.notifyDrive(self.io);
+        cs.uni_open_sem.wait(self.io) catch return error.Canceled;
+        return cs.next_uni_stream;
+    }
 };
 
 /// Per-connection handler callback (std.http model): serves one
@@ -872,13 +941,30 @@ pub const ServerConnection = struct {
         const sid = try self.server.acceptStreamId(self.id);
         return .{ .server = self.server, .conn_id = self.id, .id = sid };
     }
+
+    /// Open a server-initiated unidirectional stream (RFC 9000 §2.1).
+    pub fn openUniStream(self: *ServerConnection) !Stream {
+        const sid = try self.server.openUniStreamRequest(self.id);
+        return .{ .server = self.server, .conn_id = self.id, .id = sid };
+    }
 };
 
-/// A bidirectional stream handle on a server connection.
+/// A stream handle on a server connection (bidirectional or unidirectional;
+/// local or peer-initiated). `acceptStream` may return a peer (client)
+/// unidirectional stream; `openUniStream` creates a server one.
 pub const Stream = struct {
     server: *Server,
     conn_id: u64,
     id: u64,
+
+    /// True for a unidirectional stream (RFC 9000 §2.1 bit 1 set).
+    pub fn isUni(self: Stream) bool {
+        return (self.id & 2) != 0;
+    }
+    /// True if the client initiated the stream (RFC 9000 §2.1 bit 0 clear).
+    pub fn isClientInitiated(self: Stream) bool {
+        return (self.id & 1) == 0;
+    }
 
     /// Read queued stream bytes. Returns 0 at EOF: the peer FIN arrived
     /// and every stream byte was already consumed.
@@ -887,5 +973,9 @@ pub const Stream = struct {
     }
     pub fn send(self: *Stream, data: []const u8, fin: bool) !void {
         return self.server.sendStreamData(self.conn_id, self.id, data, fin);
+    }
+    /// Ask the peer to STOP_SENDING this stream with `code` (RFC 9000 §3.5).
+    pub fn stopSending(self: *Stream, code: u64) !void {
+        return self.server.stopSendingRequest(self.conn_id, self.id, code);
     }
 };

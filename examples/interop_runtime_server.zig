@@ -18,8 +18,14 @@ fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
     return buf[0..n];
 }
 
-/// Echo every stream until the connection closes: receive to EOF, echo each
-/// chunk back, FIN the echoed stream (QUIC-Interop-Runner echo semantics).
+const server_uni_payload = "uni-reply";
+
+/// Echo every stream until the connection closes (QUIC-Interop-Runner echo
+/// semantics), plus the go_echo_client feature probes:
+/// - bidirectional streams: receive to EOF, echo each chunk back, FIN.
+/// - client unidirectional streams: consume to EOF, reply on a server
+///   unidirectional stream with `uni-reply`.
+/// - a payload beginning with "stop" triggers STOP_SENDING error 42.
 fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
     var c = conn;
     var buf: [4096]u8 = undefined;
@@ -31,6 +37,29 @@ fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
             }
             return;
         };
+        if (stream.isUni() and stream.isClientInitiated()) {
+            // Client uni stream: consume, then reply on a server uni stream.
+            var uni_total: usize = 0;
+            while (true) {
+                const n = stream.receive(&buf) catch |e| {
+                    if (e != error.Canceled and e != error.ConnectionClosed) {
+                        std.debug.print("runtime interop server: conn {d} uni {d} receive: {}\n", .{ c.id, stream.id, e });
+                    }
+                    break;
+                };
+                if (n == 0) break; // EOF.
+                uni_total = @min(uni_total + n, buf.len);
+            }
+            var reply = c.openUniStream() catch {
+                continue;
+            };
+            reply.send(server_uni_payload, true) catch |e| {
+                std.debug.print("runtime interop server: conn {d} uni {d} reply send: {}\n", .{ c.id, reply.id, e });
+                continue;
+            };
+            continue;
+        }
+        // Bidirectional stream: echo; a "stop" payload asks the peer to stop.
         while (true) {
             const n = stream.receive(&buf) catch |e| {
                 if (e != error.Canceled and e != error.ConnectionClosed) {
@@ -39,6 +68,10 @@ fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
                 break;
             };
             if (n == 0) break; // EOF: peer FIN fully consumed.
+            if (std.mem.startsWith(u8, buf[0..n], "stop")) {
+                stream.stopSending(42) catch {};
+                break;
+            }
             stream.send(buf[0..n], false) catch |e| {
                 std.debug.print("runtime interop server: conn {d} stream {d} send: {}\n", .{ c.id, stream.id, e });
                 break;
