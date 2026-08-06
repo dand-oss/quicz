@@ -1,7 +1,0 @@
-# quicz benchmark suite
-# commit: a5564b807c1272949e113476cd1e896ecec884ba
-# date_utc: 20260805T154847Z
-# os: Darwin arm64
-# cpu: Apple M1
-# zig: 0.16.0
-build failed
