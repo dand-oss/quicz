@@ -200,6 +200,13 @@ zig-out/bin/quicz-interop-runtime-client 127.0.0.1 4433 quicz-echo-ca.pem localh
 examples/interop/run_reverse_interop.sh all 4433
 ```
 
+## Security
+
+[`THREAT_MODEL.md`](THREAT_MODEL.md) documents the trust boundary and the
+defenses against in-scope attacks (amplification, packet injection, stateless
+reset token guessing, version downgrade, hostile transport parameters, Retry
+token forgery), each with code and test references.
+
 ## Project Structure
 
 | Path | Description |
