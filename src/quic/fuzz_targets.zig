@@ -20,28 +20,28 @@ const transport_parameters = @import("transport_parameters.zig");
 /// Fuzz target: parse a QUIC long header from arbitrary bytes.
 pub fn fuzzParseLongHeader(data: []const u8) void {
     var reader = buffer.fixedReader(data);
-    _ = packet.parseLongHeader(reader.reader(), std.heap.page_allocator) catch return;
+    _ = packet.parseLongHeader(reader.reader(), std.heap.c_allocator) catch return;
 }
 
 /// Fuzz target: parse a QUIC short header from arbitrary bytes.
 pub fn fuzzParseShortHeader(data: []const u8) void {
     for ([_]usize{ 4, 8, 16, 20 }) |dcid_len| {
         var reader = buffer.fixedReader(data);
-        _ = packet.parseShortHeader(reader.reader(), std.heap.page_allocator, dcid_len) catch continue;
+        _ = packet.parseShortHeader(reader.reader(), std.heap.c_allocator, dcid_len) catch continue;
     }
 }
 
 /// Fuzz target: decode a QUIC frame from arbitrary bytes.
 pub fn fuzzDecodeFrame(data: []const u8) void {
-    _ = frame.decodeFrameSlice(data, std.heap.page_allocator) catch return;
+    _ = frame.decodeFrameSlice(data, std.heap.c_allocator) catch return;
 }
 
 /// Fuzz target: parse a QUIC transport parameters block (RFC 9000 §18).
 /// The handshake carries these from a hostile peer; each value passes through
 /// range/clone validation, so any overrun or allocation bug is a real hole.
 pub fn fuzzParseTransportParameters(data: []const u8) void {
-    var params = transport_parameters.parse(data, std.heap.page_allocator) catch return;
-    params.deinit(std.heap.page_allocator);
+    var params = transport_parameters.parse(data, std.heap.c_allocator) catch return;
+    params.deinit(std.heap.c_allocator);
 }
 
 /// Fuzz target: peek at a protected long packet from arbitrary bytes.
@@ -96,7 +96,7 @@ fn streamStateFromByte(byte: u8) h3_connection.StreamState {
 /// controls via frame streams. No input may crash.
 pub fn fuzzDriveH3Connection(data: []const u8) void {
     if (data.len == 0) return;
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     var h3 = h3_connection.H3Connection.init(allocator);
     defer h3.deinit();
 
@@ -215,7 +215,7 @@ const FuzzConnectionDriver = struct {
 /// is fed as frame bytes (or stream data) through real AEAD protection.
 pub fn fuzzDriveConnectionStateMachine(data: []const u8) void {
     if (data.len == 0) return;
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     var driver = FuzzConnectionDriver.init(allocator) catch return;
     defer driver.deinit();
 
@@ -263,7 +263,7 @@ pub fn fuzzDriveConnectionStateMachine(data: []const u8) void {
 /// end to end; no input may crash.
 pub fn fuzzDriveQpackDynamicTable(data: []const u8) void {
     if (data.len < 2) return;
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     var table = qpack.DynamicTable.init(allocator);
     defer table.deinit();
     table.setCapacity(h3_limits.max_dynamic_table_capacity);
