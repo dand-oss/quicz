@@ -31,13 +31,22 @@ pub fn fuzzVarintDecode(data: []const u8) void {
 }
 
 /// Simple coverage-guided fuzz loop for testing.
-pub fn main() !void {
+///
+/// Iteration count is configurable so large reproducible sweeps are possible:
+///   zig build run-fuzz -- 1000000
+pub fn main(init: std.process.Init) !void {
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args_iter.next(); // program name
+    const iterations: usize = if (args_iter.next()) |arg|
+        (std.fmt.parseInt(usize, arg, 10) catch 100_000)
+    else
+        100_000;
+
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     var buf: [4096]u8 = undefined;
     var i: usize = 0;
-    const iterations: usize = 100_000;
 
     while (i < iterations) : (i += 1) {
         const len = random.intRangeAtMost(usize, 1, buf.len);

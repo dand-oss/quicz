@@ -549,7 +549,17 @@ pub const DynamicTable = struct {
     pub fn duplicate(self: *DynamicTable, relative_index: u64) !void {
         const idx = try self.relativeToAbsolute(relative_index);
         const entry = self.entries.items[idx];
-        try self.insert(entry.name, entry.value);
+        // Copy before insert: insert() may evict — freeing this very entry's
+        // name/value heap — before it dups the caller's slices. Reading the
+        // table-owned slice after that is a use-after-free (found by the
+        // QPACK dynamic-table fuzz driver at 30k+ iterations).
+        const name_copy = try self.allocator.dupe(u8, entry.name);
+        errdefer self.allocator.free(name_copy);
+        const value_copy = try self.allocator.dupe(u8, entry.value);
+        errdefer self.allocator.free(value_copy);
+        try self.insert(name_copy, value_copy);
+        self.allocator.free(name_copy);
+        self.allocator.free(value_copy);
     }
 
     /// Look up an entry by relative index (0 = newest).
@@ -738,6 +748,24 @@ test "DynamicTable duplicate" {
     const entry0 = try dt.lookup(0);
     try std.testing.expectEqualStrings(":method", entry0.name);
     try std.testing.expectEqualStrings("GET", entry0.value);
+}
+
+test "DynamicTable duplicate does not use-after-free when evicting self" {
+    // Regression: duplicate() read the table-owned name/value slice, then
+    // insert() evicted — freeing that same entry's heap — before duping it.
+    // capacity just fits 2 entries; the shared table is full.
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(100); // 2 x (10 + 3 + 32) = 90 <= 100; 3rd forces evict
+    try dt.insert("aaaaaaaaaa", "b"); // 10 + 1 + 32 = 43
+    try dt.insert("cccccccccc", "d"); // 43
+    // Duplicate the oldest (index 1): insert() must evict it to make room.
+    try dt.duplicate(1);
+    // The duplicate is the newest; the evicted copy is gone.
+    try std.testing.expectEqual(@as(usize, 2), dt.entryCount());
+    const top = try dt.lookup(0);
+    try std.testing.expectEqualStrings("aaaaaaaaaa", top.name);
+    try std.testing.expectEqualStrings("b", top.value);
 }
 
 test "DynamicTable findExact and findName" {
