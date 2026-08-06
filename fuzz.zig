@@ -46,6 +46,7 @@ pub fn main() !void {
         fuzzFrameDecode(buf[0..len]);
         fuzzLongHeaderParse(buf[0..len]);
         fuzzVarintDecode(buf[0..len]);
+        quicz.fuzz_targets.fuzzDriveConnectionStateMachine(buf[0..len]);
 
         if (i % 10_000 == 0) {
             std.debug.print("fuzz progress: {d}/{d}\n", .{ i, iterations });
