@@ -401,7 +401,7 @@ pub const Server = struct {
         var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var scratch: [8192]u8 = undefined;
 
-        const action = self.server_ep.feedDatagram(&scratch, path, data, &[_]u8{}, &[_]quic_packet.Version{.v1}) catch |e| {
+        const action = self.server_ep.feedDatagram(&scratch, path, data, &[_]u8{}, &[_]quic_packet.Version{ .v1, .v2 }) catch |e| {
             log.err("drive: feedDatagram ({d} bytes): {}", .{ data.len, e });
             return;
         };
@@ -531,8 +531,8 @@ pub const Server = struct {
                     now,
                     effective_data,
                     &[_]u8{},
-                    &[_]quic_packet.Version{.v1},
-                    .{ .space = space, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{.v1} },
+                    &[_]quic_packet.Version{ .v1, .v2 },
+                    .{ .space = space, .out = &scratch, .unpredictable_prefix = &[_]u8{}, .supported_versions = &[_]quic_packet.Version{ .v1, .v2 } },
                     &scratch,
                     &[_]u8{},
                     &initial_out,

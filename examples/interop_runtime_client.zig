@@ -3,7 +3,7 @@
 //! external QUIC servers (quic-go / quiche / s2n-quic).
 //!
 //! Usage: quicz-interop-runtime-client <server_ip> <server_port> <ca_pem> [server_name]
-//! Env:   TESTCASE=handshake|transfer|verified|multiconnect|keyupdate (default transfer)
+//! Env:   TESTCASE=handshake|transfer|verified|multiconnect|keyupdate|v2 (default transfer)
 //!
 //! handshake    = stop after TLS 1.3 handshake confirmed
 //! transfer     = handshake + bidirectional stream echo
@@ -13,6 +13,8 @@
 //! keyupdate    = handshake + echo on old keys, then a client-initiated 1-RTT
 //!                key update (RFC 9001 §6) + echo on the updated keys
 //!                (QUIC-Interop-Runner `keyupdate` shape)
+//! v2           = QUIC v2 (RFC 9369) handshake + bidirectional stream echo
+//!                (QUIC-Interop-Runner `v2` shape)
 
 const std = @import("std");
 const quicz = @import("quicz");
@@ -38,6 +40,7 @@ pub fn main(init: std.process.Init) !void {
     const testcase = init.environ_map.get("TESTCASE") orelse "transfer";
     const handshake_only = std.mem.eql(u8, testcase, "handshake");
     const keyupdate = std.mem.eql(u8, testcase, "keyupdate");
+    const v2 = std.mem.eql(u8, testcase, "v2");
     const connections: usize = if (std.mem.eql(u8, testcase, "multiconnect")) 3 else 1;
 
     const server_addr = try std.Io.net.IpAddress.parseIp4(server_ip, server_port);
@@ -50,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
 
     var index: usize = 0;
     while (index < connections) : (index += 1) {
-        try runSession(allocator, io, server_addr.ip4.bytes, server_port, server_name, &ca_bundle, handshake_only, keyupdate);
+        try runSession(allocator, io, server_addr.ip4.bytes, server_port, server_name, &ca_bundle, handshake_only, keyupdate, v2);
         if (connections > 1) {
             std.debug.print("connection {d}/{d} done\n", .{ index + 1, connections });
         }
@@ -73,13 +76,16 @@ fn runSession(
     ca_bundle: *std.crypto.Certificate.Bundle,
     handshake_only: bool,
     keyupdate: bool,
+    v2: bool,
 ) !void {
+    const version: quicz.packet.Version = if (v2) .v2 else .v1;
     var client = try Client.init(allocator, io, .{
         .server_host = server_host,
         .server_port = server_port,
         .server_name = server_name,
         .alpn = &alpn,
         .ca_bundle = ca_bundle,
+        .version = version,
     });
     defer client.deinit();
 
@@ -104,7 +110,11 @@ fn runSession(
     if (total != echo_payload.len) return error.MissingStreamEcho;
 
     if (!keyupdate) {
-        std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
+        if (v2) {
+            std.debug.print("v2_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
+        } else {
+            std.debug.print("transfer_done=true certificate_verified=true alpn=hq-interop echo_bytes={d}\n", .{total});
+        }
         client.close();
         return;
     }

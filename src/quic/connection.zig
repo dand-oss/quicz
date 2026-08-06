@@ -1543,8 +1543,8 @@ pub const Connection = struct {
     ) Error!void {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (self.handshake_packet_space.discarded) return error.InvalidPacket;
-        self.local_handshake_keys = protection.deriveAes128PacketProtectionKeys(secrets.local);
-        self.peer_handshake_keys = protection.deriveAes128PacketProtectionKeys(secrets.peer);
+        self.local_handshake_keys = protection.deriveAes128PacketProtectionKeysForVersion(secrets.local, self.config.chosen_version);
+        self.peer_handshake_keys = protection.deriveAes128PacketProtectionKeysForVersion(secrets.peer, self.config.chosen_version);
     }
 
     /// Return whether both local send and peer receive Handshake keys exist.
@@ -1566,10 +1566,10 @@ pub const Connection = struct {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         if (secrets.local == null and secrets.peer == null) return error.InvalidPacket;
         if (secrets.local) |local| {
-            self.local_zero_rtt_keys = protection.deriveAes128PacketProtectionKeys(local);
+            self.local_zero_rtt_keys = protection.deriveAes128PacketProtectionKeysForVersion(local, self.config.chosen_version);
         }
         if (secrets.peer) |peer| {
-            self.peer_zero_rtt_keys = protection.deriveAes128PacketProtectionKeys(peer);
+            self.peer_zero_rtt_keys = protection.deriveAes128PacketProtectionKeysForVersion(peer, self.config.chosen_version);
             self.peer_zero_rtt_accepted = false;
         }
     }
@@ -1645,13 +1645,15 @@ pub const Connection = struct {
         if (self.side == .client) {
             self.discardZeroRttProtectionKeyState();
         }
-        self.local_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.init(
-            protection.deriveAes128PacketProtectionKeys(secrets.local),
+        self.local_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.initForVersion(
+            protection.deriveAes128PacketProtectionKeysForVersion(secrets.local, self.config.chosen_version),
             false,
+            self.config.chosen_version,
         );
-        self.peer_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.init(
-            protection.deriveAes128PacketProtectionKeys(secrets.peer),
+        self.peer_one_rtt_key_phase_state = protection.Aes128KeyPhaseState.initForVersion(
+            protection.deriveAes128PacketProtectionKeysForVersion(secrets.peer, self.config.chosen_version),
             false,
+            self.config.chosen_version,
         );
         self.local_one_rtt_key_update_ack_threshold = null;
     }
@@ -1936,6 +1938,16 @@ pub const Connection = struct {
     /// Return the configured QUIC version for protected packet processing.
     pub fn chosenVersion(self: Connection) packet.Version {
         return self.config.chosen_version;
+    }
+
+    /// Set the QUIC version for protected packet processing.
+    ///
+    /// Server connections adopt the version from an accepted client Initial
+    /// so that subsequent Initial/Handshake packet construction and key
+    /// derivation use the version the client chose. Must be called before the
+    /// first outgoing long-header packet is built.
+    pub fn setChosenVersion(self: *Connection, version: packet.Version) void {
+        self.config.chosen_version = version;
     }
 
     /// Return the version selected from a validated Version Negotiation packet.

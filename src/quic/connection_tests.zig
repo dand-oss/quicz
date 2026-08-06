@@ -24213,7 +24213,7 @@ fn expectCompatibleDueDeadlineInstalledKeyOptionsKeepZeroRttRecoveryOutput(
     };
 
     const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
-    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+    const secrets = try protection.deriveInitialSecrets(.v2, &original_dcid);
 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
     defer lifecycle.deinit();

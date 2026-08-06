@@ -535,6 +535,9 @@ pub const EndpointConnectionLifecycle = struct {
         datagram: []const u8,
         options: endpoint.AcceptedInitialRouteOptions,
     ) EndpointProtectedInitialError!EndpointAcceptedProtectedInitialResult {
+        // Adopt the client's QUIC version so subsequent Initial/Handshake
+        // packet construction and key derivation match the accepted Initial.
+        connection.setChosenVersion(initial_accept.version);
         const initial_secrets = protection.deriveInitialSecrets(
             initial_accept.version,
             initial_accept.original_destination_connection_id,

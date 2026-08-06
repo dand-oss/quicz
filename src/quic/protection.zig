@@ -196,6 +196,8 @@ pub const Aes128KeyPhaseState = struct {
     /// retained generation can be surfaced as KEY_UPDATE_ERROR (RFC 9001 §6.5).
     /// Null before any previous generation has been discarded.
     discarded_previous_key_phase: ?bool = null,
+    /// HKDF labels used for key updates (v1 or v2 per RFC 9369).
+    labels: HkdfLabelSet = hkdf_labels_v1,
 
     /// Initialize key-phase state from the currently active 1-RTT keys.
     pub fn init(current: Aes128PacketProtectionKeys, current_key_phase: bool) Aes128KeyPhaseState {
@@ -204,6 +206,25 @@ pub const Aes128KeyPhaseState = struct {
             .next = nextAes128PacketProtectionKeys(current),
             .current_key_phase = current_key_phase,
             .key_update_count = 0,
+        };
+    }
+
+    /// Initialize key-phase state with version-specific labels for key updates.
+    pub fn initForVersion(
+        current: Aes128PacketProtectionKeys,
+        current_key_phase: bool,
+        version: packet.Version,
+    ) Aes128KeyPhaseState {
+        const labels = switch (version) {
+            .v2 => hkdf_labels_v2,
+            else => hkdf_labels_v1,
+        };
+        return .{
+            .current = current,
+            .next = nextAes128PacketProtectionKeysForVersion(current, version),
+            .current_key_phase = current_key_phase,
+            .key_update_count = 0,
+            .labels = labels,
         };
     }
 
@@ -309,7 +330,10 @@ pub const Aes128KeyPhaseState = struct {
         self.previous_key_phase = self.current_key_phase;
         self.previous_discard_deadline_nanos = null;
         self.current = self.next;
-        self.next = nextAes128PacketProtectionKeys(self.current);
+        const next_secret = hkdfExpandLabel(self.current.secret, self.labels.ku, traffic_secret_len);
+        var next = deriveAes128PacketProtectionKeysWithLabels(next_secret, self.labels);
+        next.hp = self.current.hp;
+        self.next = next;
         self.current_key_phase = !self.current_key_phase;
         self.key_update_count +|= 1;
     }
@@ -367,6 +391,21 @@ pub fn deriveAes128PacketProtectionKeys(secret: [traffic_secret_len]u8) Aes128Pa
     return deriveAes128PacketProtectionKeysWithLabels(secret, hkdf_labels_v1);
 }
 
+/// Derive AEAD and header-protection keys using version-specific HKDF labels.
+///
+/// QUIC v2 (RFC 9369) uses "quicv2 ..." labels for ALL packet protection key
+/// derivation, not just Initial. QUIC v1 uses "quic ..." labels.
+pub fn deriveAes128PacketProtectionKeysForVersion(
+    secret: [traffic_secret_len]u8,
+    version: packet.Version,
+) Aes128PacketProtectionKeys {
+    const labels = switch (version) {
+        .v2 => hkdf_labels_v2,
+        else => hkdf_labels_v1,
+    };
+    return deriveAes128PacketProtectionKeysWithLabels(secret, labels);
+}
+
 fn deriveAes128PacketProtectionKeysWithLabels(
     secret: [traffic_secret_len]u8,
     labels: HkdfLabelSet,
@@ -384,6 +423,18 @@ pub fn nextAes128TrafficSecret(secret: [traffic_secret_len]u8) [traffic_secret_l
     return hkdfExpandLabel(secret, hkdf_labels_v1.ku, traffic_secret_len);
 }
 
+/// Derive the next 1-RTT traffic secret using version-specific HKDF labels.
+pub fn nextAes128TrafficSecretForVersion(
+    secret: [traffic_secret_len]u8,
+    version: packet.Version,
+) [traffic_secret_len]u8 {
+    const labels = switch (version) {
+        .v2 => hkdf_labels_v2,
+        else => hkdf_labels_v1,
+    };
+    return hkdfExpandLabel(secret, labels.ku, traffic_secret_len);
+}
+
 /// Derive the next packet protection keys for a QUIC 1-RTT key update.
 ///
 /// QUIC key update changes the packet protection key and IV from the next
@@ -391,6 +442,18 @@ pub fn nextAes128TrafficSecret(secret: [traffic_secret_len]u8) [traffic_secret_l
 pub fn nextAes128PacketProtectionKeys(current: Aes128PacketProtectionKeys) Aes128PacketProtectionKeys {
     const next_secret = nextAes128TrafficSecret(current.secret);
     var next = deriveAes128PacketProtectionKeys(next_secret);
+    next.hp = current.hp;
+    return next;
+}
+
+/// Derive the next packet protection keys for a QUIC 1-RTT key update using
+/// version-specific HKDF labels.
+pub fn nextAes128PacketProtectionKeysForVersion(
+    current: Aes128PacketProtectionKeys,
+    version: packet.Version,
+) Aes128PacketProtectionKeys {
+    const next_secret = nextAes128TrafficSecretForVersion(current.secret, version);
+    var next = deriveAes128PacketProtectionKeysForVersion(next_secret, version);
     next.hp = current.hp;
     return next;
 }

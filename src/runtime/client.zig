@@ -12,6 +12,7 @@ const quicz = @import("../lib.zig");
 
 const Tls13ClientEndpoint = quicz.Tls13ClientEndpoint;
 const endpoint = quicz.endpoint;
+const quic_packet = quicz.packet;
 
 const log = std.log.scoped(.quicz_runtime);
 
@@ -114,6 +115,8 @@ pub const Client = struct {
         ca_bundle: ?*const std.crypto.Certificate.Bundle = null,
         /// Skip certificate verification (testing only).
         insecure_skip_verify: bool = false,
+        /// QUIC version for the Initial handshake (RFC 9369 v2 = 0x6b3343cf).
+        version: quic_packet.Version = .v1,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
@@ -137,6 +140,10 @@ pub const Client = struct {
             .now_sec = now.toSeconds(),
             .client_ca_bundle = config.ca_bundle,
         };
+        const available_versions: []const quic_packet.Version = switch (config.version) {
+            .v2 => &[_]quic_packet.Version{ .v1, .v2 },
+            else => &[_]quic_packet.Version{.v1},
+        };
         const client = try Tls13ClientEndpoint.init(
             allocator,
             1,
@@ -148,6 +155,8 @@ pub const Client = struct {
                 .initial_max_streams_bidi = 128,
                 .initial_max_streams_uni = 128,
                 .max_datagram_size = max_datagram_size,
+                .chosen_version = config.version,
+                .available_versions = available_versions,
             },
             tls_config,
             original_dcid,
