@@ -7153,11 +7153,14 @@ pub const Connection = struct {
         var received_handshake_done = false;
         var offset: usize = 0;
         while (offset < datagram.len) {
-            var decoded = frame.decodeFrameSlice(datagram[offset..], self.allocator) catch |err| switch (err) {
+            // Borrow STREAM/CRYPTO payloads from the packet plaintext instead of
+            // copying them; every handler copies into its own storage before the
+            // plaintext is freed, so the borrow is never retained past this loop.
+            var decoded = frame.decodeFrameSliceBorrowing(datagram[offset..], self.allocator) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return error.InvalidPacket,
             };
-            defer frame.deinitFrame(&decoded.frame, self.allocator);
+            defer frame.deinitFrameBorrowing(&decoded.frame, self.allocator);
 
             if (decoded.len == 0) return error.InvalidPacket;
             if (!frameAllowedInFramePacketType(decoded.frame, packet_type)) return error.InvalidPacket;

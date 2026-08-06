@@ -611,8 +611,53 @@ pub fn decodeFrameSlice(data: []const u8, allocator: std.mem.Allocator) !Decoded
 
 /// Decode one minimal QUIC frame from `reader`. STREAM frames without a Length
 /// field require a reader that exposes `remainingLen()` so the decoder can
-/// consume the rest of the packet payload.
+/// consume the rest of the packet payload. Byte payloads (STREAM/CRYPTO/
+/// NEW_TOKEN/CID/reason/datagram) are owned copies.
 pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
+    return decodeFrameImpl(reader, allocator, false);
+}
+
+/// Decode one frame with byte payloads borrowed from the reader's backing
+/// buffer instead of copied. The caller must keep the backing buffer alive
+/// until the frame is processed and must free the frame with
+/// `deinitFrameBorrowing` (which still frees derived allocations like ACK
+/// ranges but not the borrowed byte slices). Avoids one alloc+copy of the
+/// STREAM/CRYPTO payload per packet on the bulk receive path.
+pub fn decodeFrameBorrowing(reader: anytype, allocator: std.mem.Allocator) !Frame {
+    return decodeFrameImpl(reader, allocator, true);
+}
+
+/// Decode one minimal QUIC frame from `data` with byte payloads borrowed from
+/// `data`. See `decodeFrameBorrowing` for the ownership contract.
+pub fn decodeFrameSliceBorrowing(data: []const u8, allocator: std.mem.Allocator) !DecodedFrame {
+    if (data.len == 0) return error.EndOfStream;
+
+    if (data[0] == @intFromEnum(FrameType.padding)) {
+        var plen: usize = 0;
+        while (plen < data.len and data[plen] == @intFromEnum(FrameType.padding)) : (plen += 1) {}
+        return .{ .frame = .{ .padding = .{ .len = plen } }, .len = plen };
+    }
+
+    var in = buffer.fixedReader(data);
+    const decoded = try decodeFrameImpl(in.reader(), allocator, true);
+    return .{ .frame = decoded, .len = in.pos };
+}
+
+/// Free a frame decoded by `decodeFrameBorrowing`/`decodeFrameSliceBorrowing`.
+/// Derived allocations (ACK ranges, NEW_CONNECTION_ID lists) are freed; the
+/// borrowed byte payload slices are not owned and are left untouched.
+pub fn deinitFrameBorrowing(frame: *Frame, allocator: std.mem.Allocator) void {
+    switch (frame.*) {
+        .ack => |ack| deinitAckFrame(ack, allocator),
+        .ack_ecn => |ack_ecn| deinitAckFrame(ack_ecn.ack, allocator),
+        else => {},
+    }
+}
+
+/// Decode one minimal QUIC frame from `reader`. STREAM frames without a Length
+/// field require a reader that exposes `remainingLen()` so the decoder can
+/// consume the rest of the packet payload.
+fn decodeFrameImpl(reader: anytype, allocator: std.mem.Allocator, comptime borrow: bool) !Frame {
     const frame_type = try decodeFrameType(reader);
 
     if (frame_type == frameTypeId(.padding)) {
@@ -666,7 +711,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
         const token_len = (try packet.decodeVarInt(reader)).value;
         const len_usize = try varIntToUsize(token_len);
         if (len_usize == 0) return error.InvalidFrameValue;
-        const token = try buffer.readOwnedBytes(reader, allocator, len_usize);
+        const token = try buffer.readBytes(reader, allocator, len_usize, borrow);
 
         return .{ .new_token = .{ .token = token } };
     }
@@ -677,7 +722,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
         try validateFrameEndOffset(offset, data_len);
         const len_usize = try varIntToUsize(data_len);
 
-        const data = try buffer.readOwnedBytes(reader, allocator, len_usize);
+        const data = try buffer.readBytes(reader, allocator, len_usize, borrow);
 
         return .{ .crypto = .{
             .offset = offset,
@@ -745,7 +790,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
         try validateConnectionIdLen(connection_id_len);
         if (retire_prior_to > sequence_number) return error.InvalidFrameValue;
 
-        const connection_id = try buffer.readOwnedBytes(reader, allocator, connection_id_len);
+        const connection_id = try buffer.readBytes(reader, allocator, connection_id_len, borrow);
         errdefer allocator.free(connection_id);
 
         var stateless_reset_token: [16]u8 = undefined;
@@ -803,7 +848,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
             return error.InvalidFrameLength;
         };
 
-        const data = try buffer.readOwnedBytes(reader, allocator, len_usize);
+        const data = try buffer.readBytes(reader, allocator, len_usize, borrow);
 
         return .{ .stream = .{
             .stream_id = stream_id,
@@ -819,7 +864,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
         const reason_len = (try packet.decodeVarInt(reader)).value;
         const len_usize = try varIntToUsize(reason_len);
 
-        const reason_phrase = try buffer.readOwnedBytes(reader, allocator, len_usize);
+        const reason_phrase = try buffer.readBytes(reader, allocator, len_usize, borrow);
 
         return .{ .connection_close = .{
             .error_code = error_code,
@@ -833,7 +878,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
         const reason_len = (try packet.decodeVarInt(reader)).value;
         const len_usize = try varIntToUsize(reason_len);
 
-        const reason_phrase = try buffer.readOwnedBytes(reader, allocator, len_usize);
+        const reason_phrase = try buffer.readBytes(reader, allocator, len_usize, borrow);
 
         return .{ .application_close = .{
             .error_code = error_code,
@@ -848,9 +893,7 @@ pub fn decodeFrame(reader: anytype, allocator: std.mem.Allocator) !Frame {
     // RFC 9221 DATAGRAM with length (0x31)
     if (frame_type == @intFromEnum(FrameType.datagram_with_length)) {
         const len = (try packet.decodeVarInt(reader)).value;
-        const data = try allocator.alloc(u8, len);
-        errdefer allocator.free(data);
-        try reader.readNoEof(data);
+        const data = try buffer.readBytes(reader, allocator, len, borrow);
         return .{ .datagram = .{ .data = data } };
     }
 

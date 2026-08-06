@@ -23,6 +23,17 @@ pub const FixedReader = struct {
         self.pos += out.len;
     }
 
+    /// Return a slice of the next `len` bytes without copying. The slice is
+    /// borrowed from the reader's backing buffer and stays valid as long as
+    /// that buffer outlives the borrow. Used by the borrowing frame decode path
+    /// to avoid one owned copy of STREAM/CRYPTO payloads per packet.
+    pub fn readSlice(self: *FixedReader, len: usize) ![]const u8 {
+        if (self.data.len - self.pos < len) return error.EndOfStream;
+        const slice = self.data[self.pos..][0..len];
+        self.pos += len;
+        return slice;
+    }
+
     pub fn remainingLen(self: FixedReader) usize {
         return self.data.len - self.pos;
     }
@@ -78,6 +89,18 @@ pub fn readOwnedBytes(reader: anytype, allocator: std.mem.Allocator, len: usize)
     errdefer allocator.free(data);
     try reader.readNoEof(data);
     return data;
+}
+
+/// Read `len` bytes, either as an owned copy (`borrow == false`) or as a slice
+/// borrowed from the reader's backing buffer (`borrow == true`). Borrowing
+/// requires the reader to expose `readSlice`; it avoids one alloc+copy per
+/// frame payload on the bulk receive path.
+pub fn readBytes(reader: anytype, allocator: std.mem.Allocator, len: usize, comptime borrow: bool) ![]u8 {
+    if (borrow) {
+        const slice = try reader.readSlice(len);
+        return @constCast(slice);
+    }
+    return readOwnedBytes(reader, allocator, len);
 }
 
 /// Create a fixed writer over caller-owned `buffer`.
