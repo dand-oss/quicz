@@ -896,6 +896,46 @@ pub fn protectShortPacketAes128(
     return datagram;
 }
 
+/// Protect a short-header packet whose header and plaintext are already written
+/// into `datagram` in place.
+///
+/// Caller responsibilities:
+///   - `datagram[0..header_len]` holds the encoded short header (first byte +
+///     DCID + packet number).
+///   - `datagram[header_len .. header_len + plaintext_len]` holds the plaintext
+///     frame payload.
+///   - `datagram.len >= header_len + plaintext_len + aead_tag_len`.
+///
+/// This AEAD-encrypts the payload in place (same buffer), appends the tag, and
+/// applies short-header protection. It saves the separate plaintext allocation
+/// and the payload copy that `protectShortPacketAes128` performs, which is the
+/// dominant per-packet cost in the bulk STREAM send path.
+pub fn protectShortPacketAes128InPlace(
+    header: packet.ShortHeader,
+    packet_number_encoding: packet.PacketNumberEncoding,
+    keys: Aes128PacketProtectionKeys,
+    datagram: []u8,
+    header_len: usize,
+    plaintext_len: usize,
+) ProtectionError!void {
+    const protected_payload_len = std.math.add(usize, plaintext_len, aead_tag_len) catch return error.InvalidPayloadLength;
+    const total_len = std.math.add(usize, header_len, protected_payload_len) catch return error.InvalidPayloadLength;
+    if (datagram.len < total_len) return error.InvalidPayloadLength;
+    const pn_offset = header_len - packet_number_encoding.len;
+    try validateHeaderProtectionSample(total_len, pn_offset);
+
+    const payload = datagram[header_len..][0..plaintext_len];
+    var tag: [aead_tag_len]u8 = undefined;
+    // In-place AEAD: ciphertext overwrites the plaintext region.
+    try protectAes128Payload(keys, header.packet_number, datagram[0..header_len], payload, payload, &tag);
+    @memcpy(datagram[header_len + plaintext_len ..][0..aead_tag_len], &tag);
+
+    var sample: [header_protection_sample_len]u8 = undefined;
+    @memcpy(&sample, datagram[pn_offset + 4 ..][0..header_protection_sample_len]);
+    const mask = aes128HeaderProtectionMask(keys.hp, sample);
+    try applyHeaderProtectionMask(.short, &datagram[0], datagram[pn_offset..header_len], mask);
+}
+
 /// Reveal the short-header spin bit without removing header protection.
 ///
 /// QUIC header protection does not mask the spin bit. This helper does not

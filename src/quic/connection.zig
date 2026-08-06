@@ -6513,8 +6513,27 @@ pub const Connection = struct {
             return error.BufferTooSmall;
         }
 
-        const plaintext = self.allocator.alloc(u8, plaintext_len) catch return error.OutOfMemory;
-        defer self.allocator.free(plaintext);
+        const header: packet.ShortHeader = .{
+            .dcid = dcid,
+            .spin_bit = self.shortHeaderSpinBit(),
+            .key_phase = key_phase,
+            .packet_number = packet_number,
+        };
+        // empty_datagram_len = header + AEAD tag (0 plaintext), so the header
+        // length is that minus the tag; the payload is protected in place.
+        const header_len = empty_datagram_len - protection.aead_tag_len;
+        const protected_payload_len = plaintext_len + protection.aead_tag_len;
+        const datagram_len = try addWireLen(header_len, protected_payload_len);
+        const datagram = self.allocator.alloc(u8, datagram_len) catch return error.OutOfMemory;
+        errdefer self.allocator.free(datagram);
+
+        var header_writer = buffer.fixedWriter(datagram[0..header_len]);
+        packet.encodeShortHeaderWithPacketNumberEncoding(header_writer.writer(), header, packet_number_encoding) catch |err| switch (err) {
+            error.InvalidConnectionIdLength => return error.InvalidPacket,
+            else => return error.Internal,
+        };
+
+        const plaintext = datagram[header_len..][0..plaintext_len];
         @memset(plaintext, 0);
 
         var plaintext_out = buffer.fixedWriter(plaintext);
@@ -6534,17 +6553,9 @@ pub const Connection = struct {
             else => return error.Internal,
         };
 
-        const datagram = protection.protectShortPacketAes128(self.allocator, .{
-            .dcid = dcid,
-            .spin_bit = self.shortHeaderSpinBit(),
-            .key_phase = key_phase,
-            .packet_number = packet_number,
-        }, packet_number_encoding, keys, plaintext) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.NoSpaceLeft => return error.BufferTooSmall,
+        protection.protectShortPacketAes128InPlace(header, packet_number_encoding, keys, datagram, header_len, plaintext_len) catch |err| switch (err) {
             else => return error.InvalidPacket,
         };
-        errdefer self.allocator.free(datagram);
 
         if (datagram.len > self.maxTxDatagramSize()) return error.BufferTooSmall;
         const sent_stream_frame = try self.clonePendingStreamFrame(.{
