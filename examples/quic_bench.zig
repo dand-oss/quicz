@@ -99,8 +99,6 @@ fn serverThread(ctx: *ServerContext) void {
 }
 
 pub fn main() !void {
-    
-    
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -244,7 +242,6 @@ pub fn main() !void {
         wait,
     });
 
-
     // --- Benchmark 2: Echo Latency ---
     std.debug.print("\n  --- Echo Latency (1 KB roundtrip) ---\n", .{});
     {
@@ -291,7 +288,6 @@ pub fn main() !void {
             echo_iters,
         });
     }
-
 
     // --- Benchmark 3: Multi-stream throughput (4 concurrent streams, threaded) ---
     std.debug.print("\n  --- Multi-Stream Throughput (4 streams) ---\n", .{});
@@ -348,7 +344,10 @@ pub fn main() !void {
                     var got = false;
                     while (true) {
                         const r = c.sock.receiveTimeout(c.io_ref, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
-                        if (!have) { c.peer = r.from; have = true; }
+                        if (!have) {
+                            c.peer = r.from;
+                            have = true;
+                        }
                         _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                         got = true;
                     }
@@ -487,9 +486,15 @@ pub fn main() !void {
             };
             var rng_state: u64 = 0xDEADBEEF;
             var loss_ctx = LossCtx{
-                .sock = &loss_srv_sock, .io_r = io, .srv = &loss_srv,
-                .flag = &loss_done, .cnt = &loss_recv, .peer = loss_addr,
-                .drop_pct = lr.pct, .rtt_us = lr.rtt_us, .rng_state = &rng_state,
+                .sock = &loss_srv_sock,
+                .io_r = io,
+                .srv = &loss_srv,
+                .flag = &loss_done,
+                .cnt = &loss_recv,
+                .peer = loss_addr,
+                .drop_pct = lr.pct,
+                .rtt_us = lr.rtt_us,
+                .rng_state = &rng_state,
             };
 
             const loss_fn = struct {
@@ -501,11 +506,19 @@ pub fn main() !void {
                         var got = false;
                         while (true) {
                             const r = c.sock.receiveTimeout(c.io_r, &rb, .{ .duration = .{ .clock = .awake, .raw = std.Io.Duration.fromMicroseconds(100) } }) catch break;
-                            if (!have) { c.peer = r.from; have = true; }
+                            if (!have) {
+                                c.peer = r.from;
+                                have = true;
+                            }
                             // Simulate random packet loss (xorshift PRNG)
-                            c.rng_state.* ^= c.rng_state.* << 13; c.rng_state.* ^= c.rng_state.* >> 7; c.rng_state.* ^= c.rng_state.* << 17;
+                            c.rng_state.* ^= c.rng_state.* << 13;
+                            c.rng_state.* ^= c.rng_state.* >> 7;
+                            c.rng_state.* ^= c.rng_state.* << 17;
                             if (c.rng_state.* % 100 < c.drop_pct) continue; // random drop
-                            if (c.rtt_us > 0) { const deadline = nanoTime() + c.rtt_us * 500; while (nanoTime() < deadline) {} }
+                            if (c.rtt_us > 0) {
+                                const deadline = nanoTime() + c.rtt_us * 500;
+                                while (nanoTime() < deadline) {}
+                            }
                             _ = c.srv.processProtectedShortDatagramWithInstalledKeys(@intCast(nanoTime()), client_dcid.len, r.data) catch {};
                             got = true;
                         }
@@ -584,7 +597,6 @@ pub fn main() !void {
         }
     }
 
-
     // --- Comparison with other QUIC implementations ---
     std.debug.print("\n  --- Comparison (loopback, single stream) ---\n", .{});
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "Implementation", "Lang", "Throughput", "Notes" });
@@ -599,7 +611,7 @@ pub fn main() !void {
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "s2n-quic", "Rust", "~800 MB/s", "Linux GSO/GRO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quiche", "Rust", "300-500 MB/s", "Linux, no GSO" });
     std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quinn", "Rust", "300-500 MB/s", "Linux tokio" });
-    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~442 MB/s", "macOS loopback, 8.9KB dgram, 100us timeout" });
+    std.debug.print("  {s:16} {s:8} {s:12} {s}\n", .{ "quicz", "Zig", "~51 MB/s", "macOS loopback, 8.9KB dgram, ReleaseSafe" });
 
     std.debug.print("\n=== Benchmark complete ===\n", .{});
 }
