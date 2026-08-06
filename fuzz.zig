@@ -59,6 +59,7 @@ pub fn main(init: std.process.Init) !void {
         quicz.fuzz_targets.fuzzDriveQpackDynamicTable(buf[0..len]);
         quicz.fuzz_targets.fuzzDecodeWebTransport(buf[0..len]);
         quicz.fuzz_targets.fuzzDriveH3Connection(buf[0..len]);
+        quicz.fuzz_targets.fuzzParseTransportParameters(buf[0..len]);
 
         if (i % 10_000 == 0) {
             std.debug.print("fuzz progress: {d}/{d}\n", .{ i, iterations });

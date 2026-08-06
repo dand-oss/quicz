@@ -15,6 +15,7 @@ const h3_request = @import("../h3/request.zig");
 const webtransport = @import("../h3/webtransport.zig");
 const buffer = @import("buffer.zig");
 const Connection = @import("connection.zig").Connection;
+const transport_parameters = @import("transport_parameters.zig");
 
 /// Fuzz target: parse a QUIC long header from arbitrary bytes.
 pub fn fuzzParseLongHeader(data: []const u8) void {
@@ -33,6 +34,14 @@ pub fn fuzzParseShortHeader(data: []const u8) void {
 /// Fuzz target: decode a QUIC frame from arbitrary bytes.
 pub fn fuzzDecodeFrame(data: []const u8) void {
     _ = frame.decodeFrameSlice(data, std.heap.page_allocator) catch return;
+}
+
+/// Fuzz target: parse a QUIC transport parameters block (RFC 9000 §18).
+/// The handshake carries these from a hostile peer; each value passes through
+/// range/clone validation, so any overrun or allocation bug is a real hole.
+pub fn fuzzParseTransportParameters(data: []const u8) void {
+    var params = transport_parameters.parse(data, std.heap.page_allocator) catch return;
+    params.deinit(std.heap.page_allocator);
 }
 
 /// Fuzz target: peek at a protected long packet from arbitrary bytes.
@@ -298,6 +307,21 @@ test "fuzz targets handle empty input" {
     fuzzDecodeH3Request(&.{});
     fuzzDecodeH3Response(&.{});
     fuzzDecodeWebTransport(&.{});
+    fuzzParseTransportParameters(&.{});
+}
+
+test "fuzz transport parameters handles hostile blocks" {
+    // Truncated varint, oversized value length, duplicate params.
+    fuzzParseTransportParameters(&[_]u8{ 0xff, 0xff });
+    fuzzParseTransportParameters(&[_]u8{ 0x00, 0x05, 0x01 });
+    fuzzParseTransportParameters(&[_]u8{ 0x03, 0x01, 'x', 0x03, 0x01, 'y' });
+    {
+        var buf: [64]u8 = undefined;
+        buf[0] = 0x01; // max_idle_timeout
+        buf[1] = 0x08; // 8-byte value
+        @memset(buf[2..10], 0xff);
+        fuzzParseTransportParameters(buf[0..10]);
+    }
 }
 
 test "fuzz WebTransport handles garbage and valid-prefixed input" {
