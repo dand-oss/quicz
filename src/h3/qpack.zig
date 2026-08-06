@@ -4,6 +4,7 @@
 //! encoding/decoding for HTTP/3 header blocks.
 
 const std = @import("std");
+const huffman = @import("huffman.zig");
 
 /// QPACK static table entry (RFC 9204 Appendix A).
 pub const StaticEntry = struct {
@@ -372,18 +373,31 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
     return count;
 }
 
+/// File-scope scratch for Huffman-decoded strings. The returned slice is valid
+/// only until the next decode on the same thread; callers consume or copy it
+/// immediately. Sized to the max QPACK field (RFC 9114 §4.2 sets a 16 KiB
+/// default max field section size).
+var huffman_scratch: [16384]u8 = undefined;
+
 fn decodeString(data: []const u8, start: usize) !struct { value: []const u8, end: usize } {
     if (start >= data.len) return error.IncompleteString;
     const first = data[start];
-    // No Huffman support: H bit (0x80) must be 0
-    if (first & 0x80 != 0) return error.HuffmanNotSupported;
-    const len: usize = first & 0x7f;
-    const value_start = start + 1;
-    if (value_start + len > data.len) return error.IncompleteString;
-    return .{
-        .value = data[value_start .. value_start + len],
-        .end = value_start + len,
-    };
+    const is_huffman = (first & 0x80) != 0;
+    var pos = start + 1;
+    var len: usize = first & 0x7f;
+    if (len == 0x7f) {
+        const v = try decodeVarintFromBuf(data, pos);
+        len = 0x7f + @as(usize, v.value);
+        pos = v.end;
+    }
+    if (pos + len > data.len) return error.IncompleteString;
+    const raw = data[pos .. pos + len];
+    pos += len;
+    if (is_huffman) {
+        const n = try huffman.decode(raw, &huffman_scratch);
+        return .{ .value = huffman_scratch[0..n], .end = pos };
+    }
+    return .{ .value = raw, .end = pos };
 }
 
 test "QPACK decode header block with static entries" {
@@ -1769,4 +1783,24 @@ test "decodeEncoderStreamInstructions: applies insert/duplicate/set_capacity" {
     const e0 = try dt.lookup(0);
     try std.testing.expectEqualStrings("x-a", e0.name);
     try std.testing.expectEqualStrings("1", e0.value);
+}
+
+test "decodeString decodes Huffman-encoded literal (interop path)" {
+    // A QPACK string with H=1 (0x80 | 12) carrying the RFC 7541 Appendix C.1
+    // Huffman encoding of "www.example.com". Peers like quic-go/quiche emit
+    // H=1 literals, so this must decode.
+    const encoded = [_]u8{ 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff };
+    const result = try decodeString(&encoded, 0);
+    try std.testing.expectEqualStrings("www.example.com", result.value);
+    try std.testing.expectEqual(@as(usize, 13), result.end);
+}
+
+test "encodeStringToBuf then decodeString roundtrip (incl. long string)" {
+    for ([_][]const u8{ "GET", "x-custom-value", "this-is-a-very-long-header-value-that-exceeds-127-bytes-" ++ "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }) |s| {
+        var buf: [512]u8 = undefined;
+        var pos: usize = 0;
+        pos = try encodeStringToBuf(&buf, pos, s);
+        const result = try decodeString(buf[0..pos], 0);
+        try std.testing.expectEqualStrings(s, result.value);
+    }
 }
