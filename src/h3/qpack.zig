@@ -998,6 +998,37 @@ pub const DecoderInstruction = union(enum) {
     insert_count_increment: u64,
 };
 
+/// Consume a run of encoder stream instructions from `data` and apply them to
+/// `dynamic_table` (RFC 9204 §4.3). This is what a QPACK decoder runs before
+/// decoding a header block: it replicates the encoder's insertions so the
+/// block's dynamic references and Required Insert Count resolve. Returns the
+/// number of bytes consumed. A malformed/truncated instruction is a protocol
+/// error.
+pub fn decodeEncoderStreamInstructions(
+    data: []const u8,
+    dynamic_table: *DynamicTable,
+) !usize {
+    var pos: usize = 0;
+    while (pos < data.len) {
+        const decoded = try decodeEncoderInstruction(data[pos..]);
+        switch (decoded.instruction) {
+            .insert_name_ref => |ins| {
+                const name = if (ins.is_static)
+                    static_table[@intCast(ins.name_index)].name
+                else
+                    (try dynamic_table.lookup(ins.name_index)).name;
+                try dynamic_table.insert(name, ins.value);
+            },
+            .insert_literal => |ins| try dynamic_table.insert(ins.name, ins.value),
+            .set_capacity => |cap| dynamic_table.setCapacity(@intCast(cap)),
+            .duplicate => |idx| try dynamic_table.duplicate(idx),
+        }
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+    return pos;
+}
+
 /// Encode a decoder stream instruction into a buffer.
 /// Returns the number of bytes written.
 pub fn encodeDecoderInstruction(out: []u8, instruction: DecoderInstruction) !usize {
@@ -1686,21 +1717,7 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     var dec_table = DynamicTable.init(std.testing.allocator);
     defer dec_table.deinit();
     dec_table.setCapacity(4096);
-    var pos: usize = 0;
-    while (pos < instr_len) {
-        const decoded = try decodeEncoderInstruction(instr[pos..]);
-        switch (decoded.instruction) {
-            .insert_name_ref => |ins| try dec_table.insert(
-                if (ins.is_static) static_table[@intCast(ins.name_index)].name else (try dec_table.lookup(ins.name_index)).name,
-                ins.value,
-            ),
-            .insert_literal => |ins| try dec_table.insert(ins.name, ins.value),
-            .set_capacity => |cap| dec_table.setCapacity(@intCast(@min(cap, 4096))),
-            .duplicate => |idx| try dec_table.duplicate(idx),
-        }
-        if (decoded.consumed == 0) break;
-        pos += decoded.consumed;
-    }
+    _ = try decodeEncoderStreamInstructions(instr[0..instr_len], &dec_table);
 
     var decoded: [8]HeaderField = undefined;
     const count = try decodeHeaderBlockWithDynamic(block[0..block_len], &decoded, &dec_table);
@@ -1730,4 +1747,26 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     try std.testing.expectEqual(@as(usize, 3), count2);
     try std.testing.expectEqualStrings(":method", decoded2[0].name);
     try std.testing.expectEqualStrings("GET", decoded2[0].value);
+}
+
+test "decodeEncoderStreamInstructions: applies insert/duplicate/set_capacity" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+
+    // Insert literal "x-a"="1", then duplicate index 0, then set capacity.
+    var buf: [128]u8 = undefined;
+    var pos: usize = 0;
+    pos += try encodeEncoderInstruction(buf[pos..], .{ .insert_literal = .{ .name = "x-a", .value = "1" } });
+    pos += try encodeEncoderInstruction(buf[pos..], .{ .duplicate = 0 });
+    pos += try encodeEncoderInstruction(buf[pos..], .{ .set_capacity = 2048 });
+
+    const consumed = try decodeEncoderStreamInstructions(buf[0..pos], &dt);
+    try std.testing.expectEqual(pos, consumed);
+    try std.testing.expectEqual(@as(usize, 2), dt.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 2048), dt.max_capacity);
+    // Index 0 is a duplicate of the original "x-a"="1".
+    const e0 = try dt.lookup(0);
+    try std.testing.expectEqualStrings("x-a", e0.name);
+    try std.testing.expectEqualStrings("1", e0.value);
 }
