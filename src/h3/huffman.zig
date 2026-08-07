@@ -419,3 +419,62 @@ test "invalid Huffman rejected" {
     };
     return error.TestUnexpectedResult;
 }
+
+pub const EncodeError = error{
+    OutputBufferTooSmall,
+};
+
+/// Huffman-encode `input` per RFC 7541 Section 5.2. Returns the number of
+/// encoded bytes written to `out_buf`. Trailing padding uses the most
+/// significant bits of the EOS code (all 1s), per RFC 7541.
+pub fn encode(input: []const u8, out_buf: []u8) EncodeError!usize {
+    var bit_buf: u64 = 0;
+    var bit_count: u8 = 0;
+    var out_pos: usize = 0;
+
+    for (input) |byte| {
+        const entry = huffman_table[byte];
+        // MSB-first: append the code's bits after those already buffered.
+        bit_buf = (bit_buf << @as(u6, @intCast(entry.bit_len))) | entry.code;
+        bit_count += entry.bit_len;
+        while (bit_count >= 8) {
+            bit_count -= 8;
+            if (out_pos >= out_buf.len) return error.OutputBufferTooSmall;
+            out_buf[out_pos] = @intCast((bit_buf >> @as(u6, @intCast(bit_count))) & 0xff);
+            out_pos += 1;
+            // Drop the emitted high bits so bit_buf never grows unbounded.
+            bit_buf &= (@as(u64, 1) << @as(u6, @intCast(bit_count))) - 1;
+        }
+    }
+
+    if (bit_count > 0) {
+        if (out_pos >= out_buf.len) return error.OutputBufferTooSmall;
+        const pad_len = 8 - bit_count;
+        // Pad with the most significant bits of the EOS code (all 1s).
+        out_buf[out_pos] = @intCast((bit_buf << @as(u6, @intCast(pad_len))) | ((@as(u64, 1) << @as(u6, @intCast(pad_len))) - 1));
+        out_pos += 1;
+    }
+
+    return out_pos;
+}
+
+test "Huffman encode/decode roundtrip for every byte" {
+    var i: u16 = 0;
+    while (i < 256) : (i += 1) {
+        const input = [_]u8{@intCast(i)};
+        var huff: [8]u8 = undefined;
+        var out: [8]u8 = undefined;
+        const hn = try encode(&input, &huff);
+        const dn = try decode(huff[0..hn], &out);
+        try std.testing.expectEqual(@as(usize, 1), dn);
+        try std.testing.expectEqual(input[0], out[0]);
+    }
+}
+
+test "RFC 7541 Appendix C.1 encode" {
+    const input = "www.example.com";
+    var huff: [64]u8 = undefined;
+    const hn = try encode(input, &huff);
+    // The RFC C.1 example encoding.
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff }, huff[0..hn]);
+}
