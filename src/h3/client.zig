@@ -187,6 +187,7 @@ pub const H3Client = struct {
             switch (frame.frame.frame_type) {
                 @intFromEnum(h3_frame.FrameType.settings) => {
                     const settings = try h3_connection.Settings.decodePayload(frame.frame.payload);
+                    self.settings_received = true;
                     if (settings.qpack_max_table_capacity != 0) {
                         try self.setPeerMaxTableCapacity(settings.qpack_max_table_capacity);
                     }
@@ -391,7 +392,7 @@ pub const H3Client = struct {
     }
 
     /// Decode a buffered response. Returns null while still blocked.
-    fn tryDecodeBufferedResponse(
+    pub fn tryDecodeBufferedResponse(
         self: *H3Client,
         stream_id: u64,
         data: []const u8,
@@ -399,6 +400,29 @@ pub const H3Client = struct {
         try self.checkFieldSectionSize(data);
         const result = h3_request.decodeResponseWithDynamic(data, &self.dec_table.?) catch |err| {
             if (err == error.BlockedByQpack) return null;
+            return err;
+        };
+        try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
+        return result.response;
+    }
+
+    /// Feed already-buffered response bytes (a complete HEADERS frame plus any
+    /// DATA) into the client. The runtime driver reads the wire itself so it
+    /// can interleave the server's control / QPACK streams. Returns the decoded
+    /// response, or `null` while the response is incomplete or blocked (the
+    /// state machine keeps its own copy of a blocked response and retries on
+    /// encoder-stream progress).
+    pub fn feedResponseBytes(self: *H3Client, stream_id: u64, data: []const u8) !?h3_request.DecodedResponse {
+        const frame = try h3_frame.decodeFrame(data);
+        if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+            return error.ExpectedHeadersFrame;
+        }
+        try self.checkFieldSectionSize(data);
+        const result = h3_request.decodeResponseWithDynamic(data, &self.dec_table.?) catch |err| {
+            if (err == error.BlockedByQpack) {
+                try self.bufferBlockedResponse(stream_id, data);
+                return null;
+            }
             return err;
         };
         try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);

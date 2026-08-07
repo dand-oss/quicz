@@ -9,6 +9,8 @@
 
 const std = @import("std");
 const quicz = @import("../lib.zig");
+const h3_proto = @import("../h3/server.zig");
+const runtime_h3 = @import("h3_server.zig");
 
 const log = std.log.scoped(.quicz_runtime);
 
@@ -166,6 +168,10 @@ pub const Server = struct {
     drive_group: std.Io.Group = .init,
     started: bool = false,
     stopping: bool = false,
+    /// Set by serveH3 before handlers spawn; read by h3ServeHandler.
+    h3_request_handler: ?h3_proto.RequestHandler = null,
+    h3_qpack_max_table_capacity: u64 = 4096,
+    h3_qpack_blocked_streams: u64 = 8,
 
     pub const Config = struct {
         port: u16,
@@ -227,6 +233,40 @@ pub const Server = struct {
         try self.start();
         try self.drive_group.concurrent(self.io, Server.serveLoop, .{ self, handler });
         log.info("quicz server listening on {f}/", .{self.socket.address});
+    }
+
+    /// HTTP/3 QPACK dynamic-table options (RFC 9204).
+    pub const H3ServeOptions = struct {
+        qpack_max_table_capacity: u64 = 4096,
+        qpack_blocked_streams: u64 = 8,
+    };
+
+    /// Serve HTTP/3 on this transport server: every accepted connection is
+    /// driven by the runtime H3 driver with `handler` as the request handler.
+    /// The transport (socket, endpoint, connection lifecycle) stays owned by
+    /// this `Server`; only the application protocol is wired here.
+    pub fn serveH3(self: *Server, options: H3ServeOptions, handler: h3_proto.RequestHandler) !void {
+        self.h3_request_handler = handler;
+        self.h3_qpack_max_table_capacity = options.qpack_max_table_capacity;
+        self.h3_qpack_blocked_streams = options.qpack_blocked_streams;
+        try self.serve(h3ServeHandler);
+    }
+
+    /// Per-connection handler backing serveH3: one runtime H3 driver per
+    /// connection, exactly the layering recommended for production.
+    fn h3ServeHandler(conn: ServerConnection) std.Io.Cancelable!void {
+        const srv = conn.server;
+        const handler = srv.h3_request_handler orelse return;
+        var driver = runtime_h3.H3Server.init(
+            srv.allocator,
+            srv,
+            conn.id,
+            handler,
+            srv.h3_qpack_max_table_capacity,
+            srv.h3_qpack_blocked_streams,
+        );
+        defer driver.deinit();
+        try driver.run();
     }
 
     /// Serve task body: accept loop plus per-connection handler tasks
@@ -851,6 +891,126 @@ pub const Server = struct {
             }
             // No data and no FIN: a closing/closed connection will never
             // deliver more on this stream.
+            if (@atomicLoad(bool, &cs.closing_or_closed, .acquire)) {
+                cs.mutex.unlock();
+                self.mutex.unlock();
+                return error.ConnectionClosed;
+            }
+            cs.mutex.unlock();
+            self.mutex.unlock();
+            cs.data_sem.wait(self.io) catch return error.Canceled;
+        }
+    }
+
+    /// Non-blocking accept: pops one queued stream id, or returns `null` when
+    /// none is pending. The HTTP/3 driver drains this queue so per-stream
+    /// registrations do not accumulate, then parks on `waitStreamActivity`.
+    pub fn tryAcceptStreamId(self: *Server, conn_id: u64) !?u64 {
+        if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock();
+            return error.NoConnection;
+        };
+        while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+        if (cs.pending_streams.items.len > 0) {
+            const sid = cs.pending_streams.orderedRemove(0);
+            cs.mutex.unlock();
+            self.mutex.unlock();
+            return sid;
+        }
+        if (@atomicLoad(bool, &cs.closing_or_closed, .acquire)) {
+            cs.mutex.unlock();
+            self.mutex.unlock();
+            return error.ConnectionClosed;
+        }
+        cs.mutex.unlock();
+        self.mutex.unlock();
+        return null;
+    }
+
+    /// Non-blocking receive for one stream. Returns `null` when the stream has
+    /// no data right now, `0` at EOF, otherwise the number of bytes copied.
+    /// Unlike `receiveStreamData` this never parks, so a caller that drives
+    /// several streams (e.g. the HTTP/3 layer) can interleave them and park
+    /// once on `waitStreamActivity`.
+    pub fn tryReceiveStreamData(self: *Server, conn_id: u64, sid: u64, buf: []u8) !?usize {
+        if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock();
+            return error.NoConnection;
+        };
+        while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+        var result: ?usize = null;
+        for (cs.recv_streams.items) |*s| {
+            if (s.id != sid) continue;
+            const available = s.queue.items[s.read_offset..];
+            if (available.len > 0) {
+                const n = @min(buf.len, available.len);
+                @memcpy(buf[0..n], available[0..n]);
+                s.read_offset += n;
+                if (s.read_offset == s.queue.items.len) {
+                    s.queue.clearRetainingCapacity();
+                    s.read_offset = 0;
+                }
+                result = n;
+            } else if (s.eof) {
+                result = 0;
+            }
+            break;
+        }
+        cs.mutex.unlock();
+        self.mutex.unlock();
+        return result;
+    }
+
+    /// Snapshot the stream ids currently receiving data on a connection into
+    /// `out`; returns the count written. Used by drivers that need to poll
+    /// every active stream (HTTP/3 control / QPACK / request streams).
+    pub fn connStreamIds(self: *Server, conn_id: u64, out: []u64) usize {
+        var count: usize = 0;
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        const cs = self.conns.get(conn_id) orelse {
+            self.mutex.unlock();
+            return 0;
+        };
+        while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+        for (cs.recv_streams.items) |*s| {
+            if (count >= out.len) break;
+            out[count] = s.id;
+            count += 1;
+        }
+        cs.mutex.unlock();
+        self.mutex.unlock();
+        return count;
+    }
+
+    /// Park until any stream on a connection has new data / EOF, a new stream
+    /// arrives, or the connection closes. The HTTP/3 driver uses this between
+    /// non-blocking drains instead of blocking on one stream.
+    pub fn waitStreamActivity(self: *Server, conn_id: u64) !void {
+        while (true) {
+            if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
+            while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+            const cs = self.conns.get(conn_id) orelse {
+                self.mutex.unlock();
+                return error.NoConnection;
+            };
+            while (!cs.mutex.tryLock()) std.atomic.spinLoopHint();
+            var has_activity = false;
+            for (cs.recv_streams.items) |*s| {
+                if (s.queue.items.len > s.read_offset or s.eof) {
+                    has_activity = true;
+                    break;
+                }
+            }
+            if (cs.pending_streams.items.len > 0) has_activity = true;
+            if (has_activity) {
+                cs.mutex.unlock();
+                self.mutex.unlock();
+                return;
+            }
             if (@atomicLoad(bool, &cs.closing_or_closed, .acquire)) {
                 cs.mutex.unlock();
                 self.mutex.unlock();

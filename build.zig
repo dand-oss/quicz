@@ -148,7 +148,7 @@ pub fn build(b: *std.Build) void {
     const run_connection_migration_cmd = b.addRunArtifact(exe_connection_migration);
     run_connection_migration.dependOn(&run_connection_migration_cmd.step);
 
-    // H3 server
+    // H3 server on the production runtime (runtime.Server.serveH3)
     const exe_h3_server = b.addExecutable(.{
         .name = "quicz-h3-server",
         .root_module = b.createModule(.{
@@ -579,6 +579,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe_h3_loopback);
+
+    const exe_h3_runtime_loopback = b.addExecutable(.{
+        .name = "quicz-h3-runtime-loopback",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/h3_runtime_loopback.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_h3_runtime_loopback);
 
     // Pure-Zig TLS 1.3 with EndpointConnectionLifecycle ownership
     const exe_tls13_lifecycle_loopback = b.addExecutable(.{
@@ -1908,6 +1921,12 @@ pub fn build(b: *std.Build) void {
     const run_h3_loopback_cmd = b.addRunArtifact(exe_h3_loopback);
     run_h3_loopback.dependOn(&run_h3_loopback_cmd.step);
     run_h3_loopback_cmd.step.dependOn(b.getInstallStep());
+
+    // zig build run-h3-runtime-loopback
+    const run_h3_runtime_loopback = b.step("run-h3-runtime-loopback", "Run HTTP/3 + QPACK on the production std.Io runtime");
+    const run_h3_runtime_loopback_cmd = b.addRunArtifact(exe_h3_runtime_loopback);
+    run_h3_runtime_loopback.dependOn(&run_h3_runtime_loopback_cmd.step);
+    run_h3_runtime_loopback_cmd.step.dependOn(b.getInstallStep());
 
     // zig build run-tls13-lifecycle-loopback
     const run_tls13_lifecycle_loopback = b.step("run-tls13-lifecycle-loopback", "Run pure-Zig TLS 1.3 lifecycle loopback");

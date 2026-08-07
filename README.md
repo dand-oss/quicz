@@ -20,7 +20,7 @@ A QUIC / HTTP/3 implementation in pure Zig.
 - **QUIC v1 & v2** (RFC 9000 / RFC 9369) — handshake, streams, flow control, connection migration, path validation, Retry, stateless reset, key update, version negotiation, DATAGRAM, multipath, ECN, PMTUD, GSO/GRO
 - **TLS 1.3** (RFC 8446 / RFC 9001) — pure Zig, no C dependencies. ECDSA P-256, X25519, X25519Kyber768 (post-quantum), AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, 0-RTT, session resumption
 - **Loss Detection & Congestion Control** (RFC 9002 / RFC 9438) — NewReno, CUBIC, packet pacing
-- **HTTP/3** (RFC 9114) — full connection management, SETTINGS, GOAWAY, stream state machine, QPACK static + dynamic table
+   - **HTTP/3** (RFC 9114) — full connection management, SETTINGS, GOAWAY, stream state machine, QPACK static + dynamic table, production async runtime drivers
 - **WebTransport** (draft-ietf-webtrans-http3) — full session management, uni/bidi framing, CLOSE capsule, datagrams
 - **qlog** (draft-ietf-quic-qlog) — QUIC event logging
 - **External interop** — verified against quic-go (Go), quiche (Rust), s2n-quic (Rust): handshake + transfer
@@ -165,9 +165,11 @@ Requires **Zig 0.16.0**.
 
 ```bash
 zig build                                    # build library
-zig build test --summary all                 # 1862 unit tests
+zig build test --summary all                 # 1867 unit tests
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP loopback
 zig build run-h3-loopback                    # HTTP/3 + QPACK dynamic over UDP
+zig build run-h3-runtime-loopback            # HTTP/3 + QPACK on the std.Io runtime
+zig build run-h3-server                      # HTTP/3 server on the std.Io runtime (curl-testable)
 zig build run-interop-client-standalone      # interop self-test
 zig fmt --check build.zig src examples       # format check
 ```

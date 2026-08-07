@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | `run-quic-echo-server` | `quic_echo_server.zig` | 多连接 QUIC echo 服务端，真实 UDP 上的 TLS 1.3 握手。 |
 | `run-quic-echo-client` | `quic_echo_client.zig` | QUIC echo 客户端：握手、流读写、关闭。 |
-| `run-h3-server` | `h3_server.zig` | HTTP/3 静态响应服务端（SETTINGS + HEADERS + DATA 帧）。 |
+| `run-h3-server` | `h3_server.zig` | 生产 runtime 上的 HTTP/3 服务端（`runtime.Server.serveH3`，QPACK 动态表）。 |
 | `run-datagram-echo -- --server` | `datagram_echo.zig` | QUIC DATAGRAM (RFC 9221) echo 服务端——不可靠数据报。 |
 | `run-datagram-echo -- --client` | `datagram_echo.zig` | QUIC DATAGRAM echo 客户端。 |
 | `run-post-quantum-echo -- --server` | `post_quantum_echo.zig` | X25519Kyber768 后量子密钥交换演示 + QUIC echo 服务端。 |

@@ -43,9 +43,26 @@ const SendRequest = struct {
     result: ?u64 = null,
 };
 
+/// One caller send on an already-open stream, parked until the drive task runs
+/// it. The caller blocks until done, so `data` may stay a borrowed slice.
+const SendOnStreamRequest = struct {
+    stream_id: u64,
+    data: []const u8,
+    fin: bool,
+    ok: bool = false,
+};
+
 /// One caller key update request, parked until the drive task runs it.
 const KeyUpdateRequest = struct {
     ok: bool = false,
+};
+
+/// One caller stream-open request (bidirectional or unidirectional), parked
+/// until the drive task opens the stream on the transport.
+const OpenStreamRequest = struct {
+    uni: bool,
+    /// Stream id assigned by the drive task; null on failure.
+    result: ?u64 = null,
 };
 
 pub const Client = struct {
@@ -86,10 +103,20 @@ pub const Client = struct {
     send_request: ?*SendRequest = null,
     send_done_sem: std.Io.Semaphore = .{ .permits = 0 },
 
+    /// Send-on-existing-stream request slot (one in flight; caller blocks).
+    send_on_mutex: std.atomic.Mutex = .unlocked,
+    send_on_request: ?*SendOnStreamRequest = null,
+    send_on_done_sem: std.Io.Semaphore = .{ .permits = 0 },
+
     /// Key update request slot (one in flight; the caller blocks until done).
     key_update_mutex: std.atomic.Mutex = .unlocked,
     key_update_request: ?*KeyUpdateRequest = null,
     key_update_done_sem: std.Io.Semaphore = .{ .permits = 0 },
+
+    /// Stream-open request slot (one in flight; the caller blocks until done).
+    open_mutex: std.atomic.Mutex = .unlocked,
+    open_request: ?*OpenStreamRequest = null,
+    open_done_sem: std.Io.Semaphore = .{ .permits = 0 },
 
     /// Per-stream receive state, protected by state_mutex.
     state_mutex: std.atomic.Mutex = .unlocked,
@@ -100,6 +127,10 @@ pub const Client = struct {
     /// Drive-observed connection close; a blocked receive() cannot learn
     /// about the close from stream data or EOF, so it checks this flag.
     conn_closing_or_closed: bool = false,
+    /// When HTTP/3 is layered on this client, the drive task also polls
+    /// server-initiated unidirectional streams (control / QPACK). Off by
+    /// default so the plain echo path keeps polling only streams it opened.
+    h3_mode: bool = false,
 
     const handshake_pending: u8 = 0;
     const handshake_confirmed: u8 = 1;
@@ -215,6 +246,14 @@ pub const Client = struct {
         const send_pending = self.send_request != null;
         self.send_mutex.unlock();
         if (send_pending) return true;
+        while (!self.send_on_mutex.tryLock()) std.atomic.spinLoopHint();
+        const send_on_pending = self.send_on_request != null;
+        self.send_on_mutex.unlock();
+        if (send_on_pending) return true;
+        while (!self.open_mutex.tryLock()) std.atomic.spinLoopHint();
+        const open_pending = self.open_request != null;
+        self.open_mutex.unlock();
+        if (open_pending) return true;
         while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
         const key_update_pending = self.key_update_request != null;
         self.key_update_mutex.unlock();
@@ -276,6 +315,59 @@ pub const Client = struct {
         self.notifyDrive(self.io);
         self.send_done_sem.waitUncancelable(self.io);
         return req.result orelse error.StreamSendFailed;
+    }
+
+    /// Send `data` on an already-open stream (e.g. an HTTP/3 control or QPACK
+    /// stream). The drive task runs the send; the caller blocks until done.
+    pub fn sendOnStream(self: *Client, stream_id: u64, data: []const u8, fin: bool) !void {
+        try self.startTasks();
+        var req: SendOnStreamRequest = .{ .stream_id = stream_id, .data = data, .fin = fin };
+        while (true) {
+            while (!self.send_on_mutex.tryLock()) std.atomic.spinLoopHint();
+            if (self.send_on_request == null) break;
+            self.send_on_mutex.unlock();
+            std.atomic.spinLoopHint();
+        }
+        self.send_on_request = &req;
+        self.send_on_mutex.unlock();
+        self.notifyDrive(self.io);
+        self.send_on_done_sem.waitUncancelable(self.io);
+        if (!req.ok) return error.StreamSendFailed;
+    }
+
+    /// Open a new bidirectional stream (without sending anything yet); the
+    /// drive task performs the open and returns the stream id.
+    pub fn openStream(self: *Client) !u64 {
+        return self.openStreamInternal(false);
+    }
+
+    /// Open a client-initiated unidirectional stream (without sending data);
+    /// used by HTTP/3 for the control and QPACK encoder/decoder streams.
+    pub fn openUniStream(self: *Client) !u64 {
+        return self.openStreamInternal(true);
+    }
+
+    /// Switch the drive task into HTTP/3 mode: server-initiated unidirectional
+    /// streams are polled so their control / QPACK bytes reach the stream
+    /// queues. Call before sending HTTP/3 requests.
+    pub fn enableH3(self: *Client) void {
+        self.h3_mode = true;
+    }
+
+    fn openStreamInternal(self: *Client, uni: bool) !u64 {
+        try self.startTasks();
+        var req: OpenStreamRequest = .{ .uni = uni };
+        while (true) {
+            while (!self.open_mutex.tryLock()) std.atomic.spinLoopHint();
+            if (self.open_request == null) break;
+            self.open_mutex.unlock();
+            std.atomic.spinLoopHint();
+        }
+        self.open_request = &req;
+        self.open_mutex.unlock();
+        self.notifyDrive(self.io);
+        self.open_done_sem.waitUncancelable(self.io);
+        return req.result orelse error.StreamOpenFailed;
     }
 
     /// Initiate a 1-RTT key update (RFC 9001 §6). The drive task advances the
@@ -340,6 +432,74 @@ pub const Client = struct {
         }
     }
 
+    /// Non-blocking receive for one stream. Returns `null` when the stream has
+    /// no data right now, `0` at EOF, otherwise the number of bytes copied.
+    pub fn tryReceiveStreamData(self: *Client, stream_id: u64, buf: []u8) !?usize {
+        if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
+        while (!self.state_mutex.tryLock()) std.atomic.spinLoopHint();
+        var result: ?usize = null;
+        for (self.recv_streams.items) |*s| {
+            if (s.id != stream_id) continue;
+            const available = s.queue.items[s.read_offset..];
+            if (available.len > 0) {
+                const n = @min(buf.len, available.len);
+                @memcpy(buf[0..n], available[0..n]);
+                s.read_offset += n;
+                if (s.read_offset == s.queue.items.len) {
+                    s.queue.clearRetainingCapacity();
+                    s.read_offset = 0;
+                }
+                result = n;
+            } else if (s.eof) {
+                result = 0;
+            }
+            break;
+        }
+        self.state_mutex.unlock();
+        return result;
+    }
+
+    /// Snapshot the stream ids currently receiving data into `out`; returns
+    /// the count written (HTTP/3 control / QPACK / response streams).
+    pub fn streamIds(self: *Client, out: []u64) usize {
+        var count: usize = 0;
+        while (!self.state_mutex.tryLock()) std.atomic.spinLoopHint();
+        for (self.recv_streams.items) |*s| {
+            if (count >= out.len) break;
+            out[count] = s.id;
+            count += 1;
+        }
+        self.state_mutex.unlock();
+        return count;
+    }
+
+    /// Park until any stream has new data / EOF, a new stream arrives, or the
+    /// connection closes. The HTTP/3 client driver uses this between
+    /// non-blocking drains.
+    pub fn waitStreamActivity(self: *Client) !void {
+        while (true) {
+            if (@atomicLoad(bool, &self.stopping, .acquire)) return error.Canceled;
+            while (!self.state_mutex.tryLock()) std.atomic.spinLoopHint();
+            var has_activity = false;
+            for (self.recv_streams.items) |*s| {
+                if (s.queue.items.len > s.read_offset or s.eof) {
+                    has_activity = true;
+                    break;
+                }
+            }
+            if (has_activity) {
+                self.state_mutex.unlock();
+                return;
+            }
+            if (@atomicLoad(bool, &self.conn_closing_or_closed, .acquire)) {
+                self.state_mutex.unlock();
+                return error.ConnectionClosed;
+            }
+            self.state_mutex.unlock();
+            self.data_sem.wait(self.io) catch return error.Canceled;
+        }
+    }
+
     /// Full echo session (connect + send + receive-to-EOF); returns true when
     /// the echoed bytes match the payload. Suitable for running as a std.Io
     /// async task via Group.concurrent.
@@ -392,11 +552,15 @@ pub const Client = struct {
         const allocator = self.allocator;
         const io = self.io;
         defer self.failPendingSendRequest();
+        defer self.failPendingSendOnStreamRequest();
+        defer self.failPendingOpenStreamRequest();
         defer self.failPendingKeyUpdateRequest();
         while (!@atomicLoad(bool, &self.stopping, .acquire)) {
             self.beginHandshakeOnce();
             self.processCloseRequest();
             self.processSendRequest();
+            self.processSendOnStreamRequest();
+            self.processOpenStreamRequest();
             self.processKeyUpdateRequest();
             self.drainOutgoing();
             self.drainQueuedDatagrams();
@@ -500,6 +664,86 @@ pub const Client = struct {
         }
     }
 
+    /// Run the parked send-on-existing-stream request (drive task only).
+    fn processSendOnStreamRequest(self: *Client) void {
+        while (!self.send_on_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.send_on_request orelse {
+            self.send_on_mutex.unlock();
+            return;
+        };
+        self.send_on_request = null;
+        self.send_on_mutex.unlock();
+
+        const outbound = self.client.sendStreamWithRoutePath(req.stream_id, req.data, req.fin, self.nowNanos()) catch |err| {
+            log.err("client: send on stream {d}: {}", .{ req.stream_id, err });
+            req.ok = false;
+            self.send_on_done_sem.post(self.io);
+            return;
+        };
+        if (outbound) |o| {
+            self.socket.send(self.io, &self.server_address, o.datagram) catch {};
+            self.allocator.free(o.datagram);
+        }
+        req.ok = true;
+        self.send_on_done_sem.post(self.io);
+    }
+
+    /// Complete a parked send-on-existing-stream request as failed (drive
+    /// task shutdown path).
+    fn failPendingSendOnStreamRequest(self: *Client) void {
+        while (!self.send_on_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.send_on_request;
+        self.send_on_request = null;
+        self.send_on_mutex.unlock();
+        if (req) |r| {
+            r.ok = false;
+            self.send_on_done_sem.post(self.io);
+        }
+    }
+
+    /// Run the parked stream-open request on the endpoint (drive task only).
+    /// The opened stream is registered in `open_streams` so inbound data on it
+    /// is delivered to the stream queues.
+    fn processOpenStreamRequest(self: *Client) void {
+        while (!self.open_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.open_request orelse {
+            self.open_mutex.unlock();
+            return;
+        };
+        self.open_request = null;
+        self.open_mutex.unlock();
+
+        process: {
+            const stream_id = if (req.uni)
+                self.client.openUniStream() catch |err| {
+                    log.err("client: open uni stream: {}", .{err});
+                    break :process;
+                }
+            else
+                self.client.openStream() catch |err| {
+                    log.err("client: open stream: {}", .{err});
+                    break :process;
+                };
+            while (!self.state_mutex.tryLock()) std.atomic.spinLoopHint();
+            self.open_streams.append(self.allocator, stream_id) catch {};
+            self.state_mutex.unlock();
+            req.result = stream_id;
+        }
+        self.open_done_sem.post(self.io);
+    }
+
+    /// Complete a parked stream-open request as failed (drive task shutdown).
+    fn failPendingOpenStreamRequest(self: *Client) void {
+        while (!self.open_mutex.tryLock()) std.atomic.spinLoopHint();
+        const req = self.open_request;
+        self.open_request = null;
+        self.open_mutex.unlock();
+        if (req) |r| {
+            r.result = null;
+            self.open_done_sem.post(self.io);
+        }
+    }
+
     /// Run the parked key update request on the endpoint (drive task only).
     fn processKeyUpdateRequest(self: *Client) void {
         while (!self.key_update_mutex.tryLock()) std.atomic.spinLoopHint();
@@ -585,50 +829,65 @@ pub const Client = struct {
     }
 
     /// Push received bytes of every open stream into its queue and surface
-    /// EOF once the peer FIN is fully consumed.
+    /// EOF once the peer FIN is fully consumed. Server-initiated
+    /// unidirectional streams (odd ids, HTTP/3 control / QPACK) are polled in
+    /// addition to the streams this client opened, so their ordered bytes land
+    /// in the same per-stream queues as response data.
     fn deliverStreamData(self: *Client) void {
         while (!self.state_mutex.tryLock()) std.atomic.spinLoopHint();
         var pushed = false;
+        var buf: [4096]u8 = undefined;
         for (self.open_streams.items) |sid| {
-            var buf: [4096]u8 = undefined;
-            while (true) {
-                const n = self.client.recvStream(sid, &buf) catch break;
-                const len = n orelse break;
-                if (len == 0) break;
-                var idx: ?usize = null;
-                for (self.recv_streams.items, 0..) |s, i| {
-                    if (s.id == sid) {
-                        idx = i;
-                        break;
-                    }
-                }
-                if (idx == null) {
-                    self.recv_streams.append(self.allocator, .{ .id = sid }) catch break;
-                    idx = self.recv_streams.items.len - 1;
-                }
-                self.recv_streams.items[idx.?].queue.appendSlice(self.allocator, buf[0..len]) catch break;
-                pushed = true;
-            }
-            if (self.client.streamFinished(sid) catch false) {
-                var idx: ?usize = null;
-                for (self.recv_streams.items, 0..) |s, i| {
-                    if (s.id == sid) {
-                        idx = i;
-                        break;
-                    }
-                }
-                if (idx == null) {
-                    self.recv_streams.append(self.allocator, .{ .id = sid }) catch continue;
-                    idx = self.recv_streams.items.len - 1;
-                }
-                if (!self.recv_streams.items[idx.?].eof) {
-                    self.recv_streams.items[idx.?].eof = true;
-                    pushed = true;
-                }
+            self.deliverStreamBytes(sid, &buf, &pushed);
+        }
+        if (self.h3_mode) {
+            // HTTP/3 servers only open unidirectional streams toward the
+            // client: ids 1, 3, 5, ... (server bidi is not used by H3).
+            var server_sid: u64 = 1;
+            while (server_sid < 1024) : (server_sid += 2) {
+                self.deliverStreamBytes(server_sid, &buf, &pushed);
             }
         }
         self.state_mutex.unlock();
         if (pushed) self.data_sem.post(self.io);
+    }
+
+    fn deliverStreamBytes(self: *Client, sid: u64, buf: *[4096]u8, pushed: *bool) void {
+        while (true) {
+            const n = self.client.recvStream(sid, buf) catch break;
+            const len = n orelse break;
+            if (len == 0) break;
+            var idx: ?usize = null;
+            for (self.recv_streams.items, 0..) |s, i| {
+                if (s.id == sid) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx == null) {
+                self.recv_streams.append(self.allocator, .{ .id = sid }) catch break;
+                idx = self.recv_streams.items.len - 1;
+            }
+            self.recv_streams.items[idx.?].queue.appendSlice(self.allocator, buf[0..len]) catch break;
+            pushed.* = true;
+        }
+        if (self.client.streamFinished(sid) catch false) {
+            var idx: ?usize = null;
+            for (self.recv_streams.items, 0..) |s, i| {
+                if (s.id == sid) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx == null) {
+                self.recv_streams.append(self.allocator, .{ .id = sid }) catch return;
+                idx = self.recv_streams.items.len - 1;
+            }
+            if (!self.recv_streams.items[idx.?].eof) {
+                self.recv_streams.items[idx.?].eof = true;
+                pushed.* = true;
+            }
+        }
     }
 
     /// Service lifecycle deadlines that came due and send the datagrams they

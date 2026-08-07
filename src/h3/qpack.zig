@@ -1147,6 +1147,20 @@ pub fn decodeEncoderStreamInstructions(
     return pos;
 }
 
+/// Return the length of the longest prefix of `data` that consists entirely of
+/// complete encoder-stream instructions, without applying them. The runtime
+/// driver uses this to decide how much buffered encoder-stream data can be fed
+/// to `processPeerEncoderStream` when bytes arrive split across datagrams.
+pub fn encoderStreamConsumedLength(data: []const u8) !usize {
+    var pos: usize = 0;
+    while (pos < data.len) {
+        const decoded = try decodeEncoderInstruction(data[pos..]);
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+    return pos;
+}
+
 /// Encode a decoder stream instruction into a buffer.
 /// Returns the number of bytes written.
 pub fn encodeDecoderInstruction(out: []u8, instruction: DecoderInstruction) !usize {
@@ -1268,6 +1282,20 @@ pub fn decodeDecoderStreamInstructions(
                 try dynamic_table.acknowledgeReceived(dynamic_table.known_received_count + increment);
             },
         }
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+    return pos;
+}
+
+/// Return the length of the longest prefix of `data` that consists entirely of
+/// complete decoder-stream instructions, without applying them. Used by the
+/// runtime driver to feed only complete decoder instructions to the state
+/// machine when bytes arrive split across datagrams.
+pub fn decoderStreamConsumedLength(data: []const u8) !usize {
+    var pos: usize = 0;
+    while (pos < data.len) {
+        const decoded = try decodeDecoderInstruction(data[pos..]);
         if (decoded.consumed == 0) break;
         pos += decoded.consumed;
     }

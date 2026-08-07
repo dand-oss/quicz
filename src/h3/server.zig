@@ -291,6 +291,27 @@ pub const H3Server = struct {
         try self.bufferBlockedRequest(stream_id, req_buf[0..total_read]);
     }
 
+    /// Feed already-buffered request bytes (a complete HEADERS frame) into the
+    /// server. The runtime driver reads the wire itself and hands the frame
+    /// here so it can interleave QPACK control streams instead of blocking on
+    /// one request stream. Returns `processed` when a response was sent, or
+    /// `blocked` when the request waits for QPACK insertions (the state machine
+    /// keeps its own copy and retries on encoder-stream progress).
+    pub const FeedResult = enum { processed, blocked };
+
+    pub fn feedRequestBytes(self: *H3Server, stream_id: u64, data: []const u8) !FeedResult {
+        const frame = try h3_frame.decodeFrame(data);
+        if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+            return error.ExpectedHeadersFrame;
+        }
+        if (frame.frame.payload.len > self.local_max_field_section_size) {
+            return error.FieldSectionTooLarge;
+        }
+        if (try self.tryProcessRequest(stream_id, data)) return .processed;
+        try self.bufferBlockedRequest(stream_id, data);
+        return .blocked;
+    }
+
     fn bufferBlockedRequest(self: *H3Server, stream_id: u64, data: []const u8) !void {
         if (self.blocked_requests) |*blocked| {
             if (!blocked.contains(stream_id) and blocked.count() >= self.max_blocked_streams) {

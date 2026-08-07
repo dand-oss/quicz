@@ -11,6 +11,8 @@ pub const endpoint = @import("quic/endpoint.zig");
 pub const runtime = struct {
     pub const server = @import("runtime/server.zig");
     pub const client = @import("runtime/client.zig");
+    pub const h3_server = @import("runtime/h3_server.zig");
+    pub const h3_client = @import("runtime/h3_client.zig");
 };
 pub const transport_error = @import("quic/transport_error.zig");
 pub const transport_parameters = @import("quic/transport_parameters.zig");
