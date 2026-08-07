@@ -40,6 +40,15 @@ pub const H3Server = struct {
     /// Number of peer insertions this decoder has already acknowledged via
     /// Insert Count Increment, for emitting only the outstanding delta.
     decoder_known_insert_count: u64 = 0,
+    /// This decoder's advertised SETTINGS_QPACK_MAX_TABLE_CAPACITY, sent in the
+    /// control-stream SETTINGS frame (RFC 9204 §3.2.3). The peer encoder must
+    /// not exceed it.
+    local_qpack_max_table_capacity: u64 = 0,
+    /// Peer's advertised SETTINGS_QPACK_MAX_TABLE_CAPACITY. Caps this encoder's
+    /// dynamic table; zero means the peer has not advertised one (capacity 0).
+    peer_qpack_max_table_capacity: u64 = 0,
+    /// Capacity requested via enableQpackDynamic, before peer SETTINGS capping.
+    enc_capacity_requested: usize = 0,
 
     pub const H3ServerConnection = struct {
         /// Open a locally-initiated unidirectional stream.
@@ -63,11 +72,17 @@ pub const H3Server = struct {
     };
 
     /// Initialize the server and send SETTINGS on the control stream.
-    pub fn init(conn: *H3ServerConnection, handler: RequestHandler, allocator: std.mem.Allocator) !H3Server {
+    pub fn init(
+        conn: *H3ServerConnection,
+        handler: RequestHandler,
+        allocator: std.mem.Allocator,
+        qpack_max_table_capacity: u64,
+    ) !H3Server {
         var server = H3Server{
             .conn = conn,
             .handler = handler,
             .allocator = allocator,
+            .local_qpack_max_table_capacity = qpack_max_table_capacity,
         };
         try server.sendSettings();
         return server;
@@ -83,13 +98,18 @@ pub const H3Server = struct {
     /// Enable QPACK dynamic table compression (RFC 9204).
     /// Opens QPACK encoder (0x02) and decoder (0x03) unidirectional streams,
     /// initializes both tables, and advertises capacity to the peer via a
-    /// Set Capacity instruction on the encoder stream.
+    /// Set Capacity instruction on the encoder stream. The encoder capacity is
+    /// capped by the peer's advertised SETTINGS_QPACK_MAX_TABLE_CAPACITY; when
+    /// the peer has not advertised one, the encoder must stay at capacity zero
+    /// and send no encoder instructions (RFC 9204 §3.2.3).
     pub fn enableQpackDynamic(self: *H3Server, capacity: usize) !void {
+        self.enc_capacity_requested = capacity;
+        const enc_capacity: usize = @intCast(@min(capacity, self.peer_qpack_max_table_capacity));
         self.enc_table = qpack.DynamicTable.init(self.allocator);
         self.dec_table = qpack.DynamicTable.init(self.allocator);
         self.pending_sections = std.AutoHashMap(u64, u64).init(self.allocator);
-        self.enc_table.?.setCapacity(capacity);
-        self.dec_table.?.setCapacity(capacity);
+        self.enc_table.?.setCapacity(enc_capacity);
+        self.dec_table.?.setCapacity(@intCast(self.local_qpack_max_table_capacity));
 
         // Open encoder stream (type 0x02) and send Set Capacity.
         self.enc_stream_id = try self.conn.openUniStream();
@@ -97,7 +117,9 @@ pub const H3Server = struct {
         var pos: usize = 0;
         enc_buf[pos] = 0x02;
         pos += 1;
-        pos += try qpack.encodeEncoderInstruction(enc_buf[pos..], .{ .set_capacity = capacity });
+        if (enc_capacity > 0) {
+            pos += try qpack.encodeEncoderInstruction(enc_buf[pos..], .{ .set_capacity = enc_capacity });
+        }
         try self.conn.sendOnStream(self.enc_stream_id.?, enc_buf[0..pos], false);
 
         // Open decoder stream (type 0x03).
@@ -107,12 +129,33 @@ pub const H3Server = struct {
         try self.conn.sendOnStream(self.dec_stream_id.?, dec_buf[0..1], false);
     }
 
+    /// Record the peer's advertised SETTINGS_QPACK_MAX_TABLE_CAPACITY. If the
+    /// dynamic table is already enabled and the new limit is lower, reduce the
+    /// encoder capacity and re-issue Set Capacity (RFC 9204 §3.2.3).
+    pub fn setPeerMaxTableCapacity(self: *H3Server, capacity: u64) !void {
+        self.peer_qpack_max_table_capacity = capacity;
+        if (self.enc_table) |*et| {
+            const effective: usize = @intCast(@min(self.enc_capacity_requested, capacity));
+            if (effective != et.max_capacity) {
+                et.setCapacity(effective);
+                if (effective > 0) {
+                    var buf: [16]u8 = undefined;
+                    const len = try qpack.encodeEncoderInstruction(&buf, .{ .set_capacity = effective });
+                    try self.conn.sendOnStream(self.enc_stream_id.?, buf[0..len], false);
+                }
+            }
+        }
+    }
+
     /// Feed peer (client) encoder stream data into the decoder-side dynamic
     /// table so subsequent request header blocks with dynamic references
     /// resolve correctly (RFC 9204 §4.3).
     pub fn processPeerEncoderStream(self: *H3Server, data: []const u8) !void {
         if (self.dec_table) |*dt| {
             _ = try qpack.decodeEncoderStreamInstructions(data, dt);
+            if (dt.max_capacity > self.local_qpack_max_table_capacity) {
+                return error.QpackCapacityExceedsSettings;
+            }
         }
     }
 
@@ -160,9 +203,12 @@ pub const H3Server = struct {
         buf[pos] = 0x00;
         pos += 1;
 
-        // SETTINGS frame with max_field_section_size=8192
-        var settings_payload: [16]u8 = undefined;
-        const settings = h3_connection.Settings{ .max_field_section_size = 8192 };
+        // SETTINGS frame: max_field_section_size + advertised QPACK capacity.
+        var settings_payload: [32]u8 = undefined;
+        const settings = h3_connection.Settings{
+            .max_field_section_size = 8192,
+            .qpack_max_table_capacity = self.local_qpack_max_table_capacity,
+        };
         const sp_len = try settings.encodePayload(&settings_payload);
 
         // Frame type (0x04) + length + payload
@@ -306,7 +352,7 @@ test "H3Server sends SETTINGS on control stream" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
@@ -375,7 +421,7 @@ test "H3Server handles request and sends response" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try server.handleRequestStream(0); // client bidi stream 0
 
@@ -425,7 +471,7 @@ test "H3Server GOAWAY" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 

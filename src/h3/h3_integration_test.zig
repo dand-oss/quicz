@@ -92,13 +92,13 @@ test "H3 integration: full request/response over QUIC streams" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
 
     // Client: open control stream and send SETTINGS
     var client_adapter = makeClientConnAdapter(&client_conn);
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
     defer client.deinit();
     try std.testing.expect(client.settings_sent);
 
@@ -154,14 +154,14 @@ test "H3 integration: SETTINGS exchange over control streams" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
 
     // Client sends SETTINGS on control stream (uni stream 2)
     var client_adapter = makeClientConnAdapter(&client_conn);
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
     defer client.deinit();
     try std.testing.expect(client.settings_sent);
     try std.testing.expectEqual(@as(?u64, 2), client.control_stream_id);
@@ -184,7 +184,7 @@ test "H3 integration: GOAWAY graceful shutdown" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
     defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 
@@ -673,10 +673,14 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
     defer server.deinit();
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
     defer client.deinit();
+
+    // SETTINGS exchange: both sides advertise 4096 and honor the peer's value.
+    try server.setPeerMaxTableCapacity(4096);
+    try client.setPeerMaxTableCapacity(4096);
 
     // Enable QPACK dynamic table on both sides.
     try server.enableQpackDynamic(4096);
@@ -740,4 +744,67 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
     // Verify dynamic tables have accumulated entries on both sides.
     try std.testing.expect(server.enc_table.?.entryCount() >= 2);
     try std.testing.expect(client.enc_table.?.entryCount() >= 2);
+}
+
+test "H3 integration: QPACK SETTINGS capacity cap" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    var client_adapter = channel.makeClientAdapter();
+
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200, .body = "OK" };
+        }
+    }.handle;
+
+    // Asymmetric advertised capacities: the server allows 4096, the client 512.
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    defer server.deinit();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 512);
+    defer client.deinit();
+
+    // Both SETTINGS frames carry the advertised QPACK capacity.
+    var ctrl_buf: [128]u8 = undefined;
+    const server_ctrl = channel.readStream(server.control_stream_id.?, &ctrl_buf);
+    const server_frame = try h3_frame.decodeFrame(server_ctrl[1..]);
+    const server_settings = try h3_connection.Settings.decodePayload(server_frame.frame.payload);
+    try std.testing.expectEqual(@as(u64, 4096), server_settings.qpack_max_table_capacity);
+
+    const client_ctrl = channel.readStream(client.control_stream_id.?, &ctrl_buf);
+    const client_frame = try h3_frame.decodeFrame(client_ctrl[1..]);
+    const client_settings = try h3_connection.Settings.decodePayload(client_frame.frame.payload);
+    try std.testing.expectEqual(@as(u64, 512), client_settings.qpack_max_table_capacity);
+
+    // Exchange peer capacities, then enable dynamic tables. The client
+    // negotiates before enabling; the server enables before its peer SETTINGS
+    // arrive, exercising the late-SETTINGS raise path.
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+    try server.enableQpackDynamic(4096);
+    try std.testing.expectEqual(@as(usize, 0), server.enc_table.?.max_capacity);
+    try server.setPeerMaxTableCapacity(512);
+
+    // Encoder capacity is capped by the peer's advertised limit.
+    try std.testing.expectEqual(@as(usize, 512), server.enc_table.?.max_capacity);
+    try std.testing.expectEqual(@as(usize, 4096), client.enc_table.?.max_capacity);
+
+    // The wire Set Capacity matches the capped values.
+    var wire: [32]u8 = undefined;
+    const server_enc = channel.readStream(server.enc_stream_id.?, &wire);
+    const server_ins = try qpack.decodeEncoderInstruction(server_enc[1..]);
+    try std.testing.expectEqual(@as(u64, 512), server_ins.instruction.set_capacity);
+    const client_enc = channel.readStream(client.enc_stream_id.?, &wire);
+    const client_ins = try qpack.decodeEncoderInstruction(client_enc[1..]);
+    try std.testing.expectEqual(@as(u64, 4096), client_ins.instruction.set_capacity);
+
+    // A peer Set Capacity above our advertised limit is a protocol error.
+    var over: [16]u8 = undefined;
+    const over_len = try qpack.encodeEncoderInstruction(&over, .{ .set_capacity = 8192 });
+    try std.testing.expectError(
+        error.QpackCapacityExceedsSettings,
+        server.processPeerEncoderStream(over[0..over_len]),
+    );
 }
