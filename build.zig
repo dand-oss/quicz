@@ -17,11 +17,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Shared quicz module (library logic lives in src/lib.zig)
+    // Shared quicz module (library logic lives in src/lib.zig).
+    // link_libc: the library uses std.c / std.heap.c_allocator (fuzz targets,
+    // tests) and needs libc for clock/malloc on Linux; macOS links it by default.
+    // This is a system library, not a C-code dependency.
     const quicz_mod = b.addModule("quicz", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     // Benchmark executables must measure production-like throughput, so force
