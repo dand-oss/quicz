@@ -439,11 +439,19 @@ test "HTTP/3 404 response roundtrip" {
 // ---------------------------------------------------------------------------
 
 /// Encode a complete HTTP/3 request using QPACK dynamic table references.
+/// Result of a dynamic-table-encoding call: the encoded request/response bytes
+/// and the length of the QPACK encoder-stream Insert instructions produced.
+pub const DynamicEncodeResult = struct {
+    len: usize,
+    encoder_stream_len: usize,
+};
+
 pub fn encodeRequestWithDynamic(
     out: []u8,
     request: Request,
-    dynamic_table: *const qpack.DynamicTable,
-) !usize {
+    dynamic_table: *qpack.DynamicTable,
+    encoder_stream_out: []u8,
+) !DynamicEncodeResult {
     var pos: usize = 0;
 
     // Build header fields
@@ -465,12 +473,13 @@ pub fn encodeRequestWithDynamic(
         count += 1;
     }
 
-    // Encode header block with dynamic table
+    // Encode header block with dynamic table (inserts new fields + emits
+    // encoder-stream Insert instructions).
     var header_buf: [4096]u8 = undefined;
-    const header_len = try qpack.encodeHeaderBlockWithDynamic(&header_buf, fields_buf[0..count], dynamic_table);
+    const enc = try qpack.encodeHeaderBlockWithDynamicInserting(&header_buf, encoder_stream_out, fields_buf[0..count], dynamic_table);
 
     // Write HEADERS frame
-    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..enc.header_block_len]);
 
     // Write DATA frame if body present
     if (request.body) |body| {
@@ -479,7 +488,7 @@ pub fn encodeRequestWithDynamic(
         }
     }
 
-    return pos;
+    return .{ .len = pos, .encoder_stream_len = enc.encoder_stream_len };
 }
 
 /// Decode an HTTP/3 request using QPACK dynamic table references.
@@ -549,8 +558,9 @@ pub fn decodeRequestWithDynamic(
 pub fn encodeResponseWithDynamic(
     out: []u8,
     response: Response,
-    dynamic_table: *const qpack.DynamicTable,
-) !usize {
+    dynamic_table: *qpack.DynamicTable,
+    encoder_stream_out: []u8,
+) !DynamicEncodeResult {
     var pos: usize = 0;
 
     var status_buf: [8]u8 = undefined;
@@ -567,9 +577,9 @@ pub fn encodeResponseWithDynamic(
     }
 
     var header_buf: [4096]u8 = undefined;
-    const header_len = try qpack.encodeHeaderBlockWithDynamic(&header_buf, fields_buf[0..count], dynamic_table);
+    const enc = try qpack.encodeHeaderBlockWithDynamicInserting(&header_buf, encoder_stream_out, fields_buf[0..count], dynamic_table);
 
-    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+    pos += try writeFrame(out[pos..], @intFromEnum(h3_frame.FrameType.headers), header_buf[0..enc.header_block_len]);
 
     if (response.body) |body| {
         if (body.len > 0) {
@@ -577,7 +587,7 @@ pub fn encodeResponseWithDynamic(
         }
     }
 
-    return pos;
+    return .{ .len = pos, .encoder_stream_len = enc.encoder_stream_len };
 }
 
 /// Decode an HTTP/3 response using QPACK dynamic table references.
@@ -652,7 +662,8 @@ test "HTTP/3 request with dynamic table roundtrip" {
     };
 
     var buf: [4096]u8 = undefined;
-    const len = try encodeRequestWithDynamic(&buf, req, &dt);
+    var instr_buf: [4096]u8 = undefined;
+    const len = (try encodeRequestWithDynamic(&buf, req, &dt, &instr_buf)).len;
 
     const result = try decodeRequestWithDynamic(buf[0..len], &dt);
     try std.testing.expectEqualStrings("GET", result.request.method);
@@ -679,7 +690,8 @@ test "HTTP/3 response with dynamic table roundtrip" {
     };
 
     var buf: [4096]u8 = undefined;
-    const len = try encodeResponseWithDynamic(&buf, resp, &dt);
+    var instr_buf: [4096]u8 = undefined;
+    const len = (try encodeResponseWithDynamic(&buf, resp, &dt, &instr_buf)).len;
 
     const result = try decodeResponseWithDynamic(buf[0..len], &dt);
     try std.testing.expectEqual(@as(u16, 200), result.response.status);
@@ -691,7 +703,6 @@ test "HTTP/3 dynamic table reduces wire size" {
     var dt = qpack.DynamicTable.init(std.testing.allocator);
     defer dt.deinit();
     dt.setCapacity(4096);
-    try dt.insert("x-long-header-name", "x-long-header-value-that-is-repeated");
 
     const extra = [_]qpack.HeaderField{
         .{ .name = "x-long-header-name", .value = "x-long-header-value-that-is-repeated" },
@@ -703,20 +714,19 @@ test "HTTP/3 dynamic table reduces wire size" {
         .extra_headers = &extra,
     };
 
-    // Encode with dynamic table
-    var buf_dynamic: [4096]u8 = undefined;
-    const len_dynamic = try encodeRequestWithDynamic(&buf_dynamic, req, &dt);
-
-    // Encode without dynamic table (empty table)
-    var empty_dt = qpack.DynamicTable.init(std.testing.allocator);
-    defer empty_dt.deinit();
-    empty_dt.setCapacity(4096);
-
+    // Baseline: literal-only encoding (no dynamic table) is larger because the
+    // long header name/value are written in full.
     var buf_static: [4096]u8 = undefined;
-    const len_static = try encodeRequestWithDynamic(&buf_static, req, &empty_dt);
+    const len_static = try encodeRequest(&buf_static, req);
 
-    // Dynamic encoding should be smaller (indexed vs literal)
-    try std.testing.expect(len_dynamic < len_static);
+    // With the dynamic table, the long header is inserted and then referenced
+    // by index, so the header block is smaller.
+    var buf_dynamic: [4096]u8 = undefined;
+    var instr: [4096]u8 = undefined;
+    const enc = try encodeRequestWithDynamic(&buf_dynamic, req, &dt, &instr);
+
+    // Dynamic indexing should be smaller than the literal baseline.
+    try std.testing.expect(enc.len < len_static);
 }
 
 test "HTTP/3 POST with dynamic table and body" {
@@ -738,7 +748,8 @@ test "HTTP/3 POST with dynamic table and body" {
     };
 
     var buf: [4096]u8 = undefined;
-    const len = try encodeRequestWithDynamic(&buf, req, &dt);
+    var instr_buf: [4096]u8 = undefined;
+    const len = (try encodeRequestWithDynamic(&buf, req, &dt, &instr_buf)).len;
 
     const result = try decodeRequestWithDynamic(buf[0..len], &dt);
     try std.testing.expectEqualStrings("POST", result.request.method);

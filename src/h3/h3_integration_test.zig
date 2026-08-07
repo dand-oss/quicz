@@ -305,10 +305,12 @@ test "H3 integration: full flow with QPACK dynamic table" {
     };
 
     var req_buf: [4096]u8 = undefined;
-    const req_len = try h3_request.encodeRequestWithDynamic(&req_buf, req, &client_dt);
+    var client_instr: [4096]u8 = undefined;
+    const enc_req = try h3_request.encodeRequestWithDynamic(&req_buf, req, &client_dt, &client_instr);
+    _ = try qpack.decodeEncoderStreamInstructions(client_instr[0..enc_req.encoder_stream_len], &server_dt);
 
     // Server decodes request
-    const decoded_req = try h3_request.decodeRequestWithDynamic(req_buf[0..req_len], &server_dt);
+    const decoded_req = try h3_request.decodeRequestWithDynamic(req_buf[0..enc_req.len], &server_dt);
     try std.testing.expectEqualStrings("GET", decoded_req.request.method);
     try std.testing.expectEqualStrings("/api/v3/data", decoded_req.request.path);
     try std.testing.expectEqualStrings("service.internal", decoded_req.request.authority.?);
@@ -328,10 +330,12 @@ test "H3 integration: full flow with QPACK dynamic table" {
     };
 
     var resp_buf: [4096]u8 = undefined;
-    const resp_len = try h3_request.encodeResponseWithDynamic(&resp_buf, resp, &server_dt);
+    var server_instr: [4096]u8 = undefined;
+    const enc_resp = try h3_request.encodeResponseWithDynamic(&resp_buf, resp, &server_dt, &server_instr);
+    _ = try qpack.decodeEncoderStreamInstructions(server_instr[0..enc_resp.encoder_stream_len], &client_dt);
 
     // Client decodes response
-    const decoded_resp = try h3_request.decodeResponseWithDynamic(resp_buf[0..resp_len], &client_dt);
+    const decoded_resp = try h3_request.decodeResponseWithDynamic(resp_buf[0..enc_resp.len], &client_dt);
     try std.testing.expectEqual(@as(u16, 200), decoded_resp.response.status);
     try std.testing.expect(decoded_resp.response.isSuccess());
     try std.testing.expectEqualStrings("{\"items\":[1,2,3]}", decoded_resp.response.body.?);
@@ -472,9 +476,10 @@ test "H3 integration: multiple requests with growing dynamic table" {
         };
 
         var buf: [4096]u8 = undefined;
-        const len = try h3_request.encodeRequestWithDynamic(&buf, req, &dt);
+        var instr: [4096]u8 = undefined;
+        const enc = try h3_request.encodeRequestWithDynamic(&buf, req, &dt, &instr);
 
-        const decoded = try h3_request.decodeRequestWithDynamic(buf[0..len], &dt);
+        const decoded = try h3_request.decodeRequestWithDynamic(buf[0..enc.len], &dt);
         try std.testing.expectEqualStrings("GET", decoded.request.method);
         try std.testing.expectEqualStrings(path, decoded.request.path);
     }
