@@ -4,6 +4,8 @@ const builtin = @import("builtin");
 
 const HkdfSha256 = crypto.kdf.hkdf.HkdfSha256;
 const Sha256 = crypto.hash.sha2.Sha256;
+const Sha384 = crypto.hash.sha2.Sha384;
+const Sha512 = crypto.hash.sha2.Sha512;
 const HmacSha256 = crypto.auth.hmac.sha2.HmacSha256;
 const Aes128Gcm = crypto.aead.aes_gcm.Aes128Gcm;
 const X25519 = crypto.dh.X25519;
@@ -383,7 +385,15 @@ fn verifyCertificateVerifySignature(
         },
         .rsa_pss_rsae_sha256 => {
             if (pub_key_algo != .rsaEncryption) return error.BadCertificateVerify;
-            verifyRsaPssSha256(pub_key, sig, signed_content) catch return error.BadCertificateVerify;
+            verifyRsaPss(Sha256, pub_key, sig, signed_content) catch return error.BadCertificateVerify;
+        },
+        .rsa_pss_rsae_sha384 => {
+            if (pub_key_algo != .rsaEncryption) return error.BadCertificateVerify;
+            verifyRsaPss(Sha384, pub_key, sig, signed_content) catch return error.BadCertificateVerify;
+        },
+        .rsa_pss_rsae_sha512 => {
+            if (pub_key_algo != .rsaEncryption) return error.BadCertificateVerify;
+            verifyRsaPss(Sha512, pub_key, sig, signed_content) catch return error.BadCertificateVerify;
         },
         else => return error.BadCertificateVerify,
     }
@@ -391,7 +401,7 @@ fn verifyCertificateVerifySignature(
 
 /// Verify an RSA-PSS-SHA256 signature (RFC 8017) over `msg` with a DER-encoded
 /// RSA public key. The modulus length must be one of the supported TLS sizes.
-fn verifyRsaPssSha256(pub_key_der: []const u8, sig: []const u8, msg: []const u8) HandshakeError!void {
+fn verifyRsaPss(comptime Hash: type, pub_key_der: []const u8, sig: []const u8, msg: []const u8) HandshakeError!void {
     const rsa = Certificate.rsa;
     const comp = rsa.PublicKey.parseDer(pub_key_der) catch return error.BadCertificateVerify;
     switch (comp.modulus.len) {
@@ -399,7 +409,7 @@ fn verifyRsaPssSha256(pub_key_der: []const u8, sig: []const u8, msg: []const u8)
             if (sig.len != ml) return error.BadCertificateVerify;
             const key = rsa.PublicKey.fromBytes(comp.exponent, comp.modulus) catch return error.BadCertificateVerify;
             const s = rsa.PSSSignature.fromBytes(ml, sig[0..ml]);
-            rsa.PSSSignature.verify(ml, s, msg, key, Sha256) catch return error.BadCertificateVerify;
+            rsa.PSSSignature.verify(ml, s, msg, key, Hash) catch return error.BadCertificateVerify;
         },
         else => return error.BadCertificateVerify,
     }
@@ -6966,7 +6976,7 @@ test "Tls13Handshake server emits a valid RSA-PSS CertificateVerify" {
     const signature_len = readU16(data[6..]);
     try std.testing.expectEqual(@as(usize, 256), signature_len);
     try std.testing.expectEqual(data.len, @as(usize, signature_len) + 8);
-    try verifyRsaPssSha256(public_key.bytes[0..public_key.len], data[8..], &signed);
+    try verifyRsaPss(Sha256, public_key.bytes[0..public_key.len], data[8..], &signed);
 }
 
 test "Tls13Handshake client emits a valid RSA-PSS CertificateVerify" {
@@ -6995,7 +7005,7 @@ test "Tls13Handshake client emits a valid RSA-PSS CertificateVerify" {
     const signature_len = readU16(data[6..]);
     try std.testing.expectEqual(@as(usize, 256), signature_len);
     try std.testing.expectEqual(data.len, @as(usize, signature_len) + 8);
-    try verifyRsaPssSha256(public_key.bytes[0..public_key.len], data[8..], &signed);
+    try verifyRsaPss(Sha256, public_key.bytes[0..public_key.len], data[8..], &signed);
 }
 
 test "verifyCertificateVerifySignature accepts a valid ECDSA P-256 signature" {
