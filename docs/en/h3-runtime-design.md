@@ -1,7 +1,7 @@
 # H3 Runtime Wiring Design
 
-Status: 已完成（2026-08-07，`zig build run-h3-runtime-loopback` + 1867/1867 单测通过）
-Scope: 把 HTTP/3 + QPACK 接到生产 I/O runtime（`runtime.Server` / `runtime.Client`，底层 `std.Io.Threaded`）。
+Status: 已完成（2026-08-08：runtime 接线 + 完整数据路径，`zig build run-h3-runtime-loopback` round1-4 + 1883/1883 单测通过）
+Scope: 把 HTTP/3 + QPACK 接到生产 I/O runtime（`runtime.Server` / `runtime.Client`，底层 `std.Io.Threaded`），并补齐请求体读取 + 流式响应数据路径。
 
 ## 参照物差距审计
 
@@ -33,6 +33,36 @@ Scope: 把 HTTP/3 + QPACK 接到生产 I/O runtime（`runtime.Server` / `runtime
 4. `runtime.Server.serveH3(options, handler)` 作为一层薄便利入口：内部 `serve()` + 每连接创建 runtime H3 驱动，transport 仍由 `runtime.Server` 单份持有。旧的独立低层服务内容已重写为走 runtime 的 `examples/h3_server.zig`（`run-h3-server`，curl 可测）。
 5. 新增生产路径示例 `examples/h3_runtime_loopback.zig`，直接用 `runtime.Server` + `runtime.Client`（`std.Io.Threaded`）跑两轮动态 QPACK 请求/响应。
 
+## 数据路径：请求体读取 + 流式响应（续11-13，2026-08-08）
+
+早期接线只做到"等一个完整 HEADERS 帧 → 同步 handler 返回固定 `Response` → 一次 `sendOnStream(fin=true)` 整段发出"：请求体 DATA 帧被丢弃、响应不可分块。本轮补齐为完整 HTTP/3 数据路径，参照 quic-zig/zttp/quiche/quic-go 四家统一"HEADERS 先出 → body 帧/块流式 → fin 收尾"三段式。
+
+### 请求体读取（server）
+
+- `H3Server.feedRequestData(sid, data, fin)` 是流式主入口：headers 阶段累积 `RequestStream.wire` 直到完整 HEADERS 帧，QPACK 解码（blocked 时 `rs.blocked` 累积 wire，encoder 流推进后 `unblockBlockedRequests` 重试）；body 阶段把 DATA 帧 payload 聚合进 `rs.body`（跨 feed 的半帧存 `body_wire`），超 `max_request_body_size`（1 MiB）返回 `RequestBodyTooLarge` → runtime 回 413 + STOP_SENDING(H3_EXCESSIVE_LOAD)。
+- runtime 驱动 `feedRequest` 按 `consumed` 收缩自己的 `request_buffers`，EOF(0) 喂空数据 + fin。
+
+### 流式/分块响应（server）
+
+- `Response.body_stream: ?ResponseBody`（vtable pull 迭代器 `{ctx, next_fn, deinit_fn}`，提供 `fromChunks`/`fromRepeating`）优先于 `body`。
+- `startResponse` 只发 HEADERS（`encodeResponseHeaders(/WithDynamic)`，bodyless 时 fin=true 直发），有 body 注册 `ResponseStream`。
+- `pumpResponses` 遍历响应，每流每次 ≤ `max_chunks_per_pump`(8) 个 ≤ `max_response_chunk_payload`(8 KiB) DATA 帧；`FlowControlBlocked` 时 static 块不推进 offset 下次重试；body 耗尽后空帧 fin 收尾并 `streamDone` 释放请求条目。
+
+### client 对称
+
+- 收响应：`feedResponseData` 聚合多 DATA 帧（镜像 server `feedRequestData`），`releaseResponse` 释放；runtime `receiveResponse` 走它。
+- 发请求体：`sendRequestStreamed(request, body)` 发 HEADERS(fin=false) + 分块 DATA，`FlowControlBlocked` 存 `pending_sends`，`pumpSends` 重试并空帧 fin；runtime 透传并阻塞等 body 发完（credit 到达后重试）。
+
+### 前置 bug 修复
+
+- `runtime.Server.drainOutgoing` 对 `Connection.sendOnStream` 返回 `FlowControlBlocked` 时**无条件清空队列（丢数据）** → 保留队列 + 保持 `send_pending`，MAX_STREAM_DATA 到达（入站 datagram 唤醒 drive）后重试。
+
+### 设计要点
+
+- 状态机自持全部请求/响应字节副本（`wire`/`body_wire`/`body`），runtime 驱动只当字节搬运工，按 `consumed` 收缩自己的缓冲。
+- handler 仍是同步回调（`fn(DecodedRequest) Response`），`next_fn` 必须非阻塞；`deinit_fn` 由状态机在发完或 cancel 时调用——为未来异步（producer-task）body 留 seam。
+- `DecodedRequest/Response` 借用状态机缓冲，释放锚定在响应 fin 之后（`streamDone`），不可提前。
+
 ## 不变量（不得破坏）
 
 - 既有 `runtime.Server` / `runtime.Client` 的 echo/multi-conn 成功路径不变；新增方法不改变现有 API 语义。
@@ -42,6 +72,8 @@ Scope: 把 HTTP/3 + QPACK 接到生产 I/O runtime（`runtime.Server` / `runtime
 
 ## 验证矩阵
 
-- `zig build test --summary all`：全量单测。
-- `zig build run-h3-runtime-loopback`：`runtime.Server` + `runtime.Client` 真实 UDP，两轮 200、KRC 追平、pending/protected 归零。
+- `zig build test --summary all`：全量单测（1883/1883）。
+- `zig build run-h3-runtime-loopback`：`runtime.Server` + `runtime.Client` 真实 UDP，round1-4 全 200（GET 动态 QPACK、POST echo 流式请求体、GET /stream 65536B 分块响应）、KRC 追平、pending/protected 归零。
+- `zig build run-h3-loopback`：低层 UDP pump 回归。
+- `zig build run-fuzz`：100000 iterations no crashes。
 - `zig fmt --check build.zig src examples`：格式。
