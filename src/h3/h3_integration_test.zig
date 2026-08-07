@@ -808,3 +808,122 @@ test "H3 integration: QPACK SETTINGS capacity cap" {
         server.processPeerEncoderStream(over[0..over_len]),
     );
 }
+
+test "H3 integration: server buffers request blocked on QPACK insertions" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200, .body = "OK" };
+        }
+    }.handle;
+
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    defer server.deinit();
+    try server.setPeerMaxTableCapacity(4096);
+    try server.enableQpackDynamic(4096);
+
+    // Build a request whose header block references a dynamic entry.
+    var enc = qpack.DynamicTable.init(std.testing.allocator);
+    defer enc.deinit();
+    enc.setCapacity(4096);
+    try enc.insert("x-trace-id", "t1");
+    try enc.acknowledgeReceived(1);
+    const fields = [_]qpack.HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = ":path", .value = "/blocked" },
+        .{ .name = ":scheme", .value = "https" },
+        .{ .name = ":authority", .value = "example.com" },
+        .{ .name = "x-trace-id", .value = "t1" },
+    };
+    var block: [512]u8 = undefined;
+    const block_len = try qpack.encodeHeaderBlockWithDynamic(&block, &fields, &enc);
+    var req_wire: [1024]u8 = undefined;
+    req_wire[0] = 0x01; // HEADERS frame
+    req_wire[1] = @intCast(block_len);
+    @memcpy(req_wire[2 .. 2 + block_len], block[0..block_len]);
+    const req_len = 2 + block_len;
+
+    // Deliver the request before its encoder-stream insertion. Required Insert
+    // Count is 1 but the server has no entry yet, so it is blocked (RFC 9204
+    // §2.2.1).
+    const stream_id = try TestChannel.clientOpenBidi(&channel);
+    try channel.appendStream(stream_id, req_wire[0..req_len]);
+    try server.handleRequestStream(stream_id);
+    try std.testing.expectEqual(@as(usize, 1), server.blocked_requests.?.count());
+
+    // The encoder stream catches up; the buffered request is served.
+    var insert: [64]u8 = undefined;
+    const insert_len = try qpack.encodeEncoderInstruction(&insert, .{ .insert_literal = .{
+        .name = "x-trace-id",
+        .value = "t1",
+    } });
+    try server.processPeerEncoderStream(insert[0..insert_len]);
+    try std.testing.expectEqual(@as(usize, 0), server.blocked_requests.?.count());
+
+    var resp_wire: [8192]u8 = undefined;
+    const resp_bytes = channel.readStream(stream_id, &resp_wire);
+    var client_dec = qpack.DynamicTable.init(std.testing.allocator);
+    defer client_dec.deinit();
+    client_dec.setCapacity(4096);
+    const resp = try h3_request.decodeResponseWithDynamic(resp_bytes, &client_dec);
+    try std.testing.expectEqual(@as(u16, 200), resp.response.status);
+    try std.testing.expectEqualStrings("OK", resp.response.body.?);
+}
+
+test "H3 integration: client retries response blocked on QPACK insertions" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var client_adapter = channel.makeClientAdapter();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
+    defer client.deinit();
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+
+    // Build a response whose header block references a dynamic entry.
+    var enc = qpack.DynamicTable.init(std.testing.allocator);
+    defer enc.deinit();
+    enc.setCapacity(4096);
+    try enc.insert("x-server", "quicz");
+    try enc.acknowledgeReceived(1);
+    const fields = [_]qpack.HeaderField{
+        .{ .name = ":status", .value = "200" },
+        .{ .name = "x-server", .value = "quicz" },
+    };
+    var block: [256]u8 = undefined;
+    const block_len = try qpack.encodeHeaderBlockWithDynamic(&block, &fields, &enc);
+    var resp_wire: [1024]u8 = undefined;
+    resp_wire[0] = 0x01; // HEADERS frame
+    resp_wire[1] = @intCast(block_len);
+    @memcpy(resp_wire[2 .. 2 + block_len], block[0..block_len]);
+    var pos: usize = 2 + block_len;
+    resp_wire[pos] = 0x00; // DATA frame
+    pos += 1;
+    resp_wire[pos] = 2; // "OK"
+    pos += 1;
+    @memcpy(resp_wire[pos .. pos + 2], "OK");
+    pos += 2;
+
+    // Deliver the response before the server's encoder-stream insertion.
+    const stream_id = 0;
+    try channel.appendStream(stream_id, resp_wire[0..pos]);
+    try std.testing.expectError(error.BlockedByQpack, client.receiveResponseDynamic(stream_id));
+    try std.testing.expectEqual(@as(usize, 1), client.blocked_responses.?.count());
+
+    // The encoder stream catches up; the buffered response decodes on retry.
+    var insert: [64]u8 = undefined;
+    const insert_len = try qpack.encodeEncoderInstruction(&insert, .{ .insert_literal = .{
+        .name = "x-server",
+        .value = "quicz",
+    } });
+    try client.processPeerEncoderStream(insert[0..insert_len]);
+    const resp = try client.receiveResponseDynamic(stream_id);
+    try std.testing.expectEqual(@as(u16, 200), resp.status);
+    try std.testing.expectEqualStrings("OK", resp.body.?);
+    // The buffered bytes back the returned response and are freed at deinit.
+    try std.testing.expectEqual(@as(usize, 1), client.blocked_responses.?.count());
+}

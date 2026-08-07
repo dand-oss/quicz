@@ -40,15 +40,16 @@ test "fuzz: QPACK decode unsupported representation" {
     try std.testing.expectError(error.UnsupportedRepresentation, qpack.decodeHeaderBlock(&data, &fields));
 }
 
-test "fuzz: QPACK dynamic decode with empty table" {
+test "fuzz: QPACK dynamic decode blocks when insertions are missing" {
     var dt = qpack.DynamicTable.init(std.testing.allocator);
     defer dt.deinit();
     dt.setCapacity(4096);
 
-    // Dynamic indexed reference (0x80) but table is empty
+    // Required Insert Count = 1 but the decoder has received no insertions:
+    // the field section is blocked (RFC 9204 §2.2.1), not an invalid index.
     const data = [_]u8{ 0x01, 0x00, 0x80 };
     var fields: [8]qpack.HeaderField = undefined;
-    try std.testing.expectError(error.InvalidDynamicIndex, qpack.decodeHeaderBlockWithDynamic(&data, &fields, &dt));
+    try std.testing.expectError(error.BlockedByQpack, qpack.decodeHeaderBlockWithDynamic(&data, &fields, &dt));
 }
 
 test "fuzz: QPACK dynamic decode out-of-bounds index" {
@@ -73,7 +74,7 @@ test "fuzz: QPACK decoder instruction empty input" {
 
 test "fuzz: QPACK encoder instruction truncated varint" {
     // Insert with name ref, static, index prefix all 1s but no continuation
-    const data = [_]u8{ 0xff }; // 6-bit prefix all 1s, expects varint continuation
+    const data = [_]u8{0xff}; // 6-bit prefix all 1s, expects varint continuation
     try std.testing.expectError(error.IncompleteString, qpack.decodeEncoderInstruction(&data));
 }
 

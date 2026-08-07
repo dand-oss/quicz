@@ -44,6 +44,10 @@ pub const H3Client = struct {
     peer_qpack_max_table_capacity: u64 = 0,
     /// Capacity requested via enableQpackDynamic, before peer SETTINGS capping.
     enc_capacity_requested: usize = 0,
+    /// Encoded response bytes awaiting QPACK insertions (RFC 9204 §2.2.1),
+    /// keyed by stream ID until the peer's encoder stream supplies the
+    /// Required Insert Count.
+    blocked_responses: ?std.AutoHashMap(u64, []u8) = null,
 
     pub const H3ClientConnection = struct {
         /// Open a locally-initiated bidirectional stream.
@@ -91,6 +95,11 @@ pub const H3Client = struct {
         if (self.enc_table) |*t| t.deinit();
         if (self.dec_table) |*t| t.deinit();
         if (self.pending_sections) |*m| m.deinit();
+        if (self.blocked_responses) |*m| {
+            var it = m.iterator();
+            while (it.next()) |entry| self.allocator.free(entry.value_ptr.*);
+            m.deinit();
+        }
     }
 
     /// Enable QPACK dynamic table compression (RFC 9204).
@@ -106,6 +115,7 @@ pub const H3Client = struct {
         self.enc_table = qpack.DynamicTable.init(self.allocator);
         self.dec_table = qpack.DynamicTable.init(self.allocator);
         self.pending_sections = std.AutoHashMap(u64, u64).init(self.allocator);
+        self.blocked_responses = std.AutoHashMap(u64, []u8).init(self.allocator);
         self.enc_table.?.setCapacity(enc_capacity);
         self.dec_table.?.setCapacity(@intCast(self.local_qpack_max_table_capacity));
 
@@ -282,10 +292,23 @@ pub const H3Client = struct {
     }
 
     /// Read and decode a response using QPACK dynamic table.
-    /// The caller must ensure peer encoder stream data has been processed via
-    /// processPeerEncoderStream before calling this, so the decoder-side table
-    /// matches the server's encoder table state.
+    /// When the decoder needs insertions the peer's encoder stream has not
+    /// delivered yet, the response bytes are buffered and `error.BlockedByQpack`
+    /// is returned; the caller feeds peer encoder stream data via
+    /// processPeerEncoderStream and calls this again to finish decoding.
     pub fn receiveResponseDynamic(self: *H3Client, stream_id: u64) !h3_request.DecodedResponse {
+        // Retry a previously blocked response before reading the connection.
+        if (self.blocked_responses) |*blocked| {
+            if (blocked.get(stream_id)) |data| {
+                if (try self.tryDecodeBufferedResponse(stream_id, data)) |response| {
+                    // The returned response borrows the buffered bytes, so the
+                    // entry is retained as backing storage until deinit.
+                    return response;
+                }
+                return error.BlockedByQpack;
+            }
+        }
+
         var resp_buf: [8192]u8 = undefined;
         var total_read: usize = 0;
 
@@ -296,14 +319,49 @@ pub const H3Client = struct {
                 if (h3_request.decodeResponseWithDynamic(resp_buf[0..total_read], &self.dec_table.?)) |result| {
                     try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
                     return result.response;
-                } else |_| {}
+                } else |err| {
+                    if (err == error.BlockedByQpack) {
+                        try self.bufferBlockedResponse(stream_id, resp_buf[0..total_read]);
+                        return error.BlockedByQpack;
+                    }
+                    // Incomplete: keep reading the response.
+                }
             }
         }
 
         if (total_read == 0) return error.NoResponse;
-        const result = try h3_request.decodeResponseWithDynamic(resp_buf[0..total_read], &self.dec_table.?);
+        const result = h3_request.decodeResponseWithDynamic(resp_buf[0..total_read], &self.dec_table.?) catch |err| {
+            if (err == error.BlockedByQpack) {
+                try self.bufferBlockedResponse(stream_id, resp_buf[0..total_read]);
+                return error.BlockedByQpack;
+            }
+            return err;
+        };
         try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
         return result.response;
+    }
+
+    /// Decode a buffered response. Returns null while still blocked.
+    fn tryDecodeBufferedResponse(
+        self: *H3Client,
+        stream_id: u64,
+        data: []const u8,
+    ) !?h3_request.DecodedResponse {
+        const result = h3_request.decodeResponseWithDynamic(data, &self.dec_table.?) catch |err| {
+            if (err == error.BlockedByQpack) return null;
+            return err;
+        };
+        try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
+        return result.response;
+    }
+
+    fn bufferBlockedResponse(self: *H3Client, stream_id: u64, data: []const u8) !void {
+        if (self.blocked_responses) |*blocked| {
+            const copy = try self.allocator.dupe(u8, data);
+            errdefer self.allocator.free(copy);
+            if (blocked.get(stream_id)) |old| self.allocator.free(old);
+            try blocked.put(stream_id, copy);
+        }
     }
 
     /// Whether the client is ready to send requests.

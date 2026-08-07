@@ -1686,6 +1686,13 @@ pub fn decodeHeaderBlockWithDynamicInfo(
         pos += 1;
     }
 
+    // RFC 9204 §2.2.1: when the header block needs more insertions than the
+    // decoder has received, the field section is blocked until the encoder
+    // stream catches up, rather than an invalid-reference error.
+    if (required_insert_count > dynamic_table.insert_count) {
+        return error.BlockedByQpack;
+    }
+
     var field_count: usize = 0;
 
     while (pos < data.len) {
