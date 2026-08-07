@@ -92,12 +92,14 @@ test "H3 integration: full request/response over QUIC streams" {
         }
     }.handle;
 
-    const server = try h3_server.H3Server.init(&server_adapter, handler);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    defer server.deinit();
     try std.testing.expect(server.settings_sent);
 
     // Client: open control stream and send SETTINGS
     var client_adapter = makeClientConnAdapter(&client_conn);
-    const client = try h3_client.H3Client.init(&client_adapter);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    defer client.deinit();
     try std.testing.expect(client.settings_sent);
 
     // Client sends GET / request
@@ -152,13 +154,15 @@ test "H3 integration: SETTINGS exchange over control streams" {
         }
     }.handle;
 
-    const server = try h3_server.H3Server.init(&server_adapter, handler);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
 
     // Client sends SETTINGS on control stream (uni stream 2)
     var client_adapter = makeClientConnAdapter(&client_conn);
-    const client = try h3_client.H3Client.init(&client_adapter);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    defer client.deinit();
     try std.testing.expect(client.settings_sent);
     try std.testing.expectEqual(@as(?u64, 2), client.control_stream_id);
 
@@ -180,7 +184,8 @@ test "H3 integration: GOAWAY graceful shutdown" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 
     // Send GOAWAY with last stream ID = 4
@@ -486,4 +491,218 @@ test "H3 integration: multiple requests with growing dynamic table" {
 
     // Dynamic table should have accumulated entries
     try std.testing.expect(dt.entryCount() >= 3);
+}
+
+// ---------------------------------------------------------------------------
+// QPACK dynamic table integration through H3Server/H3Client control flow
+// ---------------------------------------------------------------------------
+
+/// Shared in-memory channel connecting an H3Server and H3Client for testing.
+/// Each stream is a FIFO buffer: send appends, recv consumes from read_pos.
+const TestChannel = struct {
+    allocator: std.mem.Allocator,
+    streams: std.AutoHashMap(u64, StreamBuf),
+    server_uni_next: u64 = 3,
+    client_uni_next: u64 = 2,
+    client_bidi_next: u64 = 0,
+
+    const StreamBuf = struct {
+        data: std.ArrayList(u8) = .empty,
+        read_pos: usize = 0,
+    };
+
+    fn init(allocator: std.mem.Allocator) TestChannel {
+        return .{
+            .allocator = allocator,
+            .streams = std.AutoHashMap(u64, StreamBuf).init(allocator),
+        };
+    }
+
+    fn deinit(self: *TestChannel) void {
+        var it = self.streams.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.data.deinit(self.allocator);
+        }
+        self.streams.deinit();
+    }
+
+    fn ensureStream(self: *TestChannel, stream_id: u64) *StreamBuf {
+        if (!self.streams.contains(stream_id)) {
+            self.streams.put(stream_id, .{}) catch unreachable;
+        }
+        return self.streams.getPtr(stream_id).?;
+    }
+
+    fn appendStream(self: *TestChannel, stream_id: u64, data: []const u8) !void {
+        const sb = self.ensureStream(stream_id);
+        try sb.data.appendSlice(self.allocator, data);
+    }
+
+    /// Read all unread data on a stream into buf, advancing read_pos.
+    /// Returns the slice of bytes read (borrowed from buf).
+    fn readStream(self: *TestChannel, stream_id: u64, buf: []u8) []const u8 {
+        const sb = self.ensureStream(stream_id);
+        if (sb.read_pos >= sb.data.items.len) return buf[0..0];
+        const available = sb.data.items[sb.read_pos..];
+        const n = @min(buf.len, available.len);
+        @memcpy(buf[0..n], available[0..n]);
+        sb.read_pos += n;
+        return buf[0..n];
+    }
+
+    // --- server-side adapter ---
+    fn serverOpenUni(ctx: *anyopaque) anyerror!u64 {
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        const id = self.server_uni_next;
+        self.server_uni_next += 4;
+        return id;
+    }
+    fn serverSend(ctx: *anyopaque, stream_id: u64, data: []const u8, fin: bool) anyerror!void {
+        _ = fin;
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        try self.appendStream(stream_id, data);
+    }
+    fn serverRecv(ctx: *anyopaque, stream_id: u64, buf: []u8) anyerror!?usize {
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        const sb = self.ensureStream(stream_id);
+        if (sb.read_pos >= sb.data.items.len) return null;
+        const available = sb.data.items[sb.read_pos..];
+        const n = @min(buf.len, available.len);
+        @memcpy(buf[0..n], available[0..n]);
+        sb.read_pos += n;
+        return n;
+    }
+
+    // --- client-side adapter ---
+    fn clientOpenBidi(ctx: *anyopaque) anyerror!u64 {
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        const id = self.client_bidi_next;
+        self.client_bidi_next += 4;
+        return id;
+    }
+    fn clientOpenUni(ctx: *anyopaque) anyerror!u64 {
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        const id = self.client_uni_next;
+        self.client_uni_next += 4;
+        return id;
+    }
+    fn clientSend(ctx: *anyopaque, stream_id: u64, data: []const u8, fin: bool) anyerror!void {
+        _ = fin;
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        try self.appendStream(stream_id, data);
+    }
+    fn clientRecv(ctx: *anyopaque, stream_id: u64, buf: []u8) anyerror!?usize {
+        const self: *TestChannel = @ptrCast(@alignCast(ctx));
+        const sb = self.ensureStream(stream_id);
+        if (sb.read_pos >= sb.data.items.len) return null;
+        const available = sb.data.items[sb.read_pos..];
+        const n = @min(buf.len, available.len);
+        @memcpy(buf[0..n], available[0..n]);
+        sb.read_pos += n;
+        return n;
+    }
+
+    fn makeServerAdapter(self: *TestChannel) h3_server.H3Server.H3ServerConnection {
+        return .{
+            .openUniStreamFn = TestChannel.serverOpenUni,
+            .sendOnStreamFn = TestChannel.serverSend,
+            .recvOnStreamFn = TestChannel.serverRecv,
+            .ctx = self,
+        };
+    }
+
+    fn makeClientAdapter(self: *TestChannel) h3_client.H3Client.H3ClientConnection {
+        return .{
+            .openBidiStreamFn = TestChannel.clientOpenBidi,
+            .openUniStreamFn = TestChannel.clientOpenUni,
+            .sendOnStreamFn = TestChannel.clientSend,
+            .recvOnStreamFn = TestChannel.clientRecv,
+            .ctx = self,
+        };
+    }
+
+    /// Pump encoder-stream data from one side to the other's decoder table.
+    /// Skips the stream type prefix byte (0x02) on the first read.
+    fn syncEncoderStream(
+        self: *TestChannel,
+        enc_stream_id: u64,
+        target: anytype,
+        buf: []u8,
+        is_first: bool,
+    ) !void {
+        const data = self.readStream(enc_stream_id, buf);
+        if (data.len == 0) return;
+        const payload = if (is_first) data[1..] else data;
+        if (payload.len > 0) try target.processPeerEncoderStream(payload);
+    }
+};
+
+test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    var client_adapter = channel.makeClientAdapter();
+
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{
+                .status = 200,
+                .extra_headers = &.{
+                    .{ .name = "x-response-id", .value = "resp-001" },
+                    .{ .name = "x-server", .value = "quicz-h3" },
+                },
+                .body = "OK",
+            };
+        }
+    }.handle;
+
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator);
+    defer server.deinit();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator);
+    defer client.deinit();
+
+    // Enable QPACK dynamic table on both sides.
+    try server.enableQpackDynamic(4096);
+    try client.enableQpackDynamic(4096);
+
+    var enc_buf: [8192]u8 = undefined;
+
+    // Sync initial SetCapacity (skip stream type prefix byte 0x02).
+    try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, true);
+    try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, true);
+
+    // Round 1: custom headers are inserted into the dynamic table.
+    const request = h3_request.Request{
+        .method = "GET",
+        .path = "/api/data",
+        .authority = "service.internal",
+        .extra_headers = &.{
+            .{ .name = "x-trace-id", .value = "trace-001" },
+            .{ .name = "x-api-key", .value = "key-abc" },
+        },
+    };
+
+    const stream1 = try client.sendRequestDynamic(request);
+    try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, false);
+    try server.handleRequestStream(stream1);
+    try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, false);
+    const resp1 = try client.receiveResponseDynamic(stream1);
+    try std.testing.expectEqual(@as(u16, 200), resp1.status);
+    try std.testing.expectEqualStrings("OK", resp1.body.?);
+
+    // Round 2: same headers -- table already has entries, no new inserts.
+    // Dynamic references must still resolve via the synced decoder table.
+    const stream2 = try client.sendRequestDynamic(request);
+    try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, false);
+    try server.handleRequestStream(stream2);
+    try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, false);
+    const resp2 = try client.receiveResponseDynamic(stream2);
+    try std.testing.expectEqual(@as(u16, 200), resp2.status);
+    try std.testing.expectEqualStrings("OK", resp2.body.?);
+
+    // Verify dynamic tables have accumulated entries on both sides.
+    try std.testing.expect(server.enc_table.?.entryCount() >= 2);
+    try std.testing.expect(client.enc_table.?.entryCount() >= 2);
 }

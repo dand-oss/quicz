@@ -18,10 +18,22 @@ pub const RequestHandler = *const fn (req: h3_request.DecodedRequest) h3_request
 pub const H3Server = struct {
     conn: *H3ServerConnection,
     handler: RequestHandler,
+    allocator: std.mem.Allocator,
     control_stream_id: ?u64 = null,
     settings_sent: bool = false,
     goaway_sent: bool = false,
     goaway_last_stream_id: ?u64 = null,
+
+    /// Server's encoder table for responses. Produces Insert/Duplicate/SetCapacity
+    /// instructions sent on the QPACK encoder stream (type 0x02) to the client.
+    enc_table: ?qpack.DynamicTable = null,
+    /// Mirror of the client's encoder table for requests. Updated by consuming
+    /// the client's encoder stream instructions via processPeerEncoderStream.
+    dec_table: ?qpack.DynamicTable = null,
+    /// Server's QPACK encoder stream (type 0x02).
+    enc_stream_id: ?u64 = null,
+    /// Server's QPACK decoder stream (type 0x03).
+    dec_stream_id: ?u64 = null,
 
     pub const H3ServerConnection = struct {
         /// Open a locally-initiated unidirectional stream.
@@ -45,13 +57,55 @@ pub const H3Server = struct {
     };
 
     /// Initialize the server and send SETTINGS on the control stream.
-    pub fn init(conn: *H3ServerConnection, handler: RequestHandler) !H3Server {
+    pub fn init(conn: *H3ServerConnection, handler: RequestHandler, allocator: std.mem.Allocator) !H3Server {
         var server = H3Server{
             .conn = conn,
             .handler = handler,
+            .allocator = allocator,
         };
         try server.sendSettings();
         return server;
+    }
+
+    /// Release QPACK dynamic table resources.
+    pub fn deinit(self: *H3Server) void {
+        if (self.enc_table) |*t| t.deinit();
+        if (self.dec_table) |*t| t.deinit();
+    }
+
+    /// Enable QPACK dynamic table compression (RFC 9204).
+    /// Opens QPACK encoder (0x02) and decoder (0x03) unidirectional streams,
+    /// initializes both tables, and advertises capacity to the peer via a
+    /// Set Capacity instruction on the encoder stream.
+    pub fn enableQpackDynamic(self: *H3Server, capacity: usize) !void {
+        self.enc_table = qpack.DynamicTable.init(self.allocator);
+        self.dec_table = qpack.DynamicTable.init(self.allocator);
+        self.enc_table.?.setCapacity(capacity);
+        self.dec_table.?.setCapacity(capacity);
+
+        // Open encoder stream (type 0x02) and send Set Capacity.
+        self.enc_stream_id = try self.conn.openUniStream();
+        var enc_buf: [32]u8 = undefined;
+        var pos: usize = 0;
+        enc_buf[pos] = 0x02;
+        pos += 1;
+        pos += try qpack.encodeEncoderInstruction(enc_buf[pos..], .{ .set_capacity = capacity });
+        try self.conn.sendOnStream(self.enc_stream_id.?, enc_buf[0..pos], false);
+
+        // Open decoder stream (type 0x03).
+        self.dec_stream_id = try self.conn.openUniStream();
+        var dec_buf: [4]u8 = undefined;
+        dec_buf[0] = 0x03;
+        try self.conn.sendOnStream(self.dec_stream_id.?, dec_buf[0..1], false);
+    }
+
+    /// Feed peer (client) encoder stream data into the decoder-side dynamic
+    /// table so subsequent request header blocks with dynamic references
+    /// resolve correctly (RFC 9204 §4.3).
+    pub fn processPeerEncoderStream(self: *H3Server, data: []const u8) !void {
+        if (self.dec_table) |*dt| {
+            _ = try qpack.decodeEncoderStreamInstructions(data, dt);
+        }
     }
 
     /// Open the server control stream and send SETTINGS.
@@ -86,6 +140,8 @@ pub const H3Server = struct {
 
     /// Process an incoming request on a bidi stream.
     /// Reads the request, calls the handler, and sends the response.
+    /// When QPACK dynamic table is enabled, decodes using the decoder-side
+    /// table and encodes the response with encoder-stream insertions.
     pub fn handleRequestStream(self: *H3Server, stream_id: u64) !void {
         // Read request data
         var req_buf: [8192]u8 = undefined;
@@ -104,16 +160,31 @@ pub const H3Server = struct {
 
         if (total_read == 0) return;
 
-        // Decode request
-        const decoded = try h3_request.decodeRequest(req_buf[0..total_read]);
+        // Decode request: dynamic table if enabled, otherwise static-only.
+        const decoded = if (self.dec_table) |*dt|
+            (try h3_request.decodeRequestWithDynamic(req_buf[0..total_read], dt)).request
+        else
+            (try h3_request.decodeRequest(req_buf[0..total_read])).request;
 
         // Call handler
-        const response = self.handler(decoded.request);
+        const response = self.handler(decoded);
 
-        // Encode and send response
-        var resp_buf: [8192]u8 = undefined;
-        const resp_len = try h3_request.encodeResponse(&resp_buf, response);
-        try self.conn.sendOnStream(stream_id, resp_buf[0..resp_len], true);
+        // Encode and send response.
+        if (self.enc_table) |*et| {
+            var resp_buf: [8192]u8 = undefined;
+            var enc_instr: [4096]u8 = undefined;
+            const enc = try h3_request.encodeResponseWithDynamic(&resp_buf, response, et, &enc_instr);
+            // Send encoder stream instructions before the response so dynamic
+            // references in the header block resolve on the peer's decoder.
+            if (enc.encoder_stream_len > 0) {
+                try self.conn.sendOnStream(self.enc_stream_id.?, enc_instr[0..enc.encoder_stream_len], false);
+            }
+            try self.conn.sendOnStream(stream_id, resp_buf[0..enc.len], true);
+        } else {
+            var resp_buf: [8192]u8 = undefined;
+            const resp_len = try h3_request.encodeResponse(&resp_buf, response);
+            try self.conn.sendOnStream(stream_id, resp_buf[0..resp_len], true);
+        }
     }
 
     /// Send GOAWAY to initiate graceful shutdown.
@@ -189,7 +260,8 @@ test "H3Server sends SETTINGS on control stream" {
         }
     }.handle;
 
-    const server = try H3Server.init(&conn, handler);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
     // Control stream should have: stream_type(1) + SETTINGS frame
@@ -257,7 +329,8 @@ test "H3Server handles request and sends response" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    defer server.deinit();
     try server.handleRequestStream(0); // client bidi stream 0
 
     // Verify response
@@ -306,7 +379,8 @@ test "H3Server GOAWAY" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator);
+    defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 
     try server.sendGoaway(4);
