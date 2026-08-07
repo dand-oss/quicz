@@ -193,6 +193,14 @@ pub fn encodeRequest(out: []u8, request: Request) !usize {
     return pos;
 }
 
+/// Encode only the HEADERS frame of a request, without any body. Used by the
+/// streaming send path, which emits HEADERS first and body DATA frames later.
+pub fn encodeRequestHeaders(out: []u8, request: Request) !usize {
+    var header_buf: [4096]u8 = undefined;
+    const header_len = try request.encodeHeaders(&header_buf);
+    return writeFrame(out, @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+}
+
 /// Encode a complete HTTP/3 response as HEADERS + optional DATA frames.
 pub fn encodeResponse(out: []u8, response: Response) !usize {
     var pos: usize = 0;
@@ -477,6 +485,43 @@ pub fn decodeResponse(data: []const u8) !struct { response: DecodedResponse, con
             .body = body,
         },
         .consumed = pos,
+    };
+}
+
+/// Encode only the HEADERS frame of a request using QPACK dynamic references.
+/// Returns the encode result (encoder-stream instruction length + RIC) so the
+/// caller can emit encoder instructions before the frame on the wire.
+pub fn encodeRequestHeadersWithDynamic(
+    out: []u8,
+    request: Request,
+    dynamic_table: *qpack.DynamicTable,
+    encoder_stream_out: []u8,
+) !DynamicEncodeResult {
+    var fields_buf: [32]qpack.HeaderField = undefined;
+    var count: usize = 0;
+    fields_buf[count] = .{ .name = ":method", .value = request.method };
+    count += 1;
+    fields_buf[count] = .{ .name = ":path", .value = request.path };
+    count += 1;
+    fields_buf[count] = .{ .name = ":scheme", .value = request.scheme };
+    count += 1;
+    if (request.authority) |auth| {
+        fields_buf[count] = .{ .name = ":authority", .value = auth };
+        count += 1;
+    }
+    for (request.extra_headers) |h| {
+        if (count >= fields_buf.len) break;
+        fields_buf[count] = h;
+        count += 1;
+    }
+
+    var header_buf: [4096]u8 = undefined;
+    const enc = try qpack.encodeHeaderBlockWithDynamicInserting(&header_buf, encoder_stream_out, fields_buf[0..count], dynamic_table);
+    const pos = try writeFrame(out, @intFromEnum(h3_frame.FrameType.headers), header_buf[0..enc.header_block_len]);
+    return .{
+        .len = pos,
+        .encoder_stream_len = enc.encoder_stream_len,
+        .required_insert_count = enc.required_insert_count,
     };
 }
 

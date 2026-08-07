@@ -59,6 +59,11 @@ pub const H3Client = struct {
     /// Per-stream response body cap, mirroring the server's request cap.
     max_response_body_size: usize = h3_limits.max_request_body_size,
 
+    /// Request bodies awaiting flow-control credit, keyed by stream ID. A
+    /// streamed request body that cannot be fully sent in one call continues
+    /// here until `pumpSends` drains it (mirror of the server's response pump).
+    pending_sends: ?std.AutoHashMap(u64, PendingSend) = null,
+
     /// In-flight response streams (headers + aggregated DATA body), keyed by
     /// stream ID. `decoded` borrows `wire` and `body`, so the entry survives
     /// until the response is fully consumed (kept as backing storage).
@@ -77,6 +82,14 @@ pub const H3Client = struct {
         /// True while the QPACK decoder awaits inserts (RFC 9204 §2.2.1).
         blocked: bool = false,
         decoded: ?h3_request.DecodedResponse = null,
+    };
+
+    const PendingSend = struct {
+        /// Lazy chunked body; takes precedence over `static_body`.
+        body: ?h3_request.ResponseBody = null,
+        /// Fixed-slice body (from a `ResponseBody.fromChunks`-style source).
+        static_body: []const u8 = &.{},
+        static_off: usize = 0,
     };
 
     pub const H3ClientConnection = struct {
@@ -132,6 +145,13 @@ pub const H3Client = struct {
             var it = m.iterator();
             while (it.next()) |entry| self.allocator.free(entry.value_ptr.*);
             m.deinit();
+        }
+        if (self.pending_sends) |*ps| {
+            var it = ps.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.body) |b| b.deinit();
+            }
+            ps.deinit();
         }
         var rit = self.response_streams.valueIterator();
         while (rit.next()) |rs| {
@@ -368,6 +388,90 @@ pub const H3Client = struct {
         }
         try self.conn.sendOnStream(stream_id, req_buf[0..enc.len], true);
         return stream_id;
+    }
+
+    /// Send an HTTP request with a streamed (chunked) body (RFC 9114 §6.1).
+    /// Emits HEADERS (fin=false), then sends the body as bounded DATA frames,
+    /// parking any flow-control-blocked remainder in `pending_sends` for
+    /// `pumpSends` to drain once fresh MAX_STREAM_DATA credit arrives. Returns
+    /// the stream ID for `receiveResponseDynamic`.
+    pub fn sendRequestStreamed(self: *H3Client, request: h3_request.Request, body: h3_request.ResponseBody) !u64 {
+        if (self.goaway_received and self.next_request_stream_id > self.goaway_last_stream_id) {
+            return error.GoawayExceeded;
+        }
+        const stream_id = try self.conn.openBidiStream();
+        self.next_request_stream_id = stream_id + 4;
+
+        var req_buf: [8192]u8 = undefined;
+        var enc_instr: [4096]u8 = undefined;
+        const enc = try h3_request.encodeRequestHeadersWithDynamic(&req_buf, request, &self.enc_table.?, &enc_instr);
+        if (self.pending_sections) |*ps| {
+            if (enc.required_insert_count > 0) {
+                try ps.put(stream_id, enc.required_insert_count);
+                self.enc_table.?.protectUpTo(enc.required_insert_count);
+            }
+        }
+        if (enc.encoder_stream_len > 0) {
+            try self.conn.sendOnStream(self.enc_stream_id.?, enc_instr[0..enc.encoder_stream_len], false);
+        }
+        try self.conn.sendOnStream(stream_id, req_buf[0..enc.len], false);
+
+        if (self.pending_sends == null) self.pending_sends = std.AutoHashMap(u64, PendingSend).init(self.allocator);
+        try self.pending_sends.?.put(stream_id, .{ .body = body });
+        try self.pumpSends();
+        return stream_id;
+    }
+
+    /// Drain pending streamed request bodies, emitting bounded DATA frames.
+    /// Flow-control-blocked chunks retry on the next call (the peer's
+    /// MAX_STREAM_DATA credit arrives as an inbound datagram).
+    pub fn pumpSends(self: *H3Client) !void {
+        const ps = self.pending_sends orelse return;
+        if (ps.count() == 0) return;
+        var finished = std.ArrayList(u64).empty;
+        defer finished.deinit(self.allocator);
+
+        var it = ps.iterator();
+        while (it.next()) |entry| {
+            const sid = entry.key_ptr.*;
+            const st = entry.value_ptr;
+            var chunks: usize = 0;
+            while (chunks < h3_limits.max_chunks_per_pump) {
+                var chunk: [h3_limits.max_response_chunk_payload]u8 = undefined;
+                if (st.static_off < st.static_body.len) {
+                    const take = @min(st.static_body.len - st.static_off, chunk.len);
+                    @memcpy(chunk[0..take], st.static_body[st.static_off .. st.static_off + take]);
+                    var dframe: [h3_limits.max_response_chunk_payload + 8]u8 = undefined;
+                    const dlen = try h3_request.encodeDataFrame(&dframe, chunk[0..take]);
+                    self.conn.sendOnStream(sid, dframe[0..dlen], false) catch |e| {
+                        if (e == error.FlowControlBlocked) break;
+                        return e;
+                    };
+                    st.static_off += take;
+                    chunks += 1;
+                    continue;
+                }
+                if (st.body) |b| {
+                    const n = try b.next(&chunk);
+                    if (n) |len| {
+                        var dframe: [h3_limits.max_response_chunk_payload + 8]u8 = undefined;
+                        const dlen = try h3_request.encodeDataFrame(&dframe, chunk[0..len]);
+                        self.conn.sendOnStream(sid, dframe[0..dlen], false) catch |e| {
+                            if (e == error.FlowControlBlocked) break;
+                            return e;
+                        };
+                        chunks += 1;
+                        continue;
+                    }
+                }
+                // Body exhausted: terminate with an empty fin frame.
+                try self.conn.sendOnStream(sid, &.{}, true);
+                if (st.body) |b| b.deinit();
+                try finished.append(self.allocator, sid);
+                break;
+            }
+        }
+        for (finished.items) |sid| _ = self.pending_sends.?.remove(sid);
     }
 
     /// Read and decode a response using QPACK dynamic table.
@@ -858,4 +962,127 @@ test "H3Client aggregates a chunked response via feedResponseData" {
     try std.testing.expectEqual(@as(u16, 200), resp.status);
     try std.testing.expectEqualStrings("chunk-one-chunk-two", resp.body.?);
     client.releaseResponse(0);
+}
+
+test "H3Client streams a request body via sendRequestStreamed" {
+    const MockCtx = struct {
+        sent: std.ArrayList(u8) = .empty,
+        fins: std.ArrayList(bool) = .empty,
+        next_uni: u64 = 3,
+        block_data: bool = false,
+        fn openBidi(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 0;
+        }
+        fn openUni(ctx: *anyopaque) !u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const id = self.next_uni;
+            self.next_uni += 4;
+            return id;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (sid == 3) return; // client encoder/decoder streams (3, 7)
+            if (data.len > 0 and data[0] == @intFromEnum(h3_frame.FrameType.data)) {
+                if (self.block_data) {
+                    self.block_data = false;
+                    return error.FlowControlBlocked;
+                }
+            }
+            try self.sent.appendSlice(std.testing.allocator, data);
+            try self.fins.append(std.testing.allocator, fin);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer {
+        mock.sent.deinit(std.testing.allocator);
+        mock.fins.deinit(std.testing.allocator);
+    }
+    var conn = H3Client.H3ClientConnection{
+        .openBidiStreamFn = MockCtx.openBidi,
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    var client = try H3Client.init(&conn, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+
+    const req = h3_request.Request{ .method = "POST", .path = "/upload", .authority = "example.com" };
+    const chunks = [_][]const u8{ "aaaa", "bbbb", "cccc" };
+    const body = try h3_request.ResponseBody.fromChunks(std.testing.allocator, &chunks);
+    const sid = try client.sendRequestStreamed(req, body);
+
+    // Headers (fin=false) + 3 DATA frames + terminating fin frame.
+    try std.testing.expectEqual(@as(u64, 0), sid);
+    try std.testing.expect(mock.fins.items.len >= 4);
+    for (mock.fins.items[0 .. mock.fins.items.len - 1]) |f| try std.testing.expect(!f);
+    try std.testing.expect(mock.fins.items[mock.fins.items.len - 1]);
+    try std.testing.expect(client.pending_sends.?.count() == 0);
+}
+
+test "H3Client sendRequestStreamed retries a flow-control-blocked chunk" {
+    const MockCtx = struct {
+        sent: std.ArrayList(u8) = .empty,
+        next_uni: u64 = 3,
+        block_data: bool = true,
+        fn openBidi(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 0;
+        }
+        fn openUni(ctx: *anyopaque) !u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const id = self.next_uni;
+            self.next_uni += 4;
+            return id;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid == 3) return;
+            if (data.len > 0 and data[0] == @intFromEnum(h3_frame.FrameType.data)) {
+                if (self.block_data) {
+                    self.block_data = false;
+                    return error.FlowControlBlocked;
+                }
+            }
+            try self.sent.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.sent.deinit(std.testing.allocator);
+    var conn = H3Client.H3ClientConnection{
+        .openBidiStreamFn = MockCtx.openBidi,
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    var client = try H3Client.init(&conn, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+
+    const req = h3_request.Request{ .method = "POST", .path = "/upload", .authority = "example.com" };
+    const chunks = [_][]const u8{"longbody-chunk"};
+    const body = try h3_request.ResponseBody.fromChunks(std.testing.allocator, &chunks);
+    _ = try client.sendRequestStreamed(req, body);
+    // First DATA chunk was blocked; the stream is still pending until pumped.
+    try std.testing.expect(client.pending_sends.?.count() == 1);
+    try client.pumpSends();
+    try std.testing.expect(client.pending_sends.?.count() == 0);
 }
