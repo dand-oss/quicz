@@ -567,6 +567,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe_tls13_udp_loopback);
 
+    const exe_h3_loopback = b.addExecutable(.{
+        .name = "quicz-h3-loopback",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/h3_loopback.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_h3_loopback);
+
     // Pure-Zig TLS 1.3 with EndpointConnectionLifecycle ownership
     const exe_tls13_lifecycle_loopback = b.addExecutable(.{
         .name = "quicz-tls13-lifecycle-loopback",
@@ -1889,6 +1902,12 @@ pub fn build(b: *std.Build) void {
     const run_tls13_udp_loopback_cmd = b.addRunArtifact(exe_tls13_udp_loopback);
     run_tls13_udp_loopback.dependOn(&run_tls13_udp_loopback_cmd.step);
     run_tls13_udp_loopback_cmd.step.dependOn(b.getInstallStep());
+
+    // zig build run-h3-loopback
+    const run_h3_loopback = b.step("run-h3-loopback", "Run HTTP/3 + QPACK dynamic table over UDP loopback");
+    const run_h3_loopback_cmd = b.addRunArtifact(exe_h3_loopback);
+    run_h3_loopback.dependOn(&run_h3_loopback_cmd.step);
+    run_h3_loopback_cmd.step.dependOn(b.getInstallStep());
 
     // zig build run-tls13-lifecycle-loopback
     const run_tls13_lifecycle_loopback = b.step("run-tls13-lifecycle-loopback", "Run pure-Zig TLS 1.3 lifecycle loopback");

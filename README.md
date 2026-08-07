@@ -165,8 +165,9 @@ Requires **Zig 0.16.0**.
 
 ```bash
 zig build                                    # build library
-zig build test --summary all                 # 1820 unit tests
+zig build test --summary all                 # 1862 unit tests
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP loopback
+zig build run-h3-loopback                    # HTTP/3 + QPACK dynamic over UDP
 zig build run-interop-client-standalone      # interop self-test
 zig fmt --check build.zig src examples       # format check
 ```
