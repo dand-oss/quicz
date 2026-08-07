@@ -92,13 +92,13 @@ test "H3 integration: full request/response over QUIC streams" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
 
     // Client: open control stream and send SETTINGS
     var client_adapter = makeClientConnAdapter(&client_conn);
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
     defer client.deinit();
     try std.testing.expect(client.settings_sent);
 
@@ -154,14 +154,14 @@ test "H3 integration: SETTINGS exchange over control streams" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
 
     // Client sends SETTINGS on control stream (uni stream 2)
     var client_adapter = makeClientConnAdapter(&client_conn);
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
     defer client.deinit();
     try std.testing.expect(client.settings_sent);
     try std.testing.expectEqual(@as(?u64, 2), client.control_stream_id);
@@ -184,7 +184,7 @@ test "H3 integration: GOAWAY graceful shutdown" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 
@@ -673,9 +673,9 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
     defer client.deinit();
 
     // SETTINGS exchange: both sides advertise 4096 and honor the peer's value.
@@ -761,9 +761,9 @@ test "H3 integration: QPACK SETTINGS capacity cap" {
     }.handle;
 
     // Asymmetric advertised capacities: the server allows 4096, the client 512.
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 512);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 512, 8);
     defer client.deinit();
 
     // Both SETTINGS frames carry the advertised QPACK capacity.
@@ -772,11 +772,13 @@ test "H3 integration: QPACK SETTINGS capacity cap" {
     const server_frame = try h3_frame.decodeFrame(server_ctrl[1..]);
     const server_settings = try h3_connection.Settings.decodePayload(server_frame.frame.payload);
     try std.testing.expectEqual(@as(u64, 4096), server_settings.qpack_max_table_capacity);
+    try std.testing.expectEqual(@as(u64, 8), server_settings.qpack_blocked_streams);
 
     const client_ctrl = channel.readStream(client.control_stream_id.?, &ctrl_buf);
     const client_frame = try h3_frame.decodeFrame(client_ctrl[1..]);
     const client_settings = try h3_connection.Settings.decodePayload(client_frame.frame.payload);
     try std.testing.expectEqual(@as(u64, 512), client_settings.qpack_max_table_capacity);
+    try std.testing.expectEqual(@as(u64, 8), client_settings.qpack_blocked_streams);
 
     // Exchange peer capacities, then enable dynamic tables. The client
     // negotiates before enabling; the server enables before its peer SETTINGS
@@ -821,7 +823,7 @@ test "H3 integration: server buffers request blocked on QPACK insertions" {
         }
     }.handle;
 
-    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096);
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try server.setPeerMaxTableCapacity(4096);
     try server.enableQpackDynamic(4096);
@@ -879,7 +881,7 @@ test "H3 integration: client retries response blocked on QPACK insertions" {
     defer channel.deinit();
 
     var client_adapter = channel.makeClientAdapter();
-    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096);
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
     defer client.deinit();
     try client.setPeerMaxTableCapacity(4096);
     try client.enableQpackDynamic(4096);
@@ -926,4 +928,94 @@ test "H3 integration: client retries response blocked on QPACK insertions" {
     try std.testing.expectEqualStrings("OK", resp.body.?);
     // The buffered bytes back the returned response and are freed at deinit.
     try std.testing.expectEqual(@as(usize, 1), client.blocked_responses.?.count());
+}
+
+/// Build a request whose header block references x-trace-id=t1 at relative
+/// index 0, for exercising QPACK blocked-stream paths. Returns the wire length.
+fn buildBlockedRequestWire(buf: []u8) usize {
+    var enc = qpack.DynamicTable.init(std.testing.allocator);
+    defer enc.deinit();
+    enc.setCapacity(4096);
+    enc.insert("x-trace-id", "t1") catch unreachable;
+    enc.acknowledgeReceived(1) catch unreachable;
+
+    const fields = [_]qpack.HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = ":path", .value = "/blocked" },
+        .{ .name = ":scheme", .value = "https" },
+        .{ .name = ":authority", .value = "example.com" },
+        .{ .name = "x-trace-id", .value = "t1" },
+    };
+    var block: [512]u8 = undefined;
+    const block_len = qpack.encodeHeaderBlockWithDynamic(&block, &fields, &enc) catch unreachable;
+    buf[0] = 0x01; // HEADERS frame
+    buf[1] = @intCast(block_len);
+    @memcpy(buf[2 .. 2 + block_len], block[0..block_len]);
+    return 2 + block_len;
+}
+
+test "H3 integration: QPACK blocked stream limit is enforced" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200, .body = "OK" };
+        }
+    }.handle;
+
+    // Only one blocked stream is advertised (SETTINGS_QPACK_BLOCKED_STREAMS=1).
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 1);
+    defer server.deinit();
+    try server.setPeerMaxTableCapacity(4096);
+    try server.enableQpackDynamic(4096);
+
+    var req_wire: [1024]u8 = undefined;
+    const req_len = buildBlockedRequestWire(&req_wire);
+
+    const stream0 = try TestChannel.clientOpenBidi(&channel);
+    try channel.appendStream(stream0, req_wire[0..req_len]);
+    try server.handleRequestStream(stream0);
+    try std.testing.expectEqual(@as(usize, 1), server.blocked_requests.?.count());
+
+    // A second blocked stream exceeds the advertised limit (RFC 9204 §2.1.2).
+    const stream4 = try TestChannel.clientOpenBidi(&channel);
+    try channel.appendStream(stream4, req_wire[0..req_len]);
+    try std.testing.expectError(error.BlockedStreamLimitExceeded, server.handleRequestStream(stream4));
+}
+
+test "H3 integration: cancelStream drops blocked request and emits cancellation" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200, .body = "OK" };
+        }
+    }.handle;
+
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+    try server.setPeerMaxTableCapacity(4096);
+    try server.enableQpackDynamic(4096);
+
+    var req_wire: [1024]u8 = undefined;
+    const req_len = buildBlockedRequestWire(&req_wire);
+    const stream_id = try TestChannel.clientOpenBidi(&channel);
+    try channel.appendStream(stream_id, req_wire[0..req_len]);
+    try server.handleRequestStream(stream_id);
+    try std.testing.expectEqual(@as(usize, 1), server.blocked_requests.?.count());
+
+    // Abandoning the stream drops the buffered request and notifies the peer.
+    try server.cancelStream(stream_id);
+    try std.testing.expectEqual(@as(usize, 0), server.blocked_requests.?.count());
+
+    var wire: [16]u8 = undefined;
+    const dec_bytes = channel.readStream(server.dec_stream_id.?, &wire);
+    const instruction = try qpack.decodeDecoderInstruction(dec_bytes[1..]);
+    try std.testing.expectEqual(@as(u64, stream_id), instruction.instruction.stream_cancellation);
 }

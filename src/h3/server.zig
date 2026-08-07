@@ -52,6 +52,9 @@ pub const H3Server = struct {
     /// Encoded request bytes awaiting QPACK insertions (RFC 9204 §2.2.1), keyed
     /// by stream ID until the encoder stream supplies the Required Insert Count.
     blocked_requests: ?std.AutoHashMap(u64, []u8) = null,
+    /// Advertised SETTINGS_QPACK_BLOCKED_STREAMS: the maximum number of streams
+    /// this decoder keeps blocked at once (RFC 9204 §2.1.2).
+    max_blocked_streams: u64 = 0,
 
     pub const H3ServerConnection = struct {
         /// Open a locally-initiated unidirectional stream.
@@ -80,12 +83,14 @@ pub const H3Server = struct {
         handler: RequestHandler,
         allocator: std.mem.Allocator,
         qpack_max_table_capacity: u64,
+        qpack_blocked_streams: u64,
     ) !H3Server {
         var server = H3Server{
             .conn = conn,
             .handler = handler,
             .allocator = allocator,
             .local_qpack_max_table_capacity = qpack_max_table_capacity,
+            .max_blocked_streams = qpack_blocked_streams,
         };
         try server.sendSettings();
         return server;
@@ -218,6 +223,7 @@ pub const H3Server = struct {
         const settings = h3_connection.Settings{
             .max_field_section_size = 8192,
             .qpack_max_table_capacity = self.local_qpack_max_table_capacity,
+            .qpack_blocked_streams = self.max_blocked_streams,
         };
         const sp_len = try settings.encodePayload(&settings_payload);
 
@@ -262,11 +268,29 @@ pub const H3Server = struct {
 
     fn bufferBlockedRequest(self: *H3Server, stream_id: u64, data: []const u8) !void {
         if (self.blocked_requests) |*blocked| {
+            if (!blocked.contains(stream_id) and blocked.count() >= self.max_blocked_streams) {
+                return error.BlockedStreamLimitExceeded;
+            }
             const copy = try self.allocator.dupe(u8, data);
             errdefer self.allocator.free(copy);
             if (blocked.get(stream_id)) |old| self.allocator.free(old);
             try blocked.put(stream_id, copy);
         }
+    }
+
+    /// Abandon a request stream: drop any buffered blocked data and tell the
+    /// peer encoder that its references on this stream are no longer
+    /// outstanding (RFC 9204 §4.4.2).
+    pub fn cancelStream(self: *H3Server, stream_id: u64) !void {
+        if (self.blocked_requests) |*blocked| {
+            if (blocked.fetchRemove(stream_id)) |removed| {
+                self.allocator.free(removed.value);
+            }
+        }
+        const dec_stream_id = self.dec_stream_id orelse return;
+        var buf: [16]u8 = undefined;
+        const len = try qpack.encodeDecoderInstruction(&buf, .{ .stream_cancellation = stream_id });
+        try self.conn.sendOnStream(dec_stream_id, buf[0..len], false);
     }
 
     /// Decode and serve a request. Returns false when the QPACK decoder still
@@ -402,7 +426,7 @@ test "H3Server sends SETTINGS on control stream" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try std.testing.expect(server.settings_sent);
     try std.testing.expectEqual(@as(?u64, 3), server.control_stream_id);
@@ -471,7 +495,7 @@ test "H3Server handles request and sends response" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try server.handleRequestStream(0); // client bidi stream 0
 
@@ -521,7 +545,7 @@ test "H3Server GOAWAY" {
         }
     }.handle;
 
-    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096);
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
     defer server.deinit();
     try std.testing.expect(!server.goaway_sent);
 
