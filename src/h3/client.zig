@@ -18,6 +18,10 @@ pub const H3Client = struct {
     settings_received: bool = false,
     next_request_stream_id: u64 = 0,
     goaway_received: bool = false,
+    goaway_last_stream_id: u64 = 0,
+    /// Advertised SETTINGS_MAX_FIELD_SECTION_SIZE: the largest field section this
+    /// endpoint accepts from the peer (RFC 9114 §7.2.4.1).
+    local_max_field_section_size: u64 = 8192,
 
     /// Client's encoder table for requests. Produces Insert/Duplicate/SetCapacity
     /// instructions sent on the QPACK encoder stream (type 0x02) to the server.
@@ -218,7 +222,7 @@ pub const H3Client = struct {
         // SETTINGS frame: max_field_section_size + advertised QPACK capacity.
         var settings_payload: [32]u8 = undefined;
         const settings = h3_connection.Settings{
-            .max_field_section_size = 8192,
+            .max_field_section_size = self.local_max_field_section_size,
             .qpack_max_table_capacity = self.local_qpack_max_table_capacity,
             .qpack_blocked_streams = self.max_blocked_streams,
         };
@@ -238,6 +242,9 @@ pub const H3Client = struct {
     /// Send an HTTP request and receive the response.
     /// Opens a new bidi stream, sends the request, and reads the response.
     pub fn sendRequest(self: *H3Client, request: h3_request.Request) !h3_request.DecodedResponse {
+        if (self.goaway_received and self.next_request_stream_id > self.goaway_last_stream_id) {
+            return error.GoawayExceeded;
+        }
         // Open bidi stream for request
         const stream_id = try self.conn.openBidiStream();
         self.next_request_stream_id = stream_id + 4;
@@ -256,6 +263,7 @@ pub const H3Client = struct {
             total_read += n;
             // Try to decode - if successful, we have a complete response
             if (total_read > 0) {
+                try self.checkFieldSectionSize(resp_buf[0..total_read]);
                 const result = h3_request.decodeResponse(resp_buf[0..total_read]) catch continue;
                 return result.response;
             }
@@ -263,6 +271,7 @@ pub const H3Client = struct {
 
         if (total_read == 0) return error.NoResponse;
 
+        try self.checkFieldSectionSize(resp_buf[0..total_read]);
         const result = try h3_request.decodeResponse(resp_buf[0..total_read]);
         return result.response;
     }
@@ -278,6 +287,9 @@ pub const H3Client = struct {
     /// calling receiveResponseDynamic, the caller must feed any peer encoder
     /// stream data via processPeerEncoderStream.
     pub fn sendRequestDynamic(self: *H3Client, request: h3_request.Request) !u64 {
+        if (self.goaway_received and self.next_request_stream_id > self.goaway_last_stream_id) {
+            return error.GoawayExceeded;
+        }
         const stream_id = try self.conn.openBidiStream();
         self.next_request_stream_id = stream_id + 4;
 
@@ -325,6 +337,7 @@ pub const H3Client = struct {
             const n = try self.conn.recvOnStream(stream_id, resp_buf[total_read..]) orelse break;
             total_read += n;
             if (total_read > 0) {
+                try self.checkFieldSectionSize(resp_buf[0..total_read]);
                 if (h3_request.decodeResponseWithDynamic(resp_buf[0..total_read], &self.dec_table.?)) |result| {
                     try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
                     return result.response;
@@ -339,6 +352,7 @@ pub const H3Client = struct {
         }
 
         if (total_read == 0) return error.NoResponse;
+        try self.checkFieldSectionSize(resp_buf[0..total_read]);
         const result = h3_request.decodeResponseWithDynamic(resp_buf[0..total_read], &self.dec_table.?) catch |err| {
             if (err == error.BlockedByQpack) {
                 try self.bufferBlockedResponse(stream_id, resp_buf[0..total_read]);
@@ -356,12 +370,34 @@ pub const H3Client = struct {
         stream_id: u64,
         data: []const u8,
     ) !?h3_request.DecodedResponse {
+        try self.checkFieldSectionSize(data);
         const result = h3_request.decodeResponseWithDynamic(data, &self.dec_table.?) catch |err| {
             if (err == error.BlockedByQpack) return null;
             return err;
         };
         try self.sendSectionAcknowledgement(stream_id, result.required_insert_count);
         return result.response;
+    }
+
+    /// Reject a complete HEADERS frame whose payload exceeds the advertised
+    /// SETTINGS_MAX_FIELD_SECTION_SIZE; incomplete frames are left for the
+    /// decode path to keep reading.
+    fn checkFieldSectionSize(self: *const H3Client, data: []const u8) !void {
+        const frame = h3_frame.decodeFrame(data) catch return;
+        if (frame.frame.payload.len > self.local_max_field_section_size) {
+            return error.FieldSectionTooLarge;
+        }
+    }
+
+    /// Record a peer GOAWAY. A second GOAWAY with a lower last stream ID is an
+    /// H3_ID_ERROR; no further streams above the limit may be opened (RFC 9114
+    /// §5.2).
+    pub fn processGoaway(self: *H3Client, last_stream_id: u64) !void {
+        if (self.goaway_received and last_stream_id < self.goaway_last_stream_id) {
+            return error.InvalidGoaway;
+        }
+        self.goaway_received = true;
+        self.goaway_last_stream_id = last_stream_id;
     }
 
     fn bufferBlockedResponse(self: *H3Client, stream_id: u64, data: []const u8) !void {

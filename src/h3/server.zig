@@ -23,6 +23,9 @@ pub const H3Server = struct {
     settings_sent: bool = false,
     goaway_sent: bool = false,
     goaway_last_stream_id: ?u64 = null,
+    /// Advertised SETTINGS_MAX_FIELD_SECTION_SIZE: the largest field section this
+    /// endpoint accepts from the peer (RFC 9114 §7.2.4.1).
+    local_max_field_section_size: u64 = 8192,
 
     /// Server's encoder table for responses. Produces Insert/Duplicate/SetCapacity
     /// instructions sent on the QPACK encoder stream (type 0x02) to the client.
@@ -221,7 +224,7 @@ pub const H3Server = struct {
         // SETTINGS frame: max_field_section_size + advertised QPACK capacity.
         var settings_payload: [32]u8 = undefined;
         const settings = h3_connection.Settings{
-            .max_field_section_size = 8192,
+            .max_field_section_size = self.local_max_field_section_size,
             .qpack_max_table_capacity = self.local_qpack_max_table_capacity,
             .qpack_blocked_streams = self.max_blocked_streams,
         };
@@ -260,6 +263,10 @@ pub const H3Server = struct {
         }
 
         if (total_read == 0) return;
+        const request_frame = try h3_frame.decodeFrame(req_buf[0..total_read]);
+        if (request_frame.frame.payload.len > self.local_max_field_section_size) {
+            return error.FieldSectionTooLarge;
+        }
         if (try self.tryProcessRequest(stream_id, req_buf[0..total_read])) return;
 
         // Blocked: retain the request and retry after encoder stream progress.

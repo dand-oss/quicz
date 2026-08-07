@@ -1023,3 +1023,93 @@ test "H3 integration: cancelStream drops blocked request and emits cancellation"
     const instruction = try qpack.decodeDecoderInstruction(dec_bytes[1..]);
     try std.testing.expectEqual(@as(u64, stream_id), instruction.instruction.stream_cancellation);
 }
+
+test "H3 integration: client GOAWAY limits new request streams" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var client_adapter = channel.makeClientAdapter();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+
+    const request = h3_request.Request{
+        .method = "GET",
+        .path = "/api/data",
+        .extra_headers = &.{
+            .{ .name = "x-trace-id", .value = "t1" },
+        },
+    };
+
+    // GOAWAY(0) admits stream 0 but not stream 4+.
+    try client.processGoaway(0);
+    _ = try client.sendRequestDynamic(request);
+    try std.testing.expectError(error.GoawayExceeded, client.sendRequestDynamic(request));
+
+    // Raising the GOAWAY limit to 4 admits the next request.
+    try client.processGoaway(4);
+    _ = try client.sendRequestDynamic(request);
+    // A second GOAWAY with a lower last stream ID is an H3_ID_ERROR.
+    try std.testing.expectError(error.InvalidGoaway, client.processGoaway(2));
+}
+
+test "H3 integration: server rejects oversized request field section" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200 };
+        }
+    }.handle;
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+    server.local_max_field_section_size = 32;
+
+    // A request whose HEADERS payload exceeds the advertised limit is rejected.
+    const long_header = "x-very-long-header-name-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const request = h3_request.Request{
+        .method = "GET",
+        .path = "/",
+        .extra_headers = &.{
+            .{ .name = long_header, .value = "v" },
+        },
+    };
+    var req_wire: [2048]u8 = undefined;
+    const req_len = try h3_request.encodeRequest(&req_wire, request);
+
+    const stream_id = try TestChannel.clientOpenBidi(&channel);
+    try channel.appendStream(stream_id, req_wire[0..req_len]);
+    try std.testing.expectError(error.FieldSectionTooLarge, server.handleRequestStream(stream_id));
+}
+
+test "H3 integration: client rejects oversized response field section" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var client_adapter = channel.makeClientAdapter();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+    try client.setPeerMaxTableCapacity(4096);
+    try client.enableQpackDynamic(4096);
+    client.local_max_field_section_size = 32;
+
+    // A response whose HEADERS payload exceeds the advertised limit is rejected.
+    const long_header = "x-very-long-response-header-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const response = h3_request.Response{
+        .status = 200,
+        .extra_headers = &.{
+            .{ .name = long_header, .value = "v" },
+        },
+        .body = "OK",
+    };
+    var resp_wire: [2048]u8 = undefined;
+    const resp_len = try h3_request.encodeResponse(&resp_wire, response);
+
+    const stream_id = 0;
+    try channel.appendStream(stream_id, resp_wire[0..resp_len]);
+    try std.testing.expectError(error.FieldSectionTooLarge, client.receiveResponseDynamic(stream_id));
+}
