@@ -285,7 +285,10 @@ pub const H3Client = struct {
         var enc_instr: [4096]u8 = undefined;
         const enc = try h3_request.encodeRequestWithDynamic(&req_buf, request, &self.enc_table.?, &enc_instr);
         if (self.pending_sections) |*ps| {
-            if (enc.required_insert_count > 0) try ps.put(stream_id, enc.required_insert_count);
+            if (enc.required_insert_count > 0) {
+                try ps.put(stream_id, enc.required_insert_count);
+                self.enc_table.?.protectUpTo(enc.required_insert_count);
+            }
         }
 
         // Send encoder stream instructions before the request so the peer's

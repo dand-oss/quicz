@@ -317,7 +317,10 @@ pub const H3Server = struct {
             var enc_instr: [4096]u8 = undefined;
             const enc = try h3_request.encodeResponseWithDynamic(&resp_buf, response, et, &enc_instr);
             if (self.pending_sections) |*ps| {
-                if (enc.required_insert_count > 0) try ps.put(stream_id, enc.required_insert_count);
+                if (enc.required_insert_count > 0) {
+                    try ps.put(stream_id, enc.required_insert_count);
+                    et.protectUpTo(enc.required_insert_count);
+                }
             }
             // Send encoder stream instructions before the response so dynamic
             // references in the header block resolve on the peer's decoder.

@@ -522,6 +522,10 @@ pub const DynamicTable = struct {
     /// insertions the peer decoder has acknowledged. Only entries with an
     /// absolute index below this count may be referenced without blocking.
     known_received_count: u64 = 0,
+    /// Absolute-index prefix protected from eviction because it may be
+    /// referenced by an unacknowledged field section (RFC 9204 §2.1.1).
+    /// Encoder-side only; the decoder mirror leaves this at zero.
+    protected_entries: u64 = 0,
     /// Maximum table capacity in bytes (set by encoder via Set Capacity).
     max_capacity: usize = 0,
     /// Current table size in bytes.
@@ -546,20 +550,49 @@ pub const DynamicTable = struct {
         self.evictToCapacity();
     }
 
+    /// Protect all entries with an absolute index below `insert_count_prefix`
+    /// from eviction until the matching field section is acknowledged.
+    pub fn protectUpTo(self: *DynamicTable, insert_count_prefix: u64) void {
+        self.protected_entries = @max(self.protected_entries, insert_count_prefix);
+    }
+
+    /// Set the protected absolute-index prefix exactly (used when pending
+    /// sections are acknowledged or cancelled).
+    pub fn setProtectedEntries(self: *DynamicTable, count: u64) void {
+        self.protected_entries = count;
+    }
+
     /// Insert a new entry at the front of the table.
     /// Evicts oldest entries if necessary to make room.
     pub fn insert(self: *DynamicTable, name: []const u8, value: []const u8) !void {
+        _ = try self.insertInternal(name, value, false);
+    }
+
+    /// Insert like `insert`, but refuse to evict entries protected by
+    /// unacknowledged field sections (RFC 9204 §2.1.1). Returns whether the
+    /// entry was inserted; the encoder must not advertise a skipped insertion.
+    pub fn tryInsertProtected(self: *DynamicTable, name: []const u8, value: []const u8) !bool {
+        return self.insertInternal(name, value, true);
+    }
+
+    fn insertInternal(
+        self: *DynamicTable,
+        name: []const u8,
+        value: []const u8,
+        respect_protection: bool,
+    ) !bool {
         const entry_size = name.len + value.len + dynamic_entry_overhead;
 
         // If the entry is larger than max_capacity, it cannot be added.
         // Clear the table per RFC 9204 §3.2.1 but do NOT increment insert_count.
         if (entry_size > self.max_capacity) {
             self.clearEntries();
-            return;
+            return false;
         }
 
         // Evict until there's room
         while (self.current_size + entry_size > self.max_capacity and self.entries.items.len > 0) {
+            if (respect_protection and self.oldestIsProtected()) return false;
             self.evictOldest();
         }
 
@@ -575,6 +608,15 @@ pub const DynamicTable = struct {
         });
         self.current_size += entry_size;
         self.insert_count += 1;
+        return true;
+    }
+
+    /// Whether the oldest (lowest absolute index) entry is within the protected
+    /// prefix and therefore must not be evicted.
+    fn oldestIsProtected(self: *const DynamicTable) bool {
+        if (self.entries.items.len == 0) return false;
+        const oldest_absolute = self.insert_count - 1 - (self.entries.items.len - 1);
+        return oldest_absolute < self.protected_entries;
     }
 
     /// Duplicate an existing entry (RFC 9204 §4.3.4).
@@ -780,6 +822,31 @@ test "DynamicTable entry too large clears table" {
     try dt.insert("x-very-long-header-name", "x-very-long-header-value"); // 23 + 23 + 32 = 78 > 50
     try std.testing.expectEqual(@as(usize, 0), dt.entryCount());
     try std.testing.expectEqual(@as(u64, 1), dt.insert_count); // insert_count does NOT increment for oversized entry
+}
+
+test "DynamicTable tryInsertProtected never evicts referenced entries" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    // Capacity for exactly one 36-byte entry.
+    dt.setCapacity(36);
+    try dt.insert("x-a", "1");
+    try dt.acknowledgeReceived(1);
+    dt.protectUpTo(1); // absolute index 0 is referenced by a pending section
+
+    // Inserting another entry would evict the protected one, so it is skipped.
+    const inserted = try dt.tryInsertProtected("x-b", "2");
+    try std.testing.expect(!inserted);
+    try std.testing.expectEqual(@as(usize, 1), dt.entryCount());
+    const entry = try dt.lookup(0);
+    try std.testing.expectEqualStrings("x-a", entry.name);
+
+    // After the section is acknowledged, the entry is evictable again.
+    dt.setProtectedEntries(0);
+    const inserted2 = try dt.tryInsertProtected("x-b", "2");
+    try std.testing.expect(inserted2);
+    try std.testing.expectEqual(@as(usize, 1), dt.entryCount());
+    const entry2 = try dt.lookup(0);
+    try std.testing.expectEqualStrings("x-b", entry2.name);
 }
 
 test "DynamicTable duplicate" {
@@ -1190,9 +1257,11 @@ pub fn decodeDecoderStreamInstructions(
                 const required_insert_count = pending_sections.fetchRemove(stream_id) orelse
                     return error.DuplicateSectionAck;
                 try dynamic_table.acknowledgeReceived(required_insert_count.value);
+                try recomputeProtectedEntries(dynamic_table, pending_sections);
             },
             .stream_cancellation => |stream_id| {
                 _ = pending_sections.fetchRemove(stream_id);
+                try recomputeProtectedEntries(dynamic_table, pending_sections);
             },
             .insert_count_increment => |increment| {
                 if (increment == 0) return error.ZeroInsertCountIncrement;
@@ -1203,6 +1272,20 @@ pub fn decodeDecoderStreamInstructions(
         pos += decoded.consumed;
     }
     return pos;
+}
+
+/// Recompute the protected eviction prefix from the pending sections' Required
+/// Insert Counts after an acknowledgment or cancellation changes the set.
+fn recomputeProtectedEntries(
+    dynamic_table: *DynamicTable,
+    pending_sections: *std.AutoHashMap(u64, u64),
+) !void {
+    var max_required_insert_count: u64 = 0;
+    var it = pending_sections.iterator();
+    while (it.next()) |entry| {
+        max_required_insert_count = @max(max_required_insert_count, entry.value_ptr.*);
+    }
+    dynamic_table.setProtectedEntries(max_required_insert_count);
 }
 
 // ---------------------------------------------------------------------------
@@ -1625,10 +1708,13 @@ pub fn encodeHeaderBlockWithDynamicInserting(
         else
             EncoderInstruction{ .insert_literal = .{ .name = field.name, .value = field.value } };
 
-        // Encode the instruction and apply it to the local table so the header
-        // block below references the post-insertion state.
-        try encodeEncoderInstructionToBuffer(encoder_stream_out, &instr_pos, instr);
-        try dynamic_table.insert(field.name, field.value);
+        // Apply to the local table first so the header block below references
+        // the post-insertion state. Only advertise the insertion on the encoder
+        // stream when it actually succeeded: a skipped insertion is encoded as
+        // a literal and never sent to the peer (RFC 9204 §2.1.1).
+        if (try dynamic_table.tryInsertProtected(field.name, field.value)) {
+            try encodeEncoderInstructionToBuffer(encoder_stream_out, &instr_pos, instr);
+        }
     }
     const enc = try encodeHeaderBlockWithDynamicInfo(out, fields, dynamic_table);
     return .{

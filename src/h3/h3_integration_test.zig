@@ -727,9 +727,11 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
     // (a pending section with non-zero Required Insert Count is recorded).
     const stream2 = try client.sendRequestDynamic(request);
     try std.testing.expectEqual(@as(usize, 1), client.pending_sections.?.count());
+    try std.testing.expectEqual(@as(u64, 4), client.enc_table.?.protected_entries);
     try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, false);
     try server.handleRequestStream(stream2);
     try std.testing.expectEqual(@as(usize, 1), server.pending_sections.?.count());
+    try std.testing.expectEqual(@as(u64, 2), server.enc_table.?.protected_entries);
     try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, false);
     const resp2 = try client.receiveResponseDynamic(stream2);
     try std.testing.expectEqual(@as(u16, 200), resp2.status);
@@ -740,6 +742,8 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
     try channel.syncDecoderStream(server.dec_stream_id.?, &client, &enc_buf, false);
     try std.testing.expectEqual(@as(usize, 0), server.pending_sections.?.count());
     try std.testing.expectEqual(@as(usize, 0), client.pending_sections.?.count());
+    try std.testing.expectEqual(@as(u64, 0), server.enc_table.?.protected_entries);
+    try std.testing.expectEqual(@as(u64, 0), client.enc_table.?.protected_entries);
 
     // Verify dynamic tables have accumulated entries on both sides.
     try std.testing.expect(server.enc_table.?.entryCount() >= 2);
