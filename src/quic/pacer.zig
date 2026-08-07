@@ -51,7 +51,7 @@ pub const Pacer = struct {
         const denominator: u128 = @as(u128, smoothed_rtt_ns) * 4;
         const added: usize = @intCast(@min(numerator / denominator, std.math.maxInt(usize)));
 
-        const new_budget = self.budget + added;
+        const new_budget = std.math.add(usize, self.budget, added) catch std.math.maxInt(usize);
         return @min(self.maxBurstSize(), new_budget);
     }
 

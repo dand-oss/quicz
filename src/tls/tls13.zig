@@ -3596,8 +3596,14 @@ pub const Tls13Handshake = struct {
             const shared_uncompressed = shared_point.toUncompressedSec1();
             @memcpy(&shared, shared_uncompressed[1..33]);
         } else {
+            // Reject an all-zero X25519 peer public key (weak-key check, RFC
+            // 7748 §6.1). This also normalizes behavior across platforms whose
+            // X25519 either rejects or accepts an all-zero public key.
+            if (std.mem.allEqual(u8, &parsed_peer_x25519_public, 0)) return error.DecodeError;
             shared = X25519.scalarmult(self.x25519_secret, parsed_peer_x25519_public) catch return error.DecodeError;
         }
+        // Reject an all-zero ECDHE shared secret (weak-key check, RFC 7748 §6.1).
+        if (std.mem.allEqual(u8, &shared, 0)) return error.DecodeError;
         var next_key_schedule = self.key_schedule;
         if (!selected_psk and self.has_psk) {
             next_key_schedule = KeySchedule.init();
