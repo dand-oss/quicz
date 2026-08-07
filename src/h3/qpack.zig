@@ -223,11 +223,18 @@ fn decodeVarintFromBuf(data: []const u8, pos: usize) !struct { value: u64, end: 
     return .{ .value = result, .end = p };
 }
 
-/// Encode a length-prefixed string into a buffer (no Huffman for simplicity).
+/// Encode a length-prefixed string into a buffer. When Huffman encoding is
+/// smaller than the raw bytes (and the value fits a single-byte length prefix),
+/// it is emitted with H=1; otherwise the raw literal is used (H=0). This matches
+/// quiche's encoder behavior.
 fn encodeStringToBuf(out: []u8, pos: usize, s: []const u8) !usize {
     var p = pos;
+    var huffman_buf: [16384]u8 = undefined;
+    const huffman_len = huffman.encode(s, &huffman_buf) catch 0;
+    const use_huffman = huffman_len != 0 and huffman_len < s.len and s.len < 128;
     if (s.len < 128) {
-        out[p] = @intCast(s.len);
+        const payload_len = if (use_huffman) huffman_len else s.len;
+        out[p] = @as(u8, if (use_huffman) 0x80 else 0x00) | @as(u8, @intCast(payload_len));
         p += 1;
     } else {
         out[p] = 0x7f;
@@ -240,8 +247,13 @@ fn encodeStringToBuf(out: []u8, pos: usize, s: []const u8) !usize {
         out[p] = @intCast(remaining);
         p += 1;
     }
-    @memcpy(out[p .. p + s.len], s);
-    p += s.len;
+    if (use_huffman) {
+        @memcpy(out[p .. p + huffman_len], huffman_buf[0..huffman_len]);
+        p += huffman_len;
+    } else {
+        @memcpy(out[p .. p + s.len], s);
+        p += s.len;
+    }
     return p;
 }
 
@@ -378,6 +390,7 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
 /// immediately. Sized to the max QPACK field (RFC 9114 §4.2 sets a 16 KiB
 /// default max field section size).
 var huffman_scratch: [16384]u8 = undefined;
+var huffman_scratch_pos: usize = 0;
 
 fn decodeString(data: []const u8, start: usize) !struct { value: []const u8, end: usize } {
     if (start >= data.len) return error.IncompleteString;
@@ -394,8 +407,10 @@ fn decodeString(data: []const u8, start: usize) !struct { value: []const u8, end
     const raw = data[pos .. pos + len];
     pos += len;
     if (is_huffman) {
-        const n = try huffman.decode(raw, &huffman_scratch);
-        return .{ .value = huffman_scratch[0..n], .end = pos };
+        const n = try huffman.decode(raw, huffman_scratch[huffman_scratch_pos..]);
+        const value = huffman_scratch[huffman_scratch_pos..][0..n];
+        huffman_scratch_pos += n;
+        return .{ .value = value, .end = pos };
     }
     return .{ .value = raw, .end = pos };
 }
@@ -1803,4 +1818,18 @@ test "encodeStringToBuf then decodeString roundtrip (incl. long string)" {
         const result = try decodeString(buf[0..pos], 0);
         try std.testing.expectEqualStrings(s, result.value);
     }
+}
+
+test "encodeStringToBuf emits Huffman when smaller, roundtrips" {
+    // 'a' repeated is very Huffman-compressible (3 bits each), so the encoder
+    // must emit H=1 and the decoder must recover the original string.
+    const s = "aaaaaaaaaa";
+    var buf: [64]u8 = undefined;
+    var pos: usize = 0;
+    pos = try encodeStringToBuf(&buf, pos, s);
+    // H bit set, length < 10.
+    try std.testing.expect((buf[0] & 0x80) != 0);
+    try std.testing.expect((buf[0] & 0x7f) < s.len);
+    const result = try decodeString(buf[0..pos], 0);
+    try std.testing.expectEqualStrings(s, result.value);
 }
