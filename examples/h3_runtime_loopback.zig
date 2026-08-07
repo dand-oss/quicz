@@ -151,7 +151,11 @@ fn runClientSession(io: std.Io) !void {
         .authority = "service.internal",
         .body = body3,
     };
-    const stream3 = try h3cli.sendRequest(req3);
+    // Send the body as a streamed (chunked) request body via sendRequestStreamed.
+    const stream3 = try h3cli.sendRequestStreamed(
+        req3,
+        quicz.h3_request.ResponseBody.fromRepeating(allocator, 0x41, body3.len) catch unreachable,
+    );
     const resp3 = try h3cli.receiveResponse(stream3);
     try require(resp3.status == 200);
     try require(resp3.body != null and std.mem.eql(u8, resp3.body.?, body3));

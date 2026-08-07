@@ -89,6 +89,21 @@ pub const H3Client = struct {
         return self.h3.sendRequestDynamic(request);
     }
 
+    /// Send an HTTP request with a streamed (chunked) body, blocking until the
+    /// body has fully drained (retrying flow-control-blocked chunks as fresh
+    /// MAX_STREAM_DATA credit arrives). Returns the stream id for
+    /// `receiveResponse`.
+    pub fn sendRequestStreamed(self: *H3Client, request: h3_request.Request, body: h3_request.ResponseBody) !u64 {
+        const sid = try self.h3.sendRequestStreamed(request, body);
+        while (self.h3.pending_sends != null and self.h3.pending_sends.?.count() > 0) {
+            _ = try self.drainPeerUniStreams();
+            try self.h3.pumpSends();
+            if (self.h3.pending_sends.?.count() == 0) break;
+            try self.client.waitStreamActivity();
+        }
+        return sid;
+    }
+
     /// Receive and decode the response on `stream_id`, interleaving the
     /// server's control / QPACK streams so blocked header blocks resolve.
     pub fn receiveResponse(self: *H3Client, stream_id: u64) !h3_request.DecodedResponse {
