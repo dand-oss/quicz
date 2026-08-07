@@ -8,6 +8,7 @@ const h3_frame = @import("frame.zig");
 const h3_request = @import("request.zig");
 const h3_connection = @import("connection.zig");
 const qpack = @import("qpack.zig");
+const h3_limits = @import("limits.zig");
 const buffer = @import("../quic/buffer.zig");
 
 /// H3 server request handler callback.
@@ -58,6 +59,44 @@ pub const H3Server = struct {
     /// Advertised SETTINGS_QPACK_BLOCKED_STREAMS: the maximum number of streams
     /// this decoder keeps blocked at once (RFC 9204 §2.1.2).
     max_blocked_streams: u64 = 0,
+    /// Per-stream request body cap (RFC 9114 §6.1). Excess is rejected with 413
+    /// + H3_EXCESSIVE_LOAD on the stream.
+    max_request_body_size: usize = h3_limits.max_request_body_size,
+
+    /// In-flight request streams (headers + aggregated body), keyed by stream ID.
+    requests: std.AutoHashMap(u64, RequestStream) = undefined,
+    /// In-flight response streams (streamed or chunked body pending DATA frames),
+    /// keyed by stream ID.
+    responses: std.AutoHashMap(u64, ResponseStream) = undefined,
+
+    /// Per-stream request/response state. `decoded` borrows `headers_wire`, so
+    /// the stream entry must survive until the response fin is sent (query via
+    /// `streamDone`); the runtime driver releases its buffers only then.
+    const RequestStream = struct {
+        phase: enum { headers, body } = .headers,
+        /// Wire bytes accumulated during the headers phase. Shrunk to exactly
+        /// the HEADERS frame once decoded; `decoded` borrows it as its anchor.
+        wire: std.ArrayList(u8),
+        /// Unparsed body-frame wire bytes accumulated across feeds (a DATA
+        /// frame may span datagrams). Parsed payloads move into `body`.
+        body_wire: std.ArrayList(u8),
+        /// Aggregated DATA payloads (the request body).
+        body: std.ArrayList(u8),
+        /// Peer FIN arrived; the body is complete and the handler may run.
+        body_fin: bool = false,
+        /// True while the QPACK decoder awaits insertions from the peer's
+        /// encoder stream (RFC 9204 §2.2.1). `wire` keeps accumulating.
+        blocked: bool = false,
+        decoded: ?h3_request.DecodedRequest = null,
+    };
+
+    const ResponseStream = struct {
+        /// Lazy chunked body; takes precedence over `static_body`.
+        body: ?h3_request.ResponseBody = null,
+        /// Fixed-slice body (from `Response.body`) pumped in chunks.
+        static_body: []const u8 = &.{},
+        static_off: usize = 0,
+    };
 
     pub const H3ServerConnection = struct {
         /// Open a locally-initiated unidirectional stream.
@@ -66,6 +105,11 @@ pub const H3Server = struct {
         sendOnStreamFn: *const fn (ctx: *anyopaque, stream_id: u64, data: []const u8, fin: bool) anyerror!void,
         /// Receive data from a stream. Returns null if no data available.
         recvOnStreamFn: *const fn (ctx: *anyopaque, stream_id: u64, buf: []u8) anyerror!?usize,
+        /// Report whether the peer has sent FIN on a stream (direct-connection
+        /// path; the runtime driver signals EOF via a zero-length recv instead).
+        /// Optional: when null, the state machine treats the stream as finished
+        /// only when the caller passes `fin=true`.
+        streamRecvFinFn: ?*const fn (ctx: *anyopaque, stream_id: u64) bool = null,
         /// Opaque context pointer.
         ctx: *anyopaque,
 
@@ -77,6 +121,10 @@ pub const H3Server = struct {
         }
         pub fn recvOnStream(self: *H3ServerConnection, stream_id: u64, buf: []u8) !?usize {
             return self.recvOnStreamFn(self.ctx, stream_id, buf);
+        }
+        pub fn streamRecvFin(self: *H3ServerConnection, stream_id: u64) bool {
+            if (self.streamRecvFinFn) |f| return f(self.ctx, stream_id);
+            return false;
         }
     };
 
@@ -94,6 +142,8 @@ pub const H3Server = struct {
             .allocator = allocator,
             .local_qpack_max_table_capacity = qpack_max_table_capacity,
             .max_blocked_streams = qpack_blocked_streams,
+            .requests = std.AutoHashMap(u64, RequestStream).init(allocator),
+            .responses = std.AutoHashMap(u64, ResponseStream).init(allocator),
         };
         try server.sendSettings();
         return server;
@@ -109,6 +159,18 @@ pub const H3Server = struct {
             while (it.next()) |entry| self.allocator.free(entry.value_ptr.*);
             m.deinit();
         }
+        var rit = self.requests.valueIterator();
+        while (rit.next()) |rs| {
+            rs.wire.deinit(self.allocator);
+            rs.body_wire.deinit(self.allocator);
+            rs.body.deinit(self.allocator);
+        }
+        self.requests.deinit();
+        var sit = self.responses.valueIterator();
+        while (sit.next()) |rs| {
+            if (rs.body) |b| b.deinit();
+        }
+        self.responses.deinit();
     }
 
     /// Enable QPACK dynamic table compression (RFC 9204).
@@ -175,6 +237,7 @@ pub const H3Server = struct {
             }
         }
         try self.unblockBlockedRequests();
+        try self.pumpResponses();
     }
 
     /// Process the peer's control stream: parse SETTINGS and apply the
@@ -285,7 +348,10 @@ pub const H3Server = struct {
         if (request_frame.frame.payload.len > self.local_max_field_section_size) {
             return error.FieldSectionTooLarge;
         }
-        if (try self.tryProcessRequest(stream_id, req_buf[0..total_read])) return;
+        if (try self.tryProcessRequest(stream_id, req_buf[0..total_read])) {
+            try self.pumpResponses();
+            return;
+        }
 
         // Blocked: retain the request and retry after encoder stream progress.
         try self.bufferBlockedRequest(stream_id, req_buf[0..total_read]);
@@ -297,7 +363,13 @@ pub const H3Server = struct {
     /// one request stream. Returns `processed` when a response was sent, or
     /// `blocked` when the request waits for QPACK insertions (the state machine
     /// keeps its own copy and retries on encoder-stream progress).
-    pub const FeedResult = enum { processed, blocked };
+    pub const FeedResult = enum { processed, blocked, need_more };
+
+    /// Result of feeding request bytes: `processed` (handler ran, response
+    /// started), `blocked` (QPACK pending insertions), `need_more` (partial
+    /// frame, buffer more). `consumed` is the number of input bytes the state
+    /// machine owns (the driver may shrink its buffer by that amount).
+    pub const FeedDataResult = struct { result: FeedResult, consumed: usize };
 
     pub fn feedRequestBytes(self: *H3Server, stream_id: u64, data: []const u8) !FeedResult {
         const frame = try h3_frame.decodeFrame(data);
@@ -310,6 +382,100 @@ pub const H3Server = struct {
         if (try self.tryProcessRequest(stream_id, data)) return .processed;
         try self.bufferBlockedRequest(stream_id, data);
         return .blocked;
+    }
+
+    /// Streaming request entry point. Feed wire bytes (and EOF via `fin`) for a
+    /// bidi request stream; the state machine buffers the HEADERS frame, then
+    /// aggregates DATA payloads up to `max_request_body_size`, and runs the
+    /// handler once the body has fully arrived. `consumed` lets the driver
+    /// shrink its own buffer (the state machine owns a copy).
+    pub fn feedRequestData(self: *H3Server, stream_id: u64, data: []const u8, fin: bool) !FeedDataResult {
+        const gop = try self.requests.getOrPut(stream_id);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{
+                .wire = std.ArrayList(u8).empty,
+                .body_wire = std.ArrayList(u8).empty,
+                .body = std.ArrayList(u8).empty,
+            };
+        }
+        const rs = gop.value_ptr;
+
+        if (rs.phase == .headers) {
+            try rs.wire.appendSlice(self.allocator, data);
+            const frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
+                error.IncompleteFrame => return .{ .result = .need_more, .consumed = data.len },
+                else => return e,
+            };
+            if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+                return error.ExpectedHeadersFrame;
+            }
+            if (frame.frame.payload.len > self.local_max_field_section_size) {
+                return error.FieldSectionTooLarge;
+            }
+
+            var ric: u64 = 0;
+            // decodeRequest expects the full HEADERS frame (type + length +
+            // QPACK block), not just its payload.
+            const headers_wire = rs.wire.items[0..frame.consumed];
+            const decoded = if (self.dec_table) |*dt| blk: {
+                const r = h3_request.decodeRequestWithDynamic(headers_wire, dt) catch |e| {
+                    if (e == error.BlockedByQpack) {
+                        rs.blocked = true;
+                        return .{ .result = .blocked, .consumed = data.len };
+                    }
+                    return e;
+                };
+                ric = r.required_insert_count;
+                break :blk r.request;
+            } else (try h3_request.decodeRequest(headers_wire)).request;
+            try self.sendSectionAcknowledgement(stream_id, ric);
+
+            // Retain only the HEADERS frame in `wire` (the decoded request
+            // borrows it); any trailing DATA bytes go to `body_wire`.
+            if (frame.consumed < rs.wire.items.len) {
+                try rs.body_wire.appendSlice(self.allocator, rs.wire.items[frame.consumed..]);
+            }
+            rs.wire.shrinkRetainingCapacity(frame.consumed);
+            rs.decoded = decoded;
+            rs.phase = .body;
+        } else {
+            try rs.body_wire.appendSlice(self.allocator, data);
+        }
+
+        try self.parseBody(stream_id, rs);
+
+        if (fin) rs.body_fin = true;
+        if (rs.body_fin) {
+            // Body is now stable; expose it to the handler and start the response.
+            if (rs.decoded) |*d| d.body = if (rs.body.items.len > 0) rs.body.items else null;
+            const resp = self.handler(rs.decoded.?);
+            try self.startResponse(stream_id, resp);
+            return .{ .result = .processed, .consumed = data.len };
+        }
+        return .{ .result = .need_more, .consumed = data.len };
+    }
+
+    /// Parse complete DATA frames out of `body_wire`, aggregating their
+    /// payloads into `body`, bounded by `max_request_body_size`. A trailing
+    /// partial frame stays buffered for the next feed.
+    fn parseBody(self: *H3Server, stream_id: u64, rs: *RequestStream) !void {
+        var off: usize = 0;
+        while (off < rs.body_wire.items.len) {
+            const frame = h3_request.takeDataFrame(rs.body_wire.items[off..]) catch |e| switch (e) {
+                error.IncompleteFrame => break,
+                else => return e,
+            };
+            if (rs.body.items.len + frame.payload.len > self.max_request_body_size) {
+                return error.RequestBodyTooLarge;
+            }
+            try rs.body.appendSlice(self.allocator, frame.payload);
+            off += frame.consumed;
+        }
+        if (off > 0) {
+            std.mem.copyForwards(u8, rs.body_wire.items[0 .. rs.body_wire.items.len - off], rs.body_wire.items[off..]);
+            rs.body_wire.shrinkRetainingCapacity(rs.body_wire.items.len - off);
+        }
+        _ = stream_id;
     }
 
     fn bufferBlockedRequest(self: *H3Server, stream_id: u64, data: []const u8) !void {
@@ -332,6 +498,10 @@ pub const H3Server = struct {
             if (blocked.fetchRemove(stream_id)) |removed| {
                 self.allocator.free(removed.value);
             }
+        }
+        self.releaseRequest(stream_id);
+        if (self.responses.fetchRemove(stream_id)) |kv| {
+            if (kv.value.body) |b| b.deinit();
         }
         const dec_stream_id = self.dec_stream_id orelse return;
         var buf: [16]u8 = undefined;
@@ -357,11 +527,22 @@ pub const H3Server = struct {
         // Call handler
         const response = self.handler(decoded);
 
-        // Encode and send response.
+        try self.startResponse(stream_id, response);
+        return true;
+    }
+
+    /// Encode and initiate a response. A bodyless response is sent in one
+    /// HEADERS frame with fin; any body (static slice or streamed) is sent as
+    /// HEADERS (fin=false) plus a `ResponseStream` entry, drained by
+    /// `pumpResponses` in max-response-chunk-payload DATA frames.
+    fn startResponse(self: *H3Server, stream_id: u64, response: h3_request.Response) !void {
+        var resp_buf: [8192]u8 = undefined;
+        var enc_instr: [4096]u8 = undefined;
+
+        const has_body = (response.body_stream != null) or (response.body != null and response.body.?.len > 0);
+
         if (self.enc_table) |*et| {
-            var resp_buf: [8192]u8 = undefined;
-            var enc_instr: [4096]u8 = undefined;
-            const enc = try h3_request.encodeResponseWithDynamic(&resp_buf, response, et, &enc_instr);
+            const enc = try h3_request.encodeResponseHeadersWithDynamic(&resp_buf, response, et, &enc_instr);
             if (self.pending_sections) |*ps| {
                 if (enc.required_insert_count > 0) {
                     try ps.put(stream_id, enc.required_insert_count);
@@ -373,13 +554,103 @@ pub const H3Server = struct {
             if (enc.encoder_stream_len > 0) {
                 try self.conn.sendOnStream(self.enc_stream_id.?, enc_instr[0..enc.encoder_stream_len], false);
             }
-            try self.conn.sendOnStream(stream_id, resp_buf[0..enc.len], true);
+            try self.conn.sendOnStream(stream_id, resp_buf[0..enc.len], !has_body);
         } else {
-            var resp_buf: [8192]u8 = undefined;
-            const resp_len = try h3_request.encodeResponse(&resp_buf, response);
-            try self.conn.sendOnStream(stream_id, resp_buf[0..resp_len], true);
+            const resp_len = try h3_request.encodeResponseHeaders(&resp_buf, response);
+            try self.conn.sendOnStream(stream_id, resp_buf[0..resp_len], !has_body);
         }
-        return true;
+
+        if (has_body) {
+            try self.responses.put(stream_id, .{
+                .body = response.body_stream,
+                .static_body = if (response.body_stream == null) (response.body orelse &.{}) else &.{},
+            });
+        } else {
+            // Bodyless response fully sent (fin on HEADERS); the request entry
+            // is no longer needed and may be released.
+            self.releaseRequest(stream_id);
+        }
+    }
+
+    /// Drain pending response bodies, emitting DATA frames bounded per stream
+    /// per call so a large response cannot starve the QPACK control/encoder/
+    /// decoder streams. Flow-control-blocked chunks are retried next call.
+    pub fn pumpResponses(self: *H3Server) !void {
+        if (self.responses.count() == 0) return;
+        var finished = std.ArrayList(u64).empty;
+        defer finished.deinit(self.allocator);
+
+        var it = self.responses.iterator();
+        while (it.next()) |entry| {
+            const sid = entry.key_ptr.*;
+            const rs = entry.value_ptr;
+            var chunks: usize = 0;
+            while (chunks < h3_limits.max_chunks_per_pump) {
+                var chunk: [h3_limits.max_response_chunk_payload]u8 = undefined;
+                // static slice: advance the offset only after a successful send
+                // so a flow-control-blocked chunk is retried, not dropped.
+                if (rs.static_off < rs.static_body.len) {
+                    const take = @min(rs.static_body.len - rs.static_off, chunk.len);
+                    @memcpy(chunk[0..take], rs.static_body[rs.static_off .. rs.static_off + take]);
+                    var dframe: [h3_limits.max_response_chunk_payload + 8]u8 = undefined;
+                    const dlen = try h3_request.encodeDataFrame(&dframe, chunk[0..take]);
+                    self.conn.sendOnStream(sid, dframe[0..dlen], false) catch |e| {
+                        if (e == error.FlowControlBlocked) break;
+                        return e;
+                    };
+                    rs.static_off += take;
+                    chunks += 1;
+                    continue;
+                }
+                // streamed body: pull one chunk and send it.
+                if (rs.body) |bs| {
+                    const n = bs.next(&chunk) catch |e| return e;
+                    if (n) |len| {
+                        var dframe: [h3_limits.max_response_chunk_payload + 8]u8 = undefined;
+                        const dlen = try h3_request.encodeDataFrame(&dframe, chunk[0..len]);
+                        self.conn.sendOnStream(sid, dframe[0..dlen], false) catch |e| {
+                            if (e == error.FlowControlBlocked) break;
+                            return e;
+                        };
+                        chunks += 1;
+                        continue;
+                    }
+                }
+
+                // Body exhausted: send the terminating empty frame with fin and
+                // retire the stream (Connection.sendOnStream supports empty+fin).
+                try self.conn.sendOnStream(sid, &.{}, true);
+                if (rs.body) |b| b.deinit();
+                try finished.append(self.allocator, sid);
+                break;
+            }
+        }
+        for (finished.items) |sid| {
+            _ = self.responses.remove(sid);
+            self.releaseRequest(sid);
+        }
+    }
+
+    /// Release a request stream entry once its response has been fully sent.
+    fn releaseRequest(self: *H3Server, stream_id: u64) void {
+        if (self.requests.fetchRemove(stream_id)) |kv| {
+            var rs = kv.value;
+            rs.wire.deinit(self.allocator);
+            rs.body_wire.deinit(self.allocator);
+            rs.body.deinit(self.allocator);
+        }
+    }
+
+    /// True once the stream has no pending request or response state (its
+    /// response fin has been sent and the request entry released). The runtime
+    /// driver uses this to release its per-stream buffers.
+    pub fn streamDone(self: *H3Server, stream_id: u64) bool {
+        return !self.requests.contains(stream_id) and !self.responses.contains(stream_id);
+    }
+
+    /// Send a minimal bodyless error response (e.g. 413) and retire the stream.
+    pub fn sendSimpleError(self: *H3Server, stream_id: u64, status: u16) !void {
+        try self.startResponse(stream_id, .{ .status = status });
     }
 
     /// Retry all buffered blocked requests once the decoder table has advanced.
@@ -398,6 +669,38 @@ pub const H3Server = struct {
                     self.allocator.free(data);
                     _ = blocked.remove(stream_id);
                 }
+            }
+        }
+
+        // Also unblock in-flight streams buffered via feedRequestData: their
+        // wire bytes kept accumulating while blocked, so retry the QPACK decode
+        // and migrate to the body phase once insertions arrive.
+        if (self.dec_table == null or self.requests.count() == 0) return;
+        var it = self.requests.iterator();
+        while (it.next()) |entry| {
+            const sid = entry.key_ptr.*;
+            const rs = entry.value_ptr;
+            if (rs.phase != .headers or !rs.blocked) continue;
+            const frame = h3_frame.decodeFrame(rs.wire.items) catch continue;
+            if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) continue;
+            const headers_wire = rs.wire.items[0..frame.consumed];
+            const r = h3_request.decodeRequestWithDynamic(headers_wire, &self.dec_table.?) catch |e| switch (e) {
+                error.BlockedByQpack => continue,
+                else => return e,
+            };
+            rs.blocked = false;
+            try self.sendSectionAcknowledgement(sid, r.required_insert_count);
+            if (frame.consumed < rs.wire.items.len) {
+                try rs.body_wire.appendSlice(self.allocator, rs.wire.items[frame.consumed..]);
+            }
+            rs.wire.shrinkRetainingCapacity(frame.consumed);
+            rs.decoded = r.request;
+            rs.phase = .body;
+            try self.parseBody(sid, rs);
+            if (rs.body_fin) {
+                if (rs.decoded) |*d| d.body = if (rs.body.items.len > 0) rs.body.items else null;
+                const resp = self.handler(rs.decoded.?);
+                try self.startResponse(sid, resp);
             }
         }
     }
@@ -660,4 +963,306 @@ test "H3Server applies peer QPACK capacity from control stream" {
     // enableQpackDynamic caps the encoder capacity at the peer's value.
     try server.enableQpackDynamic(4096);
     try std.testing.expectEqual(@as(usize, 2048), server.enc_table.?.max_capacity);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming request body / chunked response tests
+// ---------------------------------------------------------------------------
+
+test "H3Server streams request body across feeds and echoes it" {
+    // POST with a body, encoded as HEADERS + DATA.
+    const req_body = "the-quick-brown-fox-jumps-over-the-lazy-dog";
+    var req_buf: [4096]u8 = undefined;
+    const req = h3_request.Request{
+        .method = "POST",
+        .path = "/echo",
+        .authority = "example.com",
+        .body = req_body,
+    };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+    const headers_len = (try h3_frame.decodeFrame(req_buf[0..req_len])).consumed;
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid != 3) try self.response_data.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.response_data.deinit(std.testing.allocator);
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            return .{ .status = 200, .body = decoded_req.body orelse "NOBODY" };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    // HEADERS frame split across two feeds, then DATA + fin.
+    _ = try server.feedRequestData(0, req_buf[0..4], false);
+    _ = try server.feedRequestData(0, req_buf[4..headers_len], false);
+    _ = try server.feedRequestData(0, req_buf[headers_len..req_len], true);
+    try server.pumpResponses();
+
+    const decoded = try h3_request.decodeResponse(mock.response_data.items);
+    try std.testing.expectEqual(@as(u16, 200), decoded.response.status);
+    try std.testing.expectEqualStrings(req_body, decoded.response.body.?);
+}
+
+test "H3Server pumps a streamed response as multiple DATA frames with fin last" {
+    const req_wire: [32]u8 = undefined;
+    _ = req_wire;
+    // Minimal GET request: HEADERS frame with empty QPACK block.
+    var req_buf: [64]u8 = undefined;
+    const req = h3_request.Request{ .method = "GET", .path = "/stream", .authority = "example.com" };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        fins: std.ArrayList(bool) = .empty,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (sid != 3) {
+                try self.response_data.appendSlice(std.testing.allocator, data);
+                try self.fins.append(std.testing.allocator, fin);
+            }
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer {
+        mock.response_data.deinit(std.testing.allocator);
+        mock.fins.deinit(std.testing.allocator);
+    }
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            if (std.mem.eql(u8, decoded_req.path, "/stream")) {
+                return .{
+                    .status = 200,
+                    .body_stream = h3_request.ResponseBody.fromRepeating(std.heap.c_allocator, '*', 20_000) catch unreachable,
+                };
+            }
+            return .{ .status = 404 };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    _ = try server.feedRequestData(0, req_buf[0..req_len], true);
+    try server.pumpResponses();
+
+    // Multiple DATA frames were sent; fin only on the last.
+    try std.testing.expect(mock.fins.items.len > 2);
+    for (mock.fins.items[0 .. mock.fins.items.len - 1]) |f| try std.testing.expect(!f);
+    try std.testing.expect(mock.fins.items[mock.fins.items.len - 1]);
+
+    // Concatenated DATA payloads reconstruct the full body.
+    var pos: usize = 0;
+    var total: usize = 0;
+    var body_ok = true;
+    while (true) {
+        const frame = h3_frame.decodeFrame(mock.response_data.items[pos..]) catch break;
+        if (frame.frame.frame_type == @intFromEnum(h3_frame.FrameType.data)) {
+            total += frame.frame.payload.len;
+            var i: usize = 0;
+            while (i < frame.frame.payload.len) : (i += 1) {
+                if (frame.frame.payload[i] != '*') body_ok = false;
+            }
+        }
+        pos += frame.consumed;
+    }
+    try std.testing.expect(body_ok);
+    try std.testing.expectEqual(@as(usize, 20_000), total);
+}
+
+test "H3Server rejects an oversized request body" {
+    var req_buf: [4096]u8 = undefined;
+    const req = h3_request.Request{
+        .method = "POST",
+        .path = "/upload",
+        .authority = "example.com",
+        .body = "x-large-body",
+    };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+    const headers_len = (try h3_frame.decodeFrame(req_buf[0..req_len])).consumed;
+
+    const MockCtx = struct {
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            _ = ctx;
+            _ = sid;
+            _ = data;
+            _ = fin;
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200 };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+    server.max_request_body_size = 4; // tiny cap
+
+    _ = try server.feedRequestData(0, req_buf[0..headers_len], false);
+    try std.testing.expectError(error.RequestBodyTooLarge, server.feedRequestData(0, req_buf[headers_len..req_len], true));
+}
+
+test "H3Server retries a flow-control-blocked response chunk" {
+    var req_buf: [64]u8 = undefined;
+    const req = h3_request.Request{ .method = "GET", .path = "/", .authority = "example.com" };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        block_next_data: bool = true,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid == 3) return; // control stream
+            if (data.len > 0 and data[0] == @intFromEnum(h3_frame.FrameType.data)) {
+                if (self.block_next_data) {
+                    self.block_next_data = false;
+                    return error.FlowControlBlocked;
+                }
+            }
+            try self.response_data.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.response_data.deinit(std.testing.allocator);
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200, .body = "retried-body" };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    _ = try server.feedRequestData(0, req_buf[0..req_len], true);
+    // First pump hits FlowControlBlocked on the DATA chunk; the response is
+    // not lost and the stream is not retired.
+    try server.pumpResponses();
+    try std.testing.expect(!server.streamDone(0));
+
+    // Second pump completes the transfer.
+    try server.pumpResponses();
+    try std.testing.expect(server.streamDone(0));
+    const decoded = try h3_request.decodeResponse(mock.response_data.items);
+    try std.testing.expectEqualStrings("retried-body", decoded.response.body.?);
+}
+
+test "H3Server serves a bodyless request with fin" {
+    var req_buf: [64]u8 = undefined;
+    const req = h3_request.Request{ .method = "GET", .path = "/", .authority = "example.com" };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid != 3) try self.response_data.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.response_data.deinit(std.testing.allocator);
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 204 };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    _ = try server.feedRequestData(0, req_buf[0..req_len], true);
+    try server.pumpResponses();
+    try std.testing.expect(server.streamDone(0));
+
+    const decoded = try h3_request.decodeResponse(mock.response_data.items);
+    try std.testing.expectEqual(@as(u16, 204), decoded.response.status);
 }

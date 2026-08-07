@@ -50,8 +50,11 @@ pub const Response = struct {
     status: u16,
     /// Additional headers.
     extra_headers: []const qpack.HeaderField = &.{},
-    /// Response body.
+    /// Response body (single contiguous slice, encoded as one DATA frame).
     body: ?[]const u8 = null,
+    /// Streamed response body. When set, takes precedence over `body` and is
+    /// emitted as multiple DATA frames by the response pump.
+    body_stream: ?ResponseBody = null,
 
     /// Encode the response as QPACK header block.
     pub fn encodeHeaders(self: *const Response, out: []u8) !usize {
@@ -75,6 +78,96 @@ pub const Response = struct {
     /// Whether the response indicates success (2xx).
     pub fn isSuccess(self: *const Response) bool {
         return self.status >= 200 and self.status < 300;
+    }
+};
+
+/// A chunked response body produced lazily by the server handler.
+///
+/// Modelled as a non-blocking pull iterator: the response pump calls `next_fn`
+/// with a caller-owned buffer, fills it with the next chunk of body bytes, and
+/// returns the number of bytes written (or `null` when the body is exhausted).
+/// Must never block — it returns whatever data is currently available, matching
+/// quic-zig's `recvBody` and quiche's `send_body` pull model.
+///
+/// `deinit_fn` (optional) is invoked by the H3 server when the body is fully
+/// sent or the stream is cancelled. This vtable seam lets a future async
+/// (producer-task) body implementation swap in without changing the send path.
+pub const ResponseBody = struct {
+    ctx: *anyopaque,
+    /// Fill `buf` with the next chunk; `null` reports end-of-body.
+    next_fn: *const fn (ctx: *anyopaque, buf: []u8) anyerror!?usize,
+    /// Release resources owned by the body producer, if any.
+    deinit_fn: ?*const fn (ctx: *anyopaque) void = null,
+
+    pub fn next(self: ResponseBody, buf: []u8) anyerror!?usize {
+        return self.next_fn(self.ctx, buf);
+    }
+    pub fn deinit(self: ResponseBody) void {
+        if (self.deinit_fn) |f| f(self.ctx);
+    }
+
+    /// Build a body that streams a fixed list of chunks in order.
+    pub fn fromChunks(allocator: std.mem.Allocator, chunks: []const []const u8) !ResponseBody {
+        const owned = try allocator.dupe([]const u8, chunks);
+        errdefer allocator.free(owned);
+        const state = try allocator.create(ChunksState);
+        state.* = .{ .allocator = allocator, .chunks = owned, .index = 0 };
+        return .{
+            .ctx = state,
+            .next_fn = chunksNext,
+            .deinit_fn = chunksDeinit,
+        };
+    }
+
+    /// Build a body that repeats a single byte `total` times in chunks of
+    /// `max_response_chunk_payload`. A cheap generator for `/stream` demos.
+    pub fn fromRepeating(allocator: std.mem.Allocator, byte: u8, total: u64) !ResponseBody {
+        const state = try allocator.create(RepeatingState);
+        state.* = .{ .allocator = allocator, .byte = byte, .remaining = total };
+        return .{
+            .ctx = state,
+            .next_fn = repeatingNext,
+            .deinit_fn = repeatingDeinit,
+        };
+    }
+
+    const ChunksState = struct {
+        allocator: std.mem.Allocator,
+        chunks: []const []const u8,
+        index: usize = 0,
+    };
+    const RepeatingState = struct {
+        allocator: std.mem.Allocator,
+        byte: u8,
+        remaining: u64,
+    };
+
+    fn chunksNext(ctx: *anyopaque, buf: []u8) anyerror!?usize {
+        const state: *ChunksState = @ptrCast(@alignCast(ctx));
+        if (state.index >= state.chunks.len) return null;
+        const chunk = state.chunks[state.index];
+        state.index += 1;
+        @memcpy(buf[0..chunk.len], chunk);
+        return chunk.len;
+    }
+    fn chunksDeinit(ctx: *anyopaque) void {
+        const state: *ChunksState = @ptrCast(@alignCast(ctx));
+        const allocator = state.allocator;
+        allocator.free(state.chunks);
+        allocator.destroy(state);
+    }
+
+    fn repeatingNext(ctx: *anyopaque, buf: []u8) anyerror!?usize {
+        const state: *RepeatingState = @ptrCast(@alignCast(ctx));
+        if (state.remaining == 0) return null;
+        const n: usize = @intCast(@min(state.remaining, buf.len));
+        @memset(buf[0..n], state.byte);
+        state.remaining -= n;
+        return n;
+    }
+    fn repeatingDeinit(ctx: *anyopaque) void {
+        const state: *RepeatingState = @ptrCast(@alignCast(ctx));
+        state.allocator.destroy(state);
     }
 };
 
@@ -116,6 +209,63 @@ pub fn encodeResponse(out: []u8, response: Response) !usize {
     }
 
     return pos;
+}
+
+/// Encode only the HEADERS frame of a response, without any body. Used by the
+/// streaming send path, which emits HEADERS first and body DATA frames later.
+pub fn encodeResponseHeaders(out: []u8, response: Response) !usize {
+    var header_buf: [4096]u8 = undefined;
+    const header_len = try response.encodeHeaders(&header_buf);
+    return writeFrame(out, @intFromEnum(h3_frame.FrameType.headers), header_buf[0..header_len]);
+}
+
+/// Encode only the HEADERS frame of a response using QPACK dynamic references.
+/// Returns the encode result (encoder-stream instruction length + RIC) so the
+/// caller can emit encoder instructions before the frame on the wire.
+pub fn encodeResponseHeadersWithDynamic(
+    out: []u8,
+    response: Response,
+    dynamic_table: *qpack.DynamicTable,
+    encoder_stream_out: []u8,
+) !DynamicEncodeResult {
+    var status_buf: [8]u8 = undefined;
+    const status_str = std.fmt.bufPrint(&status_buf, "{d}", .{response.status}) catch "500";
+
+    var fields_buf: [32]qpack.HeaderField = undefined;
+    var count: usize = 0;
+    fields_buf[count] = .{ .name = ":status", .value = status_str };
+    count += 1;
+    for (response.extra_headers) |h| {
+        if (count >= fields_buf.len) break;
+        fields_buf[count] = h;
+        count += 1;
+    }
+
+    var header_buf: [4096]u8 = undefined;
+    const enc = try qpack.encodeHeaderBlockWithDynamicInserting(&header_buf, encoder_stream_out, fields_buf[0..count], dynamic_table);
+    const pos = try writeFrame(out, @intFromEnum(h3_frame.FrameType.headers), header_buf[0..enc.header_block_len]);
+    return .{
+        .len = pos,
+        .encoder_stream_len = enc.encoder_stream_len,
+        .required_insert_count = enc.required_insert_count,
+    };
+}
+
+/// Encode a DATA frame with the given payload.
+pub fn encodeDataFrame(out: []u8, payload: []const u8) !usize {
+    return writeFrame(out, @intFromEnum(h3_frame.FrameType.data), payload);
+}
+
+/// Parse a single DATA frame from the front of `data`. Returns the payload
+/// slice (borrowed from `data`) and the bytes consumed. `IncompleteFrame` is
+/// propagated when the frame is split across buffer boundaries; a non-DATA
+/// frame yields `ExpectedDataFrame`.
+pub fn takeDataFrame(data: []const u8) !struct { payload: []const u8, consumed: usize } {
+    const result = try h3_frame.decodeFrame(data);
+    if (result.frame.frame_type != @intFromEnum(h3_frame.FrameType.data)) {
+        return error.ExpectedDataFrame;
+    }
+    return .{ .payload = result.frame.payload, .consumed = result.consumed };
 }
 
 /// Write a single H3 frame to a buffer. Returns bytes written.
@@ -775,4 +925,89 @@ test "HTTP/3 POST with dynamic table and body" {
     try std.testing.expectEqualStrings("POST", result.request.method);
     try std.testing.expectEqualStrings("/api/submit", result.request.path);
     try std.testing.expectEqualStrings("{\"data\":\"payload\"}", result.request.body.?);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming body / headers-only / DATA frame tests
+// ---------------------------------------------------------------------------
+
+test "encodeResponseHeaders emits only the HEADERS frame" {
+    const resp = Response{
+        .status = 200,
+        .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+        .body = "should not be encoded",
+    };
+    var buf: [512]u8 = undefined;
+    const len = try encodeResponseHeaders(&buf, resp);
+
+    // Wire must be exactly one HEADERS frame with no DATA trailing.
+    const frame = try h3_frame.decodeFrame(buf[0..len]);
+    try std.testing.expectEqual(@as(u64, @intFromEnum(h3_frame.FrameType.headers)), frame.frame.frame_type);
+    try std.testing.expectEqual(len, frame.consumed);
+}
+
+test "encodeResponseHeadersWithDynamic roundtrips through decodeResponse" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+
+    const resp = Response{ .status = 201, .extra_headers = &.{.{ .name = "x-id", .value = "abc" }} };
+    var buf: [512]u8 = undefined;
+    var instr: [512]u8 = undefined;
+    const enc = try encodeResponseHeadersWithDynamic(&buf, resp, &dt, &instr);
+    try std.testing.expect(enc.len > 0);
+
+    const result = try decodeResponseWithDynamic(buf[0..enc.len], &dt);
+    try std.testing.expectEqual(@as(u16, 201), result.response.status);
+    // headers-only: no DATA frame, so body stays null.
+    try std.testing.expect(result.response.body == null);
+}
+
+test "encodeDataFrame and takeDataFrame roundtrip" {
+    const payload = "chunk-of-body";
+    var buf: [64]u8 = undefined;
+    const len = try encodeDataFrame(&buf, payload);
+    const taken = try takeDataFrame(buf[0..len]);
+    try std.testing.expectEqualStrings(payload, taken.payload);
+    try std.testing.expectEqual(len, taken.consumed);
+}
+
+test "takeDataFrame propagates IncompleteFrame on split frame" {
+    const payload = "abcdefghij";
+    var buf: [64]u8 = undefined;
+    const len = try encodeDataFrame(&buf, payload);
+    try std.testing.expectError(error.IncompleteFrame, takeDataFrame(buf[0 .. len - 1]));
+}
+
+test "takeDataFrame rejects non-DATA frame" {
+    const resp = Response{ .status = 200 };
+    var buf: [64]u8 = undefined;
+    const len = try encodeResponseHeaders(&buf, resp);
+    try std.testing.expectError(error.ExpectedDataFrame, takeDataFrame(buf[0..len]));
+}
+
+test "ResponseBody.fromChunks streams chunks in order" {
+    const chunks = [_][]const u8{ "hello-", "chunked-", "world" };
+    var body = try ResponseBody.fromChunks(std.testing.allocator, &chunks);
+    defer body.deinit();
+
+    var out: [1024]u8 = undefined;
+    var pos: usize = 0;
+    while (try body.next(out[pos..])) |n| {
+        pos += n;
+    }
+    try std.testing.expectEqualStrings("hello-chunked-world", out[0..pos]);
+}
+
+test "ResponseBody.fromRepeating generates a byte pattern" {
+    var body = try ResponseBody.fromRepeating(std.testing.allocator, 0x41, 20_000);
+    defer body.deinit();
+
+    var out: [4096]u8 = undefined;
+    var total: usize = 0;
+    while (try body.next(out[0..])) |n| {
+        for (out[0..n]) |b| try std.testing.expectEqual(@as(u8, 0x41), b);
+        total += n;
+    }
+    try std.testing.expectEqual(@as(usize, 20_000), total);
 }

@@ -70,9 +70,25 @@ const request = quicz.h3_request.Request{
 };
 
 fn handleRequest(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
+    if (!std.mem.eql(u8, req.authority.?, "service.internal")) return .{ .status = 400, .body = "BAD AUTHORITY" };
+    // POST /echo: reflect the aggregated request body to prove the server
+    // buffers DATA frames spanning datagrams.
+    if (std.mem.eql(u8, req.method, "POST") and std.mem.eql(u8, req.path, "/echo")) {
+        return .{
+            .status = 200,
+            .extra_headers = &.{.{ .name = "content-type", .value = "application/octet-stream" }},
+            .body = req.body,
+        };
+    }
+    // GET /stream: streamed body, chunked into multiple DATA frames.
+    if (std.mem.eql(u8, req.method, "GET") and std.mem.eql(u8, req.path, "/stream")) {
+        return .{
+            .status = 200,
+            .body_stream = quicz.h3_request.ResponseBody.fromRepeating(allocator, 'S', 65536) catch unreachable,
+        };
+    }
     if (!std.mem.eql(u8, req.method, "GET")) return .{ .status = 400, .body = "BAD METHOD" };
     if (!std.mem.eql(u8, req.path, "/api/data")) return .{ .status = 404, .body = "NOT FOUND" };
-    if (!std.mem.eql(u8, req.authority.?, "service.internal")) return .{ .status = 400, .body = "BAD AUTHORITY" };
     return .{
         .status = 200,
         .extra_headers = &.{
@@ -122,6 +138,32 @@ fn runClientSession(io: std.Io) !void {
     try require(resp2.status == 200);
     try require(std.mem.eql(u8, resp2.body.?, "OK"));
 
+    // Round 3: POST /echo with a body larger than the default 4096 stream
+    // flow-control window (but below the 8192 request buffer), proving the
+    // server aggregates a body that overflows the window via the
+    // drainOutgoing credit-retry path.
+    const body3 = try allocator.alloc(u8, 4080);
+    defer allocator.free(body3);
+    @memset(body3, 0x41); // 'A'
+    const req3 = quicz.h3_request.Request{
+        .method = "POST",
+        .path = "/echo",
+        .authority = "service.internal",
+        .body = body3,
+    };
+    const stream3 = try h3cli.sendRequest(req3);
+    const resp3 = try h3cli.receiveResponse(stream3);
+    try require(resp3.status == 200);
+    try require(resp3.body != null and std.mem.eql(u8, resp3.body.?, body3));
+
+    // Round 4: GET /stream with a chunked (streamed) response body.
+    const req4 = quicz.h3_request.Request{ .method = "GET", .path = "/stream", .authority = "service.internal" };
+    const stream4 = try h3cli.sendRequest(req4);
+    const resp4 = try h3cli.receiveResponse(stream4);
+    try require(resp4.status == 200);
+    try require(resp4.body != null and resp4.body.?.len == 65536);
+    for (resp4.body.?) |b| try require(b == 'S');
+
     // Let decoder-stream acknowledgments catch up and confirm the QPACK
     // control flow closed: no pending sections, KRC == insert count.
     var drained = false;
@@ -137,8 +179,8 @@ fn runClientSession(io: std.Io) !void {
     try require(drained);
 
     std.debug.print(
-        "h3_runtime_loopback: runtime HTTP/3 + QPACK OK round1={d} round2={d} client_enc_entries={d} client_krc={d} pending=0\n",
-        .{ resp1.status, resp2.status, h3cli.h3.enc_table.?.entryCount(), h3cli.h3.enc_table.?.known_received_count },
+        "h3_runtime_loopback: runtime HTTP/3 + QPACK OK round1={d} round2={d} echo={d} stream={d} client_enc_entries={d} client_krc={d} pending=0\n",
+        .{ resp1.status, resp2.status, resp3.status, resp4.status, h3cli.h3.enc_table.?.entryCount(), h3cli.h3.enc_table.?.known_received_count },
     );
     client.close();
 }

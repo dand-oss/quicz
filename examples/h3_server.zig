@@ -61,6 +61,22 @@ const certificate_der = [_]u8{
 };
 
 fn handleRequest(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
+    // POST /echo: reflect the aggregated request body.
+    if (std.mem.eql(u8, req.method, "POST") and std.mem.eql(u8, req.path, "/echo")) {
+        return .{
+            .status = 200,
+            .extra_headers = &.{.{ .name = "content-type", .value = "application/octet-stream" }},
+            .body = req.body,
+        };
+    }
+    // GET /stream: streamed (chunked) response body.
+    if (std.mem.eql(u8, req.method, "GET") and std.mem.eql(u8, req.path, "/stream")) {
+        return .{
+            .status = 200,
+            .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }},
+            .body_stream = quicz.h3_request.ResponseBody.fromRepeating(allocator, 'S', 65536) catch unreachable,
+        };
+    }
     if (!std.mem.eql(u8, req.method, "GET")) return .{ .status = 405, .body = "method not allowed" };
     if (!std.mem.eql(u8, req.path, "/")) return .{ .status = 404, .body = "not found" };
     return .{

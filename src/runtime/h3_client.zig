@@ -95,41 +95,32 @@ pub const H3Client = struct {
         while (true) {
             _ = try self.drainPeerUniStreams();
 
-            // Retry a previously blocked response now that encoder-stream
-            // inserts may have advanced the table (RFC 9204 §2.2.1).
-            if (self.h3.blocked_responses) |*blocked| {
-                if (blocked.get(stream_id)) |data| {
-                    if (try self.h3.tryDecodeBufferedResponse(stream_id, data)) |resp| return resp;
-                }
-            }
-
             var got = false;
+            var eof = false;
             while (true) {
                 const r = try self.client.tryReceiveStreamData(stream_id, &self.buf);
                 if (r == null) break;
                 got = true;
-                if (r.? == 0) break;
-                if (self.served.contains(stream_id)) continue;
+                if (r.? == 0) {
+                    eof = true;
+                    break;
+                }
                 const gop = try self.response_buffers.getOrPut(stream_id);
                 if (!gop.found_existing) gop.value_ptr.* = std.ArrayList(u8).empty;
                 try gop.value_ptr.appendSlice(self.allocator, self.buf[0..r.?]);
             }
 
             if (self.response_buffers.getPtr(stream_id)) |buf| {
-                if (buf.items.len > 0) {
-                    const frame = h3_frame.decodeFrame(buf.items) catch null;
-                    if (frame) |f| {
-                        if (f.frame.frame_type == @intFromEnum(h3_frame.FrameType.headers)) {
-                            if (try self.h3.feedResponseBytes(stream_id, buf.items)) |resp| {
-                                try self.served.put(stream_id, {});
-                                return resp;
-                            }
-                            // Blocked: the state machine owns a copy; drop ours.
-                            try self.served.put(stream_id, {});
-                            buf.deinit(self.allocator);
-                            _ = self.response_buffers.remove(stream_id);
-                        }
+                if (buf.items.len > 0 or eof) {
+                    // Feed the buffered response bytes (HEADERS + DATA) and any
+                    // EOF into the streaming state machine, which aggregates
+                    // multiple DATA frames. On completion the returned response
+                    // borrows the state machine's backing storage.
+                    if (try self.h3.feedResponseData(stream_id, buf.items, eof)) |resp| {
+                        return resp;
                     }
+                    // Incomplete or blocked: the state machine owns a copy.
+                    buf.clearRetainingCapacity();
                 }
             }
 

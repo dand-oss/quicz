@@ -43,6 +43,21 @@ pub const max_settings_params: usize = 32;
 /// Prevents integer overflow in index calculations.
 pub const max_required_insert_count: u64 = 1_000_000;
 
+/// Maximum request body bytes buffered per stream (RFC 9114 §6.1).
+/// Bounds per-stream memory for aggregated bodies; excess is rejected with
+/// 413 + H3_EXCESSIVE_LOAD before STOP_SENDING.
+pub const max_request_body_size: usize = 1024 * 1024; // 1 MiB
+
+/// Maximum DATA frame payload emitted per chunk when streaming a response.
+/// Each response chunk is framed as one DATA frame; larger bodies are split
+/// across multiple chunks/frames by the response pump.
+pub const max_response_chunk_payload: usize = 8192;
+
+/// Maximum number of response chunks pumped per stream per call.
+/// Hard ceiling so a large response body cannot starve the QPACK control /
+/// encoder / decoder streams that share the connection (event-driven rule).
+pub const max_chunks_per_pump: usize = 8;
+
 /// Validate a header field against limits.
 /// Returns an error if the field violates any constraint.
 pub fn validateHeaderField(name: []const u8, value: []const u8) !void {

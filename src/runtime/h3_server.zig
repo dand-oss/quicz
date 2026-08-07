@@ -106,6 +106,9 @@ pub const H3Server = struct {
             for (self.stream_ids[0..n]) |sid| {
                 activity = (try self.pollStream(sid)) or activity;
             }
+            // Drain any pending chunked response bodies (recovering chunks that
+            // were flow-control-blocked earlier) before parking.
+            try self.h3.pumpResponses();
             if (!activity) {
                 self.server.waitStreamActivity(self.conn_id) catch return;
             }
@@ -208,28 +211,51 @@ pub const H3Server = struct {
         const gop = try self.request_buffers.getOrPut(sid);
         if (!gop.found_existing) gop.value_ptr.* = std.ArrayList(u8).empty;
         try gop.value_ptr.appendSlice(self.allocator, data);
-        try self.tryServeRequest(sid);
+        try self.pumpRequest(sid);
     }
 
-    fn tryServeRequest(self: *H3Server, sid: u64) !void {
+    /// Feed the buffered request bytes (HEADERS + DATA) into the state machine,
+    /// shrinking the buffer by the consumed amount so a partial frame at the
+    /// tail survives until the next datagram. A request body that exceeds the
+    /// server cap is rejected with 413 + STOP_SENDING(H3_EXCESSIVE_LOAD).
+    fn pumpRequest(self: *H3Server, sid: u64) !void {
         if (self.served.contains(sid)) return;
         const buf = self.request_buffers.getPtr(sid) orelse return;
-        const frame = h3_frame.decodeFrame(buf.items) catch |e| switch (e) {
-            error.IncompleteFrame => return,
-            else => return e,
+        const r = self.h3.feedRequestData(sid, buf.items, false) catch |e| {
+            if (e == error.RequestBodyTooLarge) {
+                try self.h3.sendSimpleError(sid, 413);
+                try self.h3.cancelStream(sid);
+                self.server.stopSendingRequest(self.conn_id, sid, 0x101) catch {}; // H3_EXCESSIVE_LOAD
+                self.releaseRequest(sid);
+                return;
+            }
+            return e;
         };
-        if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
-            return error.ExpectedHeadersFrame;
+        if (r.consumed > 0) {
+            if (r.consumed == buf.items.len) {
+                buf.clearRetainingCapacity();
+            } else {
+                std.mem.copyForwards(u8, buf.items[0 .. buf.items.len - r.consumed], buf.items[r.consumed..]);
+                buf.shrinkRetainingCapacity(buf.items.len - r.consumed);
+            }
         }
-        _ = try self.h3.feedRequestBytes(sid, buf.items[0..frame.consumed]);
-        try self.served.put(sid, {});
-        buf.deinit(self.allocator);
-        _ = self.request_buffers.remove(sid);
     }
 
+    /// Peer FIN: the request body is complete, so feed an empty datum with
+    /// `fin` to run the handler and start the response.
     fn finishStream(self: *H3Server, sid: u64) !void {
         if ((sid & 2) != 0) return; // peer uni streams stay open in H3
-        try self.tryServeRequest(sid);
+        if (self.served.contains(sid)) return;
+        _ = try self.h3.feedRequestData(sid, &.{}, true);
+        try self.served.put(sid, {});
+        self.releaseRequest(sid);
+    }
+
+    fn releaseRequest(self: *H3Server, sid: u64) void {
+        if (self.request_buffers.fetchRemove(sid)) |kv| {
+            var b = kv.value;
+            b.deinit(self.allocator);
+        }
     }
 };
 

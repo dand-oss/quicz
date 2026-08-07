@@ -369,9 +369,21 @@ pub const Server = struct {
             }
             if (!record_alive) continue;
             while (!st.mutex.tryLock()) std.atomic.spinLoopHint();
+            var flow_blocked = false;
             for (st.send_streams.items) |*sq| {
                 if (sq.queue.items.len > 0 or sq.fin) {
-                    st.conn.sendOnStream(sq.id, sq.queue.items, sq.fin) catch {};
+                    st.conn.sendOnStream(sq.id, sq.queue.items, sq.fin) catch |err| {
+                        if (err == error.FlowControlBlocked) {
+                            // Keep the queued bytes and retry once the peer
+                            // grants fresh MAX_STREAM_DATA credit (an inbound
+                            // datagram wakes the drive loop, which drains again).
+                            flow_blocked = true;
+                            break;
+                        }
+                        sq.queue.clearRetainingCapacity();
+                        sq.fin = false;
+                        break;
+                    };
                     sq.queue.clearRetainingCapacity();
                     sq.fin = false;
                 }
@@ -385,7 +397,7 @@ pub const Server = struct {
                 st.uni_open_requested = false;
                 st.uni_open_sem.post(self.io);
             }
-            st.send_pending = false;
+            if (!flow_blocked) st.send_pending = false;
             st.mutex.unlock();
         }
         for (closed_handles[0..closed_count]) |h| {

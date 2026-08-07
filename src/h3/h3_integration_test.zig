@@ -1113,3 +1113,65 @@ test "H3 integration: client rejects oversized response field section" {
     try channel.appendStream(stream_id, resp_wire[0..resp_len]);
     try std.testing.expectError(error.FieldSectionTooLarge, client.receiveResponseDynamic(stream_id));
 }
+test "H3 integration: streamed POST body aggregates and echoes over streams" {
+    var channel = TestChannel.init(std.testing.allocator);
+    defer channel.deinit();
+
+    var server_adapter = channel.makeServerAdapter();
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            if (std.mem.eql(u8, decoded_req.path, "/echo")) {
+                return .{ .status = 200, .body = decoded_req.body orelse "EMPTY" };
+            }
+            return .{ .status = 404 };
+        }
+    }.handle;
+    var server = try h3_server.H3Server.init(&server_adapter, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    var client_adapter = channel.makeClientAdapter();
+    var client = try h3_client.H3Client.init(&client_adapter, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+
+    // POST /echo whose body spans two DATA frames.
+    const body1 = "first-chunk-";
+    const body2 = "second-chunk";
+    const request = h3_request.Request{ .method = "POST", .path = "/echo", .authority = "localhost" };
+    var hb: [512]u8 = undefined;
+    const hlen = try request.encodeHeaders(&hb);
+    var req_wire: [4096]u8 = undefined;
+    var pos: usize = 0;
+    req_wire[pos] = 0x01; // HEADERS frame
+    pos += 1;
+    req_wire[pos] = @intCast(hlen);
+    pos += 1;
+    @memcpy(req_wire[pos .. pos + hlen], hb[0..hlen]);
+    pos += hlen;
+    req_wire[pos] = 0x00; // DATA frame 1
+    pos += 1;
+    req_wire[pos] = body1.len;
+    pos += 1;
+    @memcpy(req_wire[pos .. pos + body1.len], body1);
+    pos += body1.len;
+    req_wire[pos] = 0x00; // DATA frame 2
+    pos += 1;
+    req_wire[pos] = body2.len;
+    pos += 1;
+    @memcpy(req_wire[pos .. pos + body2.len], body2);
+    pos += body2.len;
+    const req_len = pos;
+
+    // Server feeds the request in two datagrams (headers+data1, then data2+fin).
+    const sid: u64 = 0;
+    const split = 2 + hlen + 2 + body1.len;
+    _ = try server.feedRequestData(sid, req_wire[0..split], false);
+    _ = try server.feedRequestData(sid, req_wire[split..req_len], true);
+    try server.pumpResponses();
+
+    // Client reads the echoed response off the channel.
+    var rbuf: [8192]u8 = undefined;
+    const resp_bytes = channel.readStream(sid, &rbuf);
+    const decoded = try h3_request.decodeResponse(resp_bytes);
+    try std.testing.expectEqual(@as(u16, 200), decoded.response.status);
+    try std.testing.expectEqualStrings("first-chunk-second-chunk", decoded.response.body.?);
+}
