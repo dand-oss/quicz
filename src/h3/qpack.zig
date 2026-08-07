@@ -518,6 +518,10 @@ pub const DynamicTable = struct {
     entries: std.ArrayList(DynamicEntry) = .empty,
     /// Total number of entries ever inserted (monotonically increasing).
     insert_count: u64 = 0,
+    /// Encoder-side Known Received Count (RFC 9204 §2.1.4): the number of
+    /// insertions the peer decoder has acknowledged. Only entries with an
+    /// absolute index below this count may be referenced without blocking.
+    known_received_count: u64 = 0,
     /// Maximum table capacity in bytes (set by encoder via Set Capacity).
     max_capacity: usize = 0,
     /// Current table size in bytes.
@@ -617,6 +621,24 @@ pub const DynamicTable = struct {
     pub fn getAbsoluteIndex(self: *const DynamicTable, relative_index: u64) !u64 {
         if (relative_index >= self.entries.items.len) return error.InvalidDynamicIndex;
         return self.insert_count - 1 - relative_index;
+    }
+
+    /// Raise the Known Received Count toward `count`. The peer cannot
+    /// acknowledge more insertions than this encoder has sent.
+    pub fn acknowledgeReceived(self: *DynamicTable, count: u64) !void {
+        if (count > self.insert_count) return error.KnownReceivedCountBeyondSent;
+        if (count > self.known_received_count) self.known_received_count = count;
+    }
+
+    /// Whether an entry at the given relative index (0 = newest) may be
+    /// referenced in a header block without risking decoder blocking. The
+    /// absolute index (insert_count - 1 - relative_index) must be below the
+    /// Known Received Count (RFC 9204 §2.2.2).
+    pub fn isReferenceable(self: *const DynamicTable, relative_index: u64) bool {
+        const known = @min(self.known_received_count, self.insert_count);
+        if (known == 0) return false;
+        if (relative_index >= self.insert_count) return false;
+        return relative_index >= self.insert_count - known;
     }
 
     /// Evict the oldest entry from the table.
@@ -1148,6 +1170,41 @@ pub fn decodeDecoderInstruction(data: []const u8) !struct { instruction: Decoder
     }
 }
 
+/// Consume a run of decoder stream instructions from `data` and apply them to
+/// the local encoder-side table (RFC 9204 §4.4). `pending_sections` records the
+/// Required Insert Count of each dynamic section this encoder sent, keyed by
+/// stream ID, so a Section Acknowledgment can raise the Known Received Count.
+/// Returns the number of bytes consumed. A malformed/truncated instruction, a
+/// duplicate Section Acknowledgment, or an increment beyond what this encoder
+/// sent is a protocol error (QPACK_DECODER_STREAM_ERROR).
+pub fn decodeDecoderStreamInstructions(
+    data: []const u8,
+    dynamic_table: *DynamicTable,
+    pending_sections: *std.AutoHashMap(u64, u64),
+) !usize {
+    var pos: usize = 0;
+    while (pos < data.len) {
+        const decoded = try decodeDecoderInstruction(data[pos..]);
+        switch (decoded.instruction) {
+            .section_ack => |stream_id| {
+                const required_insert_count = pending_sections.fetchRemove(stream_id) orelse
+                    return error.DuplicateSectionAck;
+                try dynamic_table.acknowledgeReceived(required_insert_count.value);
+            },
+            .stream_cancellation => |stream_id| {
+                _ = pending_sections.fetchRemove(stream_id);
+            },
+            .insert_count_increment => |increment| {
+                if (increment == 0) return error.ZeroInsertCountIncrement;
+                try dynamic_table.acknowledgeReceived(dynamic_table.known_received_count + increment);
+            },
+        }
+        if (decoded.consumed == 0) break;
+        pos += decoded.consumed;
+    }
+    return pos;
+}
+
 // ---------------------------------------------------------------------------
 // Encoder/Decoder instruction tests
 // ---------------------------------------------------------------------------
@@ -1277,6 +1334,82 @@ test "Decoder instruction: insert count increment" {
     }
 }
 
+test "decoder stream: section ack advances Known Received Count" {
+    var enc_table = DynamicTable.init(std.testing.allocator);
+    defer enc_table.deinit();
+    enc_table.setCapacity(4096);
+    try enc_table.insert("x-a", "1");
+    try enc_table.insert("x-b", "2");
+
+    var pending = std.AutoHashMap(u64, u64).init(std.testing.allocator);
+    defer pending.deinit();
+    try pending.put(4, 2);
+
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .section_ack = 4 });
+    try std.testing.expectEqual(@as(u64, 0), enc_table.known_received_count);
+    _ = try decodeDecoderStreamInstructions(buf[0..len], &enc_table, &pending);
+    try std.testing.expectEqual(@as(u64, 2), enc_table.known_received_count);
+    try std.testing.expectEqual(@as(usize, 0), pending.count());
+}
+
+test "decoder stream: insert count increment advances Known Received Count" {
+    var enc_table = DynamicTable.init(std.testing.allocator);
+    defer enc_table.deinit();
+    enc_table.setCapacity(4096);
+    try enc_table.insert("x-a", "1");
+    try enc_table.insert("x-b", "2");
+
+    var pending = std.AutoHashMap(u64, u64).init(std.testing.allocator);
+    defer pending.deinit();
+
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .insert_count_increment = 2 });
+    _ = try decodeDecoderStreamInstructions(buf[0..len], &enc_table, &pending);
+    try std.testing.expectEqual(@as(u64, 2), enc_table.known_received_count);
+
+    // An increment beyond what this encoder sent is a decoder stream error.
+    const len2 = try encodeDecoderInstruction(&buf, .{ .insert_count_increment = 1 });
+    try std.testing.expectError(
+        error.KnownReceivedCountBeyondSent,
+        decodeDecoderStreamInstructions(buf[0..len2], &enc_table, &pending),
+    );
+}
+
+test "decoder stream: stream cancellation drops pending section without advancing count" {
+    var enc_table = DynamicTable.init(std.testing.allocator);
+    defer enc_table.deinit();
+    enc_table.setCapacity(4096);
+    try enc_table.insert("x-a", "1");
+
+    var pending = std.AutoHashMap(u64, u64).init(std.testing.allocator);
+    defer pending.deinit();
+    try pending.put(8, 1);
+
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .stream_cancellation = 8 });
+    _ = try decodeDecoderStreamInstructions(buf[0..len], &enc_table, &pending);
+    try std.testing.expectEqual(@as(u64, 0), enc_table.known_received_count);
+    try std.testing.expectEqual(@as(usize, 0), pending.count());
+}
+
+test "decoder stream: duplicate section ack is a protocol error" {
+    var enc_table = DynamicTable.init(std.testing.allocator);
+    defer enc_table.deinit();
+    enc_table.setCapacity(4096);
+    try enc_table.insert("x-a", "1");
+
+    var pending = std.AutoHashMap(u64, u64).init(std.testing.allocator);
+    defer pending.deinit();
+
+    var buf: [16]u8 = undefined;
+    const len = try encodeDecoderInstruction(&buf, .{ .section_ack = 4 });
+    try std.testing.expectError(
+        error.DuplicateSectionAck,
+        decodeDecoderStreamInstructions(buf[0..len], &enc_table, &pending),
+    );
+}
+
 test "Encoder instruction: large name index (>= 63)" {
     var buf: [64]u8 = undefined;
     const len = try encodeEncoderInstruction(&buf, .{
@@ -1314,32 +1447,74 @@ test "Encoder instruction: large capacity (>= 31)" {
 // Header block with dynamic table references (RFC 9204 §4.5)
 // ---------------------------------------------------------------------------
 
-/// Encode a header block using dynamic table references when beneficial.
-/// The dynamic table's insert_count is used as Required Insert Count.
-/// Delta Base is always 0 (Base = Required Insert Count).
-pub fn encodeHeaderBlockWithDynamic(
+pub const DynamicEncodeInfo = struct {
+    len: usize,
+    required_insert_count: u64,
+};
+
+/// Selected wire representation for a header field (RFC 9204 §4.5).
+const FieldRepresentation = union(enum) {
+    dynamic_indexed: u64,
+    static_indexed: u64,
+    dynamic_name_ref: struct { relative_index: u64, value: []const u8 },
+    static_name_ref: struct { name_index: u64, value: []const u8 },
+    literal: struct { name: []const u8, value: []const u8 },
+};
+
+/// Choose the smallest representation for `field`. Dynamic references are only
+/// chosen when the entry is within the Known Received Count (RFC 9204 §2.2.2),
+/// so a peer that has not yet acknowledged the entry is never forced to block.
+fn selectFieldRepresentation(
+    field: HeaderField,
+    dynamic_table: *const DynamicTable,
+) FieldRepresentation {
+    if (dynamic_table.findExact(field.name, field.value)) |rel_idx| {
+        if (dynamic_table.isReferenceable(rel_idx)) return .{ .dynamic_indexed = rel_idx };
+    }
+    if (findStaticIndex(field.name, field.value)) |idx| return .{ .static_indexed = idx };
+    if (dynamic_table.findName(field.name)) |rel_idx| {
+        if (dynamic_table.isReferenceable(rel_idx)) {
+            return .{ .dynamic_name_ref = .{ .relative_index = rel_idx, .value = field.value } };
+        }
+    }
+    if (findStaticNameIndex(field.name)) |name_idx| {
+        return .{ .static_name_ref = .{ .name_index = name_idx, .value = field.value } };
+    }
+    return .{ .literal = .{ .name = field.name, .value = field.value } };
+}
+
+/// Encode a header block using dynamic table references when beneficial and
+/// safe. Delta Base is always 0 (Base = Required Insert Count).
+pub fn encodeHeaderBlockWithDynamicInfo(
     out: []u8,
     fields: []const HeaderField,
     dynamic_table: *const DynamicTable,
-) !usize {
+) !DynamicEncodeInfo {
+    // RFC 9204 §4.5.1: Required Insert Count is the largest absolute index of
+    // any dynamic entry referenced by this section, plus one.
+    var req_insert_count: u64 = 0;
+    for (fields) |field| {
+        switch (selectFieldRepresentation(field, dynamic_table)) {
+            .dynamic_indexed => |rel_idx| {
+                req_insert_count = @max(req_insert_count, try dynamic_table.getAbsoluteIndex(rel_idx) + 1);
+            },
+            .dynamic_name_ref => |ref| {
+                req_insert_count = @max(req_insert_count, try dynamic_table.getAbsoluteIndex(ref.relative_index) + 1);
+            },
+            else => {},
+        }
+    }
+
     var pos: usize = 0;
 
-    // Header block prefix (RFC 9204 §4.5.1)
-    // Required Insert Count: 8-bit prefix
-    const req_insert_count = dynamic_table.insert_count;
-    if (req_insert_count == 0) {
-        out[pos] = 0x00;
+    // Required Insert Count: 8-bit prefix integer.
+    if (req_insert_count < 255) {
+        out[pos] = @intCast(req_insert_count);
         pos += 1;
     } else {
-        // Encode with 8-bit prefix varint
-        if (req_insert_count < 255) {
-            out[pos] = @intCast(req_insert_count);
-            pos += 1;
-        } else {
-            out[pos] = 0xff;
-            pos += 1;
-            pos = encodeVarintToBuf(out, pos, req_insert_count - 255);
-        }
+        out[pos] = 0xff;
+        pos += 1;
+        pos = encodeVarintToBuf(out, pos, req_insert_count - 255);
     }
 
     // Delta Base: sign bit (0 = positive) + 7-bit prefix, value = 0
@@ -1347,61 +1522,73 @@ pub fn encodeHeaderBlockWithDynamic(
     pos += 1;
 
     for (fields) |field| {
-        // Try dynamic table exact match first (smallest encoding)
-        if (dynamic_table.findExact(field.name, field.value)) |rel_idx| {
-            // Indexed Field Line (dynamic): 1TXXXXXX, T=0
-            // 0x80 | index with 6-bit prefix
-            if (rel_idx < 63) {
-                out[pos] = @intCast(0x80 | rel_idx);
+        switch (selectFieldRepresentation(field, dynamic_table)) {
+            .dynamic_indexed => |rel_idx| {
+                // Indexed Field Line (dynamic): 1TXXXXXX, T=0
+                if (rel_idx < 63) {
+                    out[pos] = @intCast(0x80 | rel_idx);
+                    pos += 1;
+                } else {
+                    out[pos] = 0xbf; // 0x80 | 0x3f
+                    pos += 1;
+                    pos = encodeVarintToBuf(out, pos, rel_idx - 63);
+                }
+            },
+            .static_indexed => |idx| {
+                // Indexed Field Line (static): 1TXXXXXX, T=1
+                if (idx < 63) {
+                    out[pos] = @intCast(0xc0 | idx);
+                    pos += 1;
+                } else {
+                    out[pos] = 0xff;
+                    pos += 1;
+                    pos = encodeVarintToBuf(out, pos, idx - 63);
+                }
+            },
+            .dynamic_name_ref => |ref| {
+                // Literal with Name Reference (dynamic): 01NTXXXX, T=0, N=0
+                if (ref.relative_index < 15) {
+                    out[pos] = @intCast(0x40 | ref.relative_index);
+                    pos += 1;
+                } else {
+                    out[pos] = 0x4f; // 0x40 | 0x0f
+                    pos += 1;
+                    pos = encodeVarintToBuf(out, pos, ref.relative_index - 15);
+                }
+                pos = try encodeStringToBuf(out, pos, ref.value);
+            },
+            .static_name_ref => |ref| {
+                // Literal with Name Reference (static): 01NTXXXX, T=1, N=0
+                if (ref.name_index < 15) {
+                    out[pos] = @intCast(0x50 | ref.name_index);
+                    pos += 1;
+                } else {
+                    out[pos] = 0x5f;
+                    pos += 1;
+                    pos = encodeVarintToBuf(out, pos, ref.name_index - 15);
+                }
+                pos = try encodeStringToBuf(out, pos, ref.value);
+            },
+            .literal => |lit| {
+                // Literal without Name Reference: 001NXXXX, N=0
+                out[pos] = 0x20;
                 pos += 1;
-            } else {
-                out[pos] = 0xbf; // 0x80 | 0x3f
-                pos += 1;
-                pos = encodeVarintToBuf(out, pos, rel_idx - 63);
-            }
-        } else if (findStaticIndex(field.name, field.value)) |idx| {
-            // Indexed Field Line (static): 1TXXXXXX, T=1
-            if (idx < 63) {
-                out[pos] = @intCast(0xc0 | idx);
-                pos += 1;
-            } else {
-                out[pos] = 0xff;
-                pos += 1;
-                pos = encodeVarintToBuf(out, pos, idx - 63);
-            }
-        } else if (dynamic_table.findName(field.name)) |rel_idx| {
-            // Literal with Name Reference (dynamic): 01NTXXXX, T=0, N=0
-            // 0x40 | index with 4-bit prefix
-            if (rel_idx < 15) {
-                out[pos] = @intCast(0x40 | rel_idx);
-                pos += 1;
-            } else {
-                out[pos] = 0x4f; // 0x40 | 0x0f
-                pos += 1;
-                pos = encodeVarintToBuf(out, pos, rel_idx - 15);
-            }
-            pos = try encodeStringToBuf(out, pos, field.value);
-        } else if (findStaticNameIndex(field.name)) |name_idx| {
-            // Literal with Name Reference (static): 01NTXXXX, T=1, N=0
-            if (name_idx < 15) {
-                out[pos] = @intCast(0x50 | name_idx);
-                pos += 1;
-            } else {
-                out[pos] = 0x5f;
-                pos += 1;
-                pos = encodeVarintToBuf(out, pos, name_idx - 15);
-            }
-            pos = try encodeStringToBuf(out, pos, field.value);
-        } else {
-            // Literal without Name Reference: 001NXXXX, N=0
-            out[pos] = 0x20;
-            pos += 1;
-            pos = try encodeStringToBuf(out, pos, field.name);
-            pos = try encodeStringToBuf(out, pos, field.value);
+                pos = try encodeStringToBuf(out, pos, lit.name);
+                pos = try encodeStringToBuf(out, pos, lit.value);
+            },
         }
     }
 
-    return pos;
+    return .{ .len = pos, .required_insert_count = req_insert_count };
+}
+
+/// Encode a header block using dynamic table references when beneficial.
+pub fn encodeHeaderBlockWithDynamic(
+    out: []u8,
+    fields: []const HeaderField,
+    dynamic_table: *const DynamicTable,
+) !usize {
+    return (try encodeHeaderBlockWithDynamicInfo(out, fields, dynamic_table)).len;
 }
 
 /// Encode a header block with dynamic-table insertion (RFC 9204 §4.3).
@@ -1416,6 +1603,7 @@ pub fn encodeHeaderBlockWithDynamic(
 pub const DynamicEncodeResult = struct {
     header_block_len: usize,
     encoder_stream_len: usize,
+    required_insert_count: u64,
 };
 
 pub fn encodeHeaderBlockWithDynamicInserting(
@@ -1442,8 +1630,12 @@ pub fn encodeHeaderBlockWithDynamicInserting(
         try encodeEncoderInstructionToBuffer(encoder_stream_out, &instr_pos, instr);
         try dynamic_table.insert(field.name, field.value);
     }
-    const block_len = try encodeHeaderBlockWithDynamic(out, fields, dynamic_table);
-    return .{ .header_block_len = block_len, .encoder_stream_len = instr_pos };
+    const enc = try encodeHeaderBlockWithDynamicInfo(out, fields, dynamic_table);
+    return .{
+        .header_block_len = enc.len,
+        .encoder_stream_len = instr_pos,
+        .required_insert_count = enc.required_insert_count,
+    };
 }
 
 /// Encode an encoder instruction, advancing `pos` and erroring on overflow.
@@ -1452,23 +1644,33 @@ fn encodeEncoderInstructionToBuffer(buf: []u8, pos: *usize, instruction: Encoder
     pos.* += n;
 }
 
+pub const DynamicDecodeInfo = struct {
+    field_count: usize,
+    required_insert_count: u64,
+};
+
 /// Decode a header block that may contain dynamic table references.
 /// The dynamic table must be in the same state as when the block was encoded.
-pub fn decodeHeaderBlockWithDynamic(
+/// Returns the decoded field count and the block's Required Insert Count so the
+/// caller can emit the matching Section Acknowledgment (RFC 9204 §4.4.1).
+pub fn decodeHeaderBlockWithDynamicInfo(
     data: []const u8,
     out_fields: []HeaderField,
     dynamic_table: *const DynamicTable,
-) !usize {
+) !DynamicDecodeInfo {
     if (data.len < 2) return error.InvalidHeaderBlock;
 
     var pos: usize = 0;
 
-    // Skip Required Insert Count (8-bit prefix varint)
+    // Required Insert Count (8-bit prefix integer).
+    var required_insert_count: u64 = 0;
     if (data[pos] == 0xff) {
         pos += 1;
         const v = try decodeVarintFromBuf(data, pos);
+        required_insert_count = 255 + v.value;
         pos = v.end;
     } else {
+        required_insert_count = data[pos];
         pos += 1;
     }
 
@@ -1555,7 +1757,19 @@ pub fn decodeHeaderBlockWithDynamic(
         if (field_count >= out_fields.len) break;
     }
 
-    return field_count;
+    return .{
+        .field_count = field_count,
+        .required_insert_count = required_insert_count,
+    };
+}
+
+/// Decode a header block that may contain dynamic table references.
+pub fn decodeHeaderBlockWithDynamic(
+    data: []const u8,
+    out_fields: []HeaderField,
+    dynamic_table: *const DynamicTable,
+) !usize {
+    return (try decodeHeaderBlockWithDynamicInfo(data, out_fields, dynamic_table)).field_count;
 }
 
 // ---------------------------------------------------------------------------
@@ -1567,6 +1781,7 @@ test "encodeHeaderBlockWithDynamic: dynamic exact match" {
     defer dt.deinit();
     dt.setCapacity(4096);
     try dt.insert("x-custom", "my-value");
+    try dt.acknowledgeReceived(1);
 
     const fields = [_]HeaderField{
         .{ .name = ":method", .value = "GET" },
@@ -1591,6 +1806,7 @@ test "encodeHeaderBlockWithDynamic: dynamic name ref" {
     defer dt.deinit();
     dt.setCapacity(4096);
     try dt.insert("x-token", "abc");
+    try dt.acknowledgeReceived(1);
 
     const fields = [_]HeaderField{
         .{ .name = "x-token", .value = "xyz" },
@@ -1607,6 +1823,34 @@ test "encodeHeaderBlockWithDynamic: dynamic name ref" {
     // Value "xyz" length = 3
     try std.testing.expectEqual(@as(u8, 3), encoded[3]);
     try std.testing.expectEqual(@as(usize, 7), len); // 2 prefix + 1 instr + 1 len + 3 value
+}
+
+test "encodeHeaderBlockWithDynamic: unacknowledged entries are encoded literally" {
+    var dt = DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("x-custom", "my-value");
+
+    const fields = [_]HeaderField{
+        .{ .name = ":method", .value = "GET" },
+        .{ .name = "x-custom", .value = "my-value" },
+    };
+
+    // The peer has not acknowledged the insertion, so no dynamic reference and
+    // Required Insert Count stays zero (RFC 9204 §2.2.2).
+    var encoded: [256]u8 = undefined;
+    const enc = try encodeHeaderBlockWithDynamicInfo(&encoded, &fields, &dt);
+    try std.testing.expectEqual(@as(u64, 0), enc.required_insert_count);
+    try std.testing.expectEqual(@as(u8, 0), encoded[0]);
+    // x-custom is a literal with name reference (static name has no entry):
+    // 0x20 literal prefix, not a dynamic 0x80 reference.
+    try std.testing.expect(encoded[3] & 0x80 == 0);
+
+    // Once acknowledged, the same encoder emits a dynamic reference.
+    try dt.acknowledgeReceived(1);
+    const enc2 = try encodeHeaderBlockWithDynamicInfo(&encoded, &fields, &dt);
+    try std.testing.expectEqual(@as(u64, 1), enc2.required_insert_count);
+    try std.testing.expectEqual(@as(u8, 0x80), encoded[3]);
 }
 
 test "encodeHeaderBlockWithDynamic: roundtrip" {
@@ -1689,6 +1933,7 @@ test "encodeHeaderBlockWithDynamic: large dynamic index (>= 63)" {
         const value = std.fmt.bufPrint(&value_buf, "val-{d}", .{i}) catch unreachable;
         try dt.insert(name, value);
     }
+    try dt.acknowledgeReceived(65);
 
     // Reference the oldest entry (relative index 64)
     const fields = [_]HeaderField{
@@ -1739,7 +1984,10 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     const enc_res = try encodeHeaderBlockWithDynamicInserting(&block, &instr, &fields, &enc_table);
     const block_len = enc_res.header_block_len;
     const instr_len = enc_res.encoder_stream_len;
-    // All three fields were inserted.
+    // The peer has not acknowledged the insertions yet, so the first block must
+    // not reference them (RFC 9204 §2.2.2).
+    try std.testing.expectEqual(@as(u64, 0), enc_res.required_insert_count);
+    // :method GET is a static exact match; the other two fields were inserted.
     try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count); // :method GET is a static exact match, not inserted
 
     // Decoder side: consume the encoder stream instructions, then the block.
@@ -1756,8 +2004,11 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     try std.testing.expectEqualStrings("x-custom", decoded[2].name);
     try std.testing.expectEqualStrings("my-value", decoded[2].value);
 
-    // Second request: all fields now exactly match the dynamic table, so the
-    // encoder emits dynamic indexes and no new insert instructions.
+    // Decoder confirms receipt of both insertions (Insert Count Increment).
+    try enc_table.acknowledgeReceived(enc_table.insert_count);
+
+    // Second request: all fields now exactly match the acknowledged dynamic
+    // table, so the encoder emits dynamic indexes and no new insert instructions.
     const fields2 = [_]HeaderField{
         .{ .name = ":method", .value = "GET" },
         .{ .name = ":path", .value = "/index.html" },
@@ -1768,6 +2019,7 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     const enc_res2 = try encodeHeaderBlockWithDynamicInserting(&block2, &instr2, &fields2, &enc_table);
     const block2_len = enc_res2.header_block_len;
     try std.testing.expectEqual(@as(usize, 0), enc_res2.encoder_stream_len); // no instructions needed
+    try std.testing.expectEqual(@as(u64, 2), enc_res2.required_insert_count);
     // Insert count unchanged (nothing new inserted).
     try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count); // :method GET is a static exact match, not inserted
 

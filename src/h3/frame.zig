@@ -1,7 +1,7 @@
 //! HTTP/3 frame codec (RFC 9114).
 //!
 //! Implements HTTP/3 frame type identification, encode, and decode.
-//! QPACK compression is stubbed for future implementation.
+//! QPACK header compression lives in qpack.zig (RFC 9204).
 
 const std = @import("std");
 const buffer = @import("../quic/buffer.zig");

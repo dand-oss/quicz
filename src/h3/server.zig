@@ -34,6 +34,12 @@ pub const H3Server = struct {
     enc_stream_id: ?u64 = null,
     /// Server's QPACK decoder stream (type 0x03).
     dec_stream_id: ?u64 = null,
+    /// Required Insert Count of each dynamic section sent on a stream, keyed by
+    /// stream ID, so peer Section Acknowledgment can raise Known Received Count.
+    pending_sections: ?std.AutoHashMap(u64, u64) = null,
+    /// Number of peer insertions this decoder has already acknowledged via
+    /// Insert Count Increment, for emitting only the outstanding delta.
+    decoder_known_insert_count: u64 = 0,
 
     pub const H3ServerConnection = struct {
         /// Open a locally-initiated unidirectional stream.
@@ -71,6 +77,7 @@ pub const H3Server = struct {
     pub fn deinit(self: *H3Server) void {
         if (self.enc_table) |*t| t.deinit();
         if (self.dec_table) |*t| t.deinit();
+        if (self.pending_sections) |*m| m.deinit();
     }
 
     /// Enable QPACK dynamic table compression (RFC 9204).
@@ -80,6 +87,7 @@ pub const H3Server = struct {
     pub fn enableQpackDynamic(self: *H3Server, capacity: usize) !void {
         self.enc_table = qpack.DynamicTable.init(self.allocator);
         self.dec_table = qpack.DynamicTable.init(self.allocator);
+        self.pending_sections = std.AutoHashMap(u64, u64).init(self.allocator);
         self.enc_table.?.setCapacity(capacity);
         self.dec_table.?.setCapacity(capacity);
 
@@ -106,6 +114,37 @@ pub const H3Server = struct {
         if (self.dec_table) |*dt| {
             _ = try qpack.decodeEncoderStreamInstructions(data, dt);
         }
+    }
+
+    /// Feed peer (client) decoder stream data into the encoder-side table so
+    /// Section Acknowledgment / Insert Count Increment advance the Known
+    /// Received Count (RFC 9204 §4.4).
+    pub fn processPeerDecoderStream(self: *H3Server, data: []const u8) !void {
+        if (self.enc_table) |*et| {
+            if (self.pending_sections) |*ps| {
+                _ = try qpack.decodeDecoderStreamInstructions(data, et, ps);
+            }
+        }
+    }
+
+    /// Emit Section Acknowledgment (when the decoded section used dynamic
+    /// references) and any outstanding Insert Count Increment on the QPACK
+    /// decoder stream (RFC 9204 §4.4).
+    fn sendSectionAcknowledgement(self: *H3Server, stream_id: u64, required_insert_count: u64) !void {
+        const dec_stream_id = self.dec_stream_id orelse return;
+        var buf: [32]u8 = undefined;
+        var pos: usize = 0;
+        if (required_insert_count > 0) {
+            pos += try qpack.encodeDecoderInstruction(buf[pos..], .{ .section_ack = stream_id });
+        }
+        if (self.dec_table) |*dt| {
+            if (dt.insert_count > self.decoder_known_insert_count) {
+                const increment = dt.insert_count - self.decoder_known_insert_count;
+                pos += try qpack.encodeDecoderInstruction(buf[pos..], .{ .insert_count_increment = increment });
+                self.decoder_known_insert_count = dt.insert_count;
+            }
+        }
+        if (pos > 0) try self.conn.sendOnStream(dec_stream_id, buf[0..pos], false);
     }
 
     /// Open the server control stream and send SETTINGS.
@@ -161,10 +200,14 @@ pub const H3Server = struct {
         if (total_read == 0) return;
 
         // Decode request: dynamic table if enabled, otherwise static-only.
-        const decoded = if (self.dec_table) |*dt|
-            (try h3_request.decodeRequestWithDynamic(req_buf[0..total_read], dt)).request
-        else
-            (try h3_request.decodeRequest(req_buf[0..total_read])).request;
+        var request_required_insert_count: u64 = 0;
+        const decoded = if (self.dec_table) |*dt| blk: {
+            const result = try h3_request.decodeRequestWithDynamic(req_buf[0..total_read], dt);
+            request_required_insert_count = result.required_insert_count;
+            break :blk result.request;
+        } else (try h3_request.decodeRequest(req_buf[0..total_read])).request;
+
+        try self.sendSectionAcknowledgement(stream_id, request_required_insert_count);
 
         // Call handler
         const response = self.handler(decoded);
@@ -174,6 +217,9 @@ pub const H3Server = struct {
             var resp_buf: [8192]u8 = undefined;
             var enc_instr: [4096]u8 = undefined;
             const enc = try h3_request.encodeResponseWithDynamic(&resp_buf, response, et, &enc_instr);
+            if (self.pending_sections) |*ps| {
+                if (enc.required_insert_count > 0) try ps.put(stream_id, enc.required_insert_count);
+            }
             // Send encoder stream instructions before the response so dynamic
             // references in the header block resolve on the peer's decoder.
             if (enc.encoder_stream_len > 0) {

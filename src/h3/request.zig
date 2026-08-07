@@ -444,6 +444,7 @@ test "HTTP/3 404 response roundtrip" {
 pub const DynamicEncodeResult = struct {
     len: usize,
     encoder_stream_len: usize,
+    required_insert_count: u64,
 };
 
 pub fn encodeRequestWithDynamic(
@@ -488,14 +489,18 @@ pub fn encodeRequestWithDynamic(
         }
     }
 
-    return .{ .len = pos, .encoder_stream_len = enc.encoder_stream_len };
+    return .{
+        .len = pos,
+        .encoder_stream_len = enc.encoder_stream_len,
+        .required_insert_count = enc.required_insert_count,
+    };
 }
 
 /// Decode an HTTP/3 request using QPACK dynamic table references.
 pub fn decodeRequestWithDynamic(
     data: []const u8,
     dynamic_table: *const qpack.DynamicTable,
-) !struct { request: DecodedRequest, consumed: usize } {
+) !struct { request: DecodedRequest, consumed: usize, required_insert_count: u64 } {
     var pos: usize = 0;
     var method: ?[]const u8 = null;
     var path: ?[]const u8 = null;
@@ -512,7 +517,8 @@ pub fn decodeRequestWithDynamic(
 
     // Decode QPACK header block with dynamic table
     var fields: [32]qpack.HeaderField = undefined;
-    const field_count = try qpack.decodeHeaderBlockWithDynamic(headers_result.frame.payload, &fields, dynamic_table);
+    const decoded_block = try qpack.decodeHeaderBlockWithDynamicInfo(headers_result.frame.payload, &fields, dynamic_table);
+    const field_count = decoded_block.field_count;
 
     for (fields[0..field_count]) |field| {
         // Enforce per-field length + casing limits before use (RFC 9204 §3.1).
@@ -551,6 +557,7 @@ pub fn decodeRequestWithDynamic(
             .body = body,
         },
         .consumed = pos,
+        .required_insert_count = decoded_block.required_insert_count,
     };
 }
 
@@ -587,14 +594,18 @@ pub fn encodeResponseWithDynamic(
         }
     }
 
-    return .{ .len = pos, .encoder_stream_len = enc.encoder_stream_len };
+    return .{
+        .len = pos,
+        .encoder_stream_len = enc.encoder_stream_len,
+        .required_insert_count = enc.required_insert_count,
+    };
 }
 
 /// Decode an HTTP/3 response using QPACK dynamic table references.
 pub fn decodeResponseWithDynamic(
     data: []const u8,
     dynamic_table: *const qpack.DynamicTable,
-) !struct { response: DecodedResponse, consumed: usize } {
+) !struct { response: DecodedResponse, consumed: usize, required_insert_count: u64 } {
     var pos: usize = 0;
     var status: ?u16 = null;
     var body: ?[]const u8 = null;
@@ -608,7 +619,8 @@ pub fn decodeResponseWithDynamic(
 
     // Decode QPACK header block with dynamic table
     var fields: [32]qpack.HeaderField = undefined;
-    const field_count = try qpack.decodeHeaderBlockWithDynamic(headers_result.frame.payload, &fields, dynamic_table);
+    const decoded_block = try qpack.decodeHeaderBlockWithDynamicInfo(headers_result.frame.payload, &fields, dynamic_table);
+    const field_count = decoded_block.field_count;
 
     for (fields[0..field_count]) |field| {
         if (std.mem.eql(u8, field.name, ":status")) {
@@ -635,6 +647,7 @@ pub fn decodeResponseWithDynamic(
             .body = body,
         },
         .consumed = pos,
+        .required_insert_count = decoded_block.required_insert_count,
     };
 }
 
@@ -699,7 +712,7 @@ test "HTTP/3 response with dynamic table roundtrip" {
     try std.testing.expectEqualStrings("{\"result\":\"ok\"}", result.response.body.?);
 }
 
-test "HTTP/3 dynamic table reduces wire size" {
+test "HTTP/3 dynamic table reduces wire size after acknowledgment" {
     var dt = qpack.DynamicTable.init(std.testing.allocator);
     defer dt.deinit();
     dt.setCapacity(4096);
@@ -714,19 +727,26 @@ test "HTTP/3 dynamic table reduces wire size" {
         .extra_headers = &extra,
     };
 
-    // Baseline: literal-only encoding (no dynamic table) is larger because the
-    // long header name/value are written in full.
+    // First request: the long header is inserted on the encoder stream, but the
+    // peer has not acknowledged it, so the block itself still uses literals.
+    var buf_first: [4096]u8 = undefined;
+    var instr_first: [4096]u8 = undefined;
+    const enc_first = try encodeRequestWithDynamic(&buf_first, req, &dt, &instr_first);
+    try std.testing.expectEqual(@as(u64, 0), enc_first.required_insert_count);
+    try std.testing.expect(enc_first.encoder_stream_len > 0);
+
+    // Peer acknowledges the insertion; now dynamic indexing shrinks the block.
+    try dt.acknowledgeReceived(1);
+    var buf_acked: [4096]u8 = undefined;
+    var instr_acked: [4096]u8 = undefined;
+    const enc_acked = try encodeRequestWithDynamic(&buf_acked, req, &dt, &instr_acked);
+    try std.testing.expectEqual(@as(u64, 1), enc_acked.required_insert_count);
+    try std.testing.expect(enc_acked.len < enc_first.len);
+
+    // Baseline: literal-only encoding writes the long header in full.
     var buf_static: [4096]u8 = undefined;
     const len_static = try encodeRequest(&buf_static, req);
-
-    // With the dynamic table, the long header is inserted and then referenced
-    // by index, so the header block is smaller.
-    var buf_dynamic: [4096]u8 = undefined;
-    var instr: [4096]u8 = undefined;
-    const enc = try encodeRequestWithDynamic(&buf_dynamic, req, &dt, &instr);
-
-    // Dynamic indexing should be smaller than the literal baseline.
-    try std.testing.expect(enc.len < len_static);
+    try std.testing.expect(enc_acked.len < len_static);
 }
 
 test "HTTP/3 POST with dynamic table and body" {

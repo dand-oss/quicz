@@ -635,6 +635,21 @@ const TestChannel = struct {
         const payload = if (is_first) data[1..] else data;
         if (payload.len > 0) try target.processPeerEncoderStream(payload);
     }
+
+    /// Pump decoder-stream data from one side to the other's encoder table.
+    /// Skips the stream type prefix byte (0x03) on the first read.
+    fn syncDecoderStream(
+        self: *TestChannel,
+        dec_stream_id: u64,
+        target: anytype,
+        buf: []u8,
+        is_first: bool,
+    ) !void {
+        const data = self.readStream(dec_stream_id, buf);
+        if (data.len == 0) return;
+        const payload = if (is_first) data[1..] else data;
+        if (payload.len > 0) try target.processPeerDecoderStream(payload);
+    }
 };
 
 test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
@@ -685,22 +700,42 @@ test "H3 integration: QPACK dynamic table control flow with multiple rounds" {
     };
 
     const stream1 = try client.sendRequestDynamic(request);
+    // Round 1 uses literals: the insertions are not acknowledged yet, so no
+    // pending section is recorded (Required Insert Count stays zero).
+    try std.testing.expectEqual(@as(usize, 0), client.pending_sections.?.count());
     try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, false);
     try server.handleRequestStream(stream1);
+    try std.testing.expectEqual(@as(usize, 0), server.pending_sections.?.count());
     try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, false);
     const resp1 = try client.receiveResponseDynamic(stream1);
     try std.testing.expectEqual(@as(u16, 200), resp1.status);
     try std.testing.expectEqualStrings("OK", resp1.body.?);
 
+    // Round 1 decoder-stream acks: each side raises the peer's Known Received
+    // Count to the number of insertions it received.
+    try channel.syncDecoderStream(client.dec_stream_id.?, &server, &enc_buf, true);
+    try channel.syncDecoderStream(server.dec_stream_id.?, &client, &enc_buf, true);
+    try std.testing.expectEqual(server.enc_table.?.insert_count, server.enc_table.?.known_received_count);
+    try std.testing.expectEqual(client.enc_table.?.insert_count, client.enc_table.?.known_received_count);
+
     // Round 2: same headers -- table already has entries, no new inserts.
-    // Dynamic references must still resolve via the synced decoder table.
+    // The entries are acknowledged, so the request now uses dynamic references
+    // (a pending section with non-zero Required Insert Count is recorded).
     const stream2 = try client.sendRequestDynamic(request);
+    try std.testing.expectEqual(@as(usize, 1), client.pending_sections.?.count());
     try channel.syncEncoderStream(client.enc_stream_id.?, &server, &enc_buf, false);
     try server.handleRequestStream(stream2);
+    try std.testing.expectEqual(@as(usize, 1), server.pending_sections.?.count());
     try channel.syncEncoderStream(server.enc_stream_id.?, &client, &enc_buf, false);
     const resp2 = try client.receiveResponseDynamic(stream2);
     try std.testing.expectEqual(@as(u16, 200), resp2.status);
     try std.testing.expectEqualStrings("OK", resp2.body.?);
+
+    // Round 2 decoder-stream acks clear both pending sections.
+    try channel.syncDecoderStream(client.dec_stream_id.?, &server, &enc_buf, false);
+    try channel.syncDecoderStream(server.dec_stream_id.?, &client, &enc_buf, false);
+    try std.testing.expectEqual(@as(usize, 0), server.pending_sections.?.count());
+    try std.testing.expectEqual(@as(usize, 0), client.pending_sections.?.count());
 
     // Verify dynamic tables have accumulated entries on both sides.
     try std.testing.expect(server.enc_table.?.entryCount() >= 2);
