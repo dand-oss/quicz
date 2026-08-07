@@ -64664,3 +64664,16 @@ test "connection multipath enable and path management" {
         mp.deinit();
     }
 }
+
+test "connectionStats reports stream bytes sent and recovery counters" {
+    var client = try Connection.init(std.testing.allocator, .client, .{});
+    defer client.deinit();
+    try client.installOneRttTrafficSecrets(.{ .local = [_]u8{0x11} ** 32, .peer = [_]u8{0x22} ** 32 });
+    try client.confirmHandshake();
+    const sid = try client.openStream();
+    try client.sendOnStream(sid, "hello", false);
+    const stats = client.connectionStats();
+    try std.testing.expectEqual(@as(u64, 5), stats.stream_bytes_sent);
+    try std.testing.expect(stats.congestion_window > 0);
+    try std.testing.expectEqual(@as(u64, 0), stats.packets_lost);
+}

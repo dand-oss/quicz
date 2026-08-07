@@ -9,7 +9,6 @@ pub const ns_per_s = duration.ns_per_s;
 
 pub const timer_granularity_ns: u64 = @intCast(duration.ns_per_ms); // kGranularity = 1ms (RFC 9002)
 
-
 pub const time_threshold_numerator: u64 = 9;
 pub const time_threshold_denominator: u64 = 8;
 pub const persistent_congestion_threshold: u64 = 3;
@@ -87,6 +86,10 @@ pub const Recovery = struct {
     /// Largest acknowledged packet number (updated by Connection on each ACK).
     /// Used for packet-number-based recovery detection (RFC 6582).
     largest_acked_packet_number: ?u64 = null,
+    /// Cumulative number of packets declared lost (diagnostics/metrics).
+    packets_lost: u64 = 0,
+    /// Cumulative number of retransmitted packets (diagnostics/metrics).
+    packets_retransmitted: u64 = 0,
     ssthresh: usize = std.math.maxInt(usize),
     congestion_algorithm: connection_config.CongestionAlgorithm = .new_reno,
     cubic: cubic_module.CubicState = .{},
@@ -283,8 +286,14 @@ pub const Recovery = struct {
     }
 
     pub fn onPacketLostWithNumber(self: *Recovery, bytes: usize, lost_packet_sent_time_nanos: i64, now_nanos: i64, lost_pn: ?u64) void {
+        self.packets_lost +%= 1;
         self.removeBytesInFlight(bytes);
         self.onCongestionEventWithPacketNumber(lost_packet_sent_time_nanos, now_nanos, lost_pn);
+    }
+
+    /// A packet was retransmitted (resend of a lost/timed-out packet).
+    pub fn recordRetransmission(self: *Recovery) void {
+        self.packets_retransmitted +%= 1;
     }
 
     /// Enter NewReno congestion recovery for a loss or ECN-CE congestion event.
@@ -349,7 +358,6 @@ pub const Recovery = struct {
     pub fn ptoNs(self: *Recovery) u64 {
         return self.backedOffPtoNs(true);
     }
-
 
     /// Apply a changed maximum datagram size to congestion-control math.
     ///

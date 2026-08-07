@@ -654,6 +654,28 @@ const PeerStreamDataBlockedState = struct {
 /// The current implementation only moves unencrypted frame payload bytes through
 /// the public API. Packet protection, TLS, and network I/O are intentionally
 /// outside this connection skeleton.
+/// Aggregate connection health/diagnostics counters for observability.
+pub const ConnectionStats = struct {
+    /// Application-level stream bytes sent by this endpoint.
+    stream_bytes_sent: u64,
+    /// Application-level stream bytes received by this endpoint.
+    stream_bytes_received: u64,
+    /// Total bytes currently in flight (ack-eliciting, application space).
+    total_bytes_in_flight: usize,
+    /// Smoothed RTT in microseconds (application space).
+    smoothed_rtt_us: u64,
+    /// RTT variance in microseconds (application space).
+    rttvar_us: u64,
+    /// Current congestion window in bytes (application space).
+    congestion_window: usize,
+    /// Cumulative packets declared lost (application space).
+    packets_lost: u64,
+    /// Cumulative retransmissions (application space).
+    packets_retransmitted: u64,
+    /// Largest acknowledged packet number (application space).
+    largest_acked_packet_number: ?u64,
+};
+
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     config: Config,
@@ -1376,6 +1398,22 @@ pub const Connection = struct {
             .application => self.recovery_state.smoothed_rtt_ns,
         };
         return @intCast(duration_mod.nanosToMillis(@intCast(ns)));
+    }
+
+    /// Return aggregate connection health/diagnostics counters.
+    pub fn connectionStats(self: Connection) ConnectionStats {
+        const app = self.recovery_state;
+        return .{
+            .stream_bytes_sent = self.sent_stream_data_bytes,
+            .stream_bytes_received = self.recv_data_bytes,
+            .total_bytes_in_flight = self.totalBytesInFlight(),
+            .smoothed_rtt_us = @intCast(app.smoothed_rtt_ns / @as(u64, duration_mod.ns_per_us)),
+            .rttvar_us = @intCast(app.rttvar_ns / @as(u64, duration_mod.ns_per_us)),
+            .congestion_window = app.congestion_window,
+            .packets_lost = app.packets_lost,
+            .packets_retransmitted = app.packets_retransmitted,
+            .largest_acked_packet_number = app.largest_acked_packet_number,
+        };
     }
 
     /// Return the current time-threshold loss deadline for one packet number space.
@@ -8823,6 +8861,8 @@ pub const Connection = struct {
                 now_nanos,
                 loss_result.largest_lost_packet_number,
             );
+            // A lost packet is requeued for retransmission, so count it here.
+            packet_space.recovery_state.recordRetransmission();
         }
         if (congestion_probe_needed) {
             self.armCongestionProbeIfPendingData(space);
