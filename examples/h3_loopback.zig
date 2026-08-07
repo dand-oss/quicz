@@ -175,12 +175,14 @@ fn feedPeerDecoderStream(conn: *Connection, stream_id: u64, buf: []u8, opened: *
     if (payload.len > 0) try target.processPeerDecoderStream(payload);
 }
 
-/// Assert that the peer control stream carries the stream type and SETTINGS.
-fn readPeerControlStream(conn: *Connection, stream_id: u64, buf: []u8) !void {
+/// Assert that the peer control stream carries the stream type and SETTINGS,
+/// then feed it into the peer control-stream processor.
+fn readPeerControlStream(conn: *Connection, stream_id: u64, buf: []u8, target: anytype) !void {
     const n = (try conn.recvOnStream(stream_id, buf)) orelse return error.MissingControlStream;
     if (n < 2) return error.MissingControlStream;
     try require(buf[0] == 0x00); // control stream type
     try require(buf[1] == 0x04); // SETTINGS frame type
+    try target.processPeerControlStream(buf[0..n]);
 }
 
 pub fn main() !void {
@@ -341,13 +343,9 @@ pub fn main() !void {
 
     var h3srv = try quicz.h3_server.H3Server.init(&server_adapter, handler, allocator, 4096, 8);
     defer h3srv.deinit();
-    try h3srv.setPeerMaxTableCapacity(4096);
-    try h3srv.enableQpackDynamic(4096);
 
     var h3cli = try quicz.h3_client.H3Client.init(&client_adapter, allocator, 4096, 8);
     defer h3cli.deinit();
-    try h3cli.setPeerMaxTableCapacity(4096);
-    try h3cli.enableQpackDynamic(4096);
 
     var stream_buf: [8192]u8 = undefined;
     var srv_enc_opened = false;
@@ -355,14 +353,21 @@ pub fn main() !void {
     var cli_enc_opened = false;
     var cli_dec_opened = false;
 
-    // Deliver control + QPACK uni streams in both directions.
+    // Deliver the control streams first so SETTINGS arrive before the QPACK
+    // streams are opened.
     try pumpClientToServer(io, allocator, &now, &client, &client_socket, &server, &server_socket, &recv_buf);
-    try readPeerControlStream(&server, h3cli.control_stream_id.?, &stream_buf);
+    try readPeerControlStream(&server, h3cli.control_stream_id.?, &stream_buf, &h3srv);
+    try pumpServerToClient(io, allocator, &now, &server, &server_socket, &client, &client_socket, &recv_buf);
+    try readPeerControlStream(&client, h3srv.control_stream_id.?, &stream_buf, &h3cli);
+
+    try h3srv.enableQpackDynamic(4096);
+    try h3cli.enableQpackDynamic(4096);
+
+    // Deliver the QPACK encoder/decoder streams in both directions.
+    try pumpClientToServer(io, allocator, &now, &client, &client_socket, &server, &server_socket, &recv_buf);
     try feedPeerEncoderStream(&server, h3cli.enc_stream_id.?, &stream_buf, &srv_enc_opened, &h3srv);
     try feedPeerDecoderStream(&server, h3cli.dec_stream_id.?, &stream_buf, &srv_dec_opened, &h3srv);
-
     try pumpServerToClient(io, allocator, &now, &server, &server_socket, &client, &client_socket, &recv_buf);
-    try readPeerControlStream(&client, h3srv.control_stream_id.?, &stream_buf);
     try feedPeerEncoderStream(&client, h3srv.enc_stream_id.?, &stream_buf, &cli_enc_opened, &h3cli);
     try feedPeerDecoderStream(&client, h3srv.dec_stream_id.?, &stream_buf, &cli_dec_opened, &h3cli);
 

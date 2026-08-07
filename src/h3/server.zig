@@ -177,6 +177,24 @@ pub const H3Server = struct {
         try self.unblockBlockedRequests();
     }
 
+    /// Process the peer's control stream: parse SETTINGS and apply the
+    /// advertised QPACK table capacity (RFC 9114 §6.2.1 / RFC 9204 §3.2.3).
+    pub fn processPeerControlStream(self: *H3Server, data: []const u8) !void {
+        var pos: usize = 0;
+        if (pos < data.len and data[pos] == 0x00) pos += 1; // stream type
+        while (pos < data.len) {
+            const frame = try h3_frame.decodeFrame(data[pos..]);
+            if (frame.frame.frame_type == @intFromEnum(h3_frame.FrameType.settings)) {
+                const settings = try h3_connection.Settings.decodePayload(frame.frame.payload);
+                if (settings.qpack_max_table_capacity != 0) {
+                    try self.setPeerMaxTableCapacity(settings.qpack_max_table_capacity);
+                }
+            }
+            if (frame.consumed == 0) break;
+            pos += frame.consumed;
+        }
+    }
+
     /// Feed peer (client) decoder stream data into the encoder-side table so
     /// Section Acknowledgment / Insert Count Increment advance the Known
     /// Received Count (RFC 9204 §4.4).
@@ -562,4 +580,63 @@ test "H3Server GOAWAY" {
     try server.sendGoaway(4);
     try std.testing.expect(server.goaway_sent);
     try std.testing.expectEqual(@as(?u64, 4), server.goaway_last_stream_id);
+}
+
+test "H3Server applies peer QPACK capacity from control stream" {
+    const MockCtx = struct {
+        next_uni_id: u64 = 3,
+
+        fn openUni(ctx: *anyopaque) !u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const id = self.next_uni_id;
+            self.next_uni_id += 4;
+            return id;
+        }
+        fn send(ctx: *anyopaque, stream_id: u64, data: []const u8, fin: bool) !void {
+            _ = ctx;
+            _ = stream_id;
+            _ = data;
+            _ = fin;
+        }
+        fn recv(ctx: *anyopaque, stream_id: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = stream_id;
+            _ = buf;
+            return null;
+        }
+    };
+
+    var mock = MockCtx{};
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            return .{ .status = 200 };
+        }
+    }.handle;
+
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    // Control stream: type + SETTINGS with qpack_max_table_capacity=2048.
+    var settings_payload: [32]u8 = undefined;
+    const settings = h3_connection.Settings{ .qpack_max_table_capacity = 2048 };
+    const sp_len = try settings.encodePayload(&settings_payload);
+    var control: [64]u8 = undefined;
+    control[0] = 0x00;
+    control[1] = 0x04; // SETTINGS
+    control[2] = @intCast(sp_len);
+    @memcpy(control[3 .. 3 + sp_len], settings_payload[0..sp_len]);
+
+    try server.processPeerControlStream(control[0 .. 3 + sp_len]);
+    try std.testing.expectEqual(@as(u64, 2048), server.peer_qpack_max_table_capacity);
+
+    // enableQpackDynamic caps the encoder capacity at the peer's value.
+    try server.enableQpackDynamic(4096);
+    try std.testing.expectEqual(@as(usize, 2048), server.enc_table.?.max_capacity);
 }

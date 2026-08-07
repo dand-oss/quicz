@@ -176,6 +176,32 @@ pub const H3Client = struct {
         }
     }
 
+    /// Process the peer's control stream: parse SETTINGS (apply the advertised
+    /// QPACK table capacity) and GOAWAY (graceful shutdown) frames (RFC 9114
+    /// §6.2.1).
+    pub fn processPeerControlStream(self: *H3Client, data: []const u8) !void {
+        var pos: usize = 0;
+        if (pos < data.len and data[pos] == 0x00) pos += 1; // stream type
+        while (pos < data.len) {
+            const frame = try h3_frame.decodeFrame(data[pos..]);
+            switch (frame.frame.frame_type) {
+                @intFromEnum(h3_frame.FrameType.settings) => {
+                    const settings = try h3_connection.Settings.decodePayload(frame.frame.payload);
+                    if (settings.qpack_max_table_capacity != 0) {
+                        try self.setPeerMaxTableCapacity(settings.qpack_max_table_capacity);
+                    }
+                },
+                @intFromEnum(h3_frame.FrameType.goaway) => {
+                    const last_stream_id = try h3_connection.H3Connection.decodeGoawayPayload(frame.frame.payload);
+                    try self.processGoaway(last_stream_id);
+                },
+                else => {},
+            }
+            if (frame.consumed == 0) break;
+            pos += frame.consumed;
+        }
+    }
+
     /// Feed peer (server) decoder stream data into the encoder-side table so
     /// Section Acknowledgment / Insert Count Increment advance the Known
     /// Received Count (RFC 9204 §4.4).
@@ -562,4 +588,70 @@ test "H3Client sends request and receives response" {
     const decoded_req = try h3_request.decodeRequest(mock.request_data.items);
     try std.testing.expectEqualStrings("GET", decoded_req.request.method);
     try std.testing.expectEqualStrings("/test", decoded_req.request.path);
+}
+
+test "H3Client applies SETTINGS and GOAWAY from control stream" {
+    const MockCtx = struct {
+        fn openBidi(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 0;
+        }
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 2;
+        }
+        fn send(ctx: *anyopaque, stream_id: u64, data: []const u8, fin: bool) !void {
+            _ = ctx;
+            _ = stream_id;
+            _ = data;
+            _ = fin;
+        }
+        fn recv(ctx: *anyopaque, stream_id: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = stream_id;
+            _ = buf;
+            return null;
+        }
+    };
+
+    var mock = MockCtx{};
+    var conn = H3Client.H3ClientConnection{
+        .openBidiStreamFn = MockCtx.openBidi,
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+
+    var client = try H3Client.init(&conn, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+
+    // Control stream: type + SETTINGS(2048) + GOAWAY(4).
+    var settings_payload: [32]u8 = undefined;
+    const settings = h3_connection.Settings{ .qpack_max_table_capacity = 2048 };
+    const sp_len = try settings.encodePayload(&settings_payload);
+    var goaway_payload: [8]u8 = undefined;
+    const gp_len = try h3_connection.H3Connection.encodeGoawayPayload(&goaway_payload, 4);
+
+    var control: [128]u8 = undefined;
+    var pos: usize = 0;
+    control[pos] = 0x00; // control stream type
+    pos += 1;
+    control[pos] = 0x04; // SETTINGS
+    pos += 1;
+    control[pos] = @intCast(sp_len);
+    pos += 1;
+    @memcpy(control[pos .. pos + sp_len], settings_payload[0..sp_len]);
+    pos += sp_len;
+    control[pos] = 0x07; // GOAWAY
+    pos += 1;
+    control[pos] = @intCast(gp_len);
+    pos += 1;
+    @memcpy(control[pos .. pos + gp_len], goaway_payload[0..gp_len]);
+    pos += gp_len;
+
+    try client.processPeerControlStream(control[0..pos]);
+    try std.testing.expectEqual(@as(u64, 2048), client.peer_qpack_max_table_capacity);
+    try std.testing.expect(client.goaway_received);
+    try std.testing.expectEqual(@as(u64, 4), client.goaway_last_stream_id);
 }
