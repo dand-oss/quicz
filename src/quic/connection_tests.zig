@@ -64677,3 +64677,31 @@ test "connectionStats reports stream bytes sent and recovery counters" {
     try std.testing.expect(stats.congestion_window > 0);
     try std.testing.expectEqual(@as(u64, 0), stats.packets_lost);
 }
+
+test "0-RTT end-to-end early data STREAM reaches server before handshake" {
+    const original_dcid = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    var client = try Connection.init(std.testing.allocator, .client, .{});
+    defer client.deinit();
+    try client.installZeroRttTrafficSecrets(.{ .local = secrets.client.secret });
+    try client.confirmHandshake();
+
+    const sid = try client.openStream();
+    try client.sendOnStream(sid, "early-data", false);
+    const dg = try client.pollProtectedZeroRttDatagramWithInstalledKeys(0, &[_]u8{ 0xaa, 0xbb, 0xcc, 0xdd }, &[_]u8{ 0x11, 0x22, 0x33, 0x44 }) orelse return error.NoZeroRttDatagram;
+    defer std.testing.allocator.free(dg);
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.installZeroRttTrafficSecrets(.{ .peer = secrets.client.secret });
+    try server.confirmHandshake();
+    try server.validatePeerAddress();
+    try server.acceptZeroRtt();
+    try server.processProtectedZeroRttDatagramWithInstalledKeys(0, dg);
+
+    var buf: [64]u8 = undefined;
+    const n = try server.recvOnStream(sid, &buf);
+    try std.testing.expectEqual(@as(?usize, 10), n);
+    try std.testing.expectEqualStrings("early-data", buf[0..n.?]);
+}
