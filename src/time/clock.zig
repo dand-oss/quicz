@@ -1,45 +1,43 @@
 //! Cross-platform monotonic clock with nanosecond precision.
-//! Cross-platform monotonic clock with nanosecond precision.
 //!
-//! Uses clock_gettime(CLOCK.MONOTONIC) on POSIX (Linux, macOS, iOS, FreeBSD...).
+//! Uses `clock_gettime(CLOCK.MONOTONIC)` via the raw syscall on Linux (no libc
+//! dependency) and `mach_absolute_time` on Darwin (libc is always linked there),
+//! so the library builds on Linux without explicitly linking libc.
 //! Windows support pending (QueryPerformanceCounter).
 
 const std = @import("std");
 const builtin = @import("builtin");
-const posix = std.posix;
-
-const timespec = extern struct {
-    sec: isize,
-    nsec: isize,
-};
-
-extern "c" fn clock_gettime(clk_id: c_int, tp: *timespec) c_int;
-
-const CLOCK_MONOTONIC: c_int = switch (builtin.os.tag) {
-    .macos, .ios, .watchos, .tvos, .visionos => 6,
-    .linux => 1,
-    .freebsd => 4,
-    .netbsd => 3,
-    .openbsd => 3,
-    .dragonfly => 4,
-    else => 1,
-};
 
 /// Monotonic clock timestamp in nanoseconds.
 /// Returns 0 if the clock is unavailable (should never happen on supported platforms).
 pub fn nanoTimestamp() u64 {
     switch (builtin.os.tag) {
-        .linux, .macos, .ios, .watchos, .tvos, .visionos, .freebsd, .netbsd, .openbsd, .dragonfly => {},
-        .windows => {
-            // Windows: QueryPerformanceCounter (TODO)
-            return 0;
+        .linux => {
+            var ts: std.os.linux.timespec = undefined;
+            _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+            return @intCast(@as(i128, ts.sec) * std.time.ns_per_s + ts.nsec);
+        },
+        .macos, .ios, .watchos, .tvos, .visionos => {
+            const MachTimebaseInfo = extern struct { numer: u32, denom: u32 };
+            const mt = struct {
+                extern fn mach_timebase_info(info: *MachTimebaseInfo) i32;
+                extern fn mach_absolute_time() u64;
+                var tb: MachTimebaseInfo = undefined;
+                var inited: bool = false;
+            };
+            if (!mt.inited) {
+                _ = mt.mach_timebase_info(&mt.tb);
+                mt.inited = true;
+            }
+            return mt.mach_absolute_time() * mt.tb.numer / mt.tb.denom;
+        },
+        .freebsd, .netbsd, .openbsd, .dragonfly => {
+            var ts: std.posix.timespec = undefined;
+            _ = std.c.clock_gettime(1, @ptrCast(&ts));
+            return @intCast(@as(i128, ts.sec) * std.time.ns_per_s + ts.nsec);
         },
         else => return 0,
     }
-    var ts: timespec = undefined;
-    const rc = clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (rc != 0) return 0;
-    return @intCast(@as(i128, ts.sec) * std.time.ns_per_s + ts.nsec);
 }
 
 /// Compute elapsed nanoseconds between two timestamps.
@@ -54,7 +52,6 @@ pub fn elapsed(start_ns: u64, end_ns: u64) u64 {
 
 test "nanoTimestamp returns non-zero on supported platforms" {
     const t1 = nanoTimestamp();
-    // On supported platforms, should be non-zero
     if (builtin.os.tag == .linux or builtin.os.tag == .macos) {
         try std.testing.expect(t1 > 0);
     }
