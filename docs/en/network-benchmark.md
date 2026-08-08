@@ -61,7 +61,7 @@ var client = try Client.init(allocator, io, .{
 > known codegen bug for P-256/P-384/Ed25519 signature verification on
 > x86_64). An OpenSSL-generated RSA cert verifies correctly.
 
-## Docker cross-host validation (validated 2026-08-08)
+## 2. Docker cross-host validation (validated 2026-08-08)
 
 Two quicz Linux containers on the same Docker bridge network act as separate
 hosts (distinct network namespaces, real non-loopback packet path). Run the
@@ -95,7 +95,28 @@ docker's software forwarding), not a quicz protocol defect — re-run on bare
 metal for production numbers. Note: the ECDSA P-256 test certificate works on
 Linux x86_64 ReleaseFast for the runtime handshake path.
 
-## 2. Emulating loss / delay / congestion with netem
+## 3. Emulating loss / delay / congestion with netem
+
+Validated in Docker containers (Linux x86_64, `--cap-add NET_ADMIN` +
+`apt-get install iproute2`) by shaping the client egress:
+
+```bash
+# 1% loss: quicz recovers — 8/8 concurrent cross-host handshakes complete
+tc qdisc add dev eth0 root netem loss 1%
+/root/qmc-bench-x64 client 192.168.215.2
+# ok=8/8 avg_connect=279ms aggregate=0.7 Mbit/s
+
+# 5% loss + 20ms delay: the demo's 8 concurrent clients partially time out
+# (no per-client handshake deadline in the benchmark), so some fail.
+# Run a single client, or lower loss, for a cleaner high-loss recovery check.
+tc qdisc add dev eth0 root netem loss 5% delay 20ms
+```
+
+`error.UnknownConnectionId` log lines under loss are server-side retransmissions
+toward a reaped/unknown connection; the connection still completes. Recovery
+(PTO retransmission) is exercised and works at 1% loss; the 5% case is bounded
+by the benchmark's lack of a handshake timeout rather than a protocol defect.
+
 
 On a Linux host, shape the network path between the two hosts. `netem` is a
 `tc` qdisc on the egress interface:
@@ -132,7 +153,7 @@ With a fixed delay, the aggregate throughput is bounded by
 server/client transport params) and allowing the congestion window to grow is
 what you tune here.
 
-## 3. Multi-client concurrency (cross-host)
+## 4. Multi-client concurrency (cross-host)
 
 `multi_client_bench` already measures N concurrent handshakes + aggregate
 throughput. Run it across hosts to include real RTT:
@@ -152,7 +173,7 @@ multi-client bench: ok=8/8 avg_connect=3 ms  aggregate=628.6 Mbit/s
 Across a real network, `avg_connect` becomes RTT-bound (≈ 1.5× RTT for the
 handshake) and aggregate throughput reflects the path's `cwnd/RTT` limits.
 
-## 4. Recording results
+## 5. Recording results
 
 Log each run with platform + commit metadata, mirroring the loopback suite's
 `bench_results/<UTC timestamp>_<commit>.log` convention:
@@ -163,7 +184,7 @@ mkdir -p "$BENCH_DIR"
 # capture: host specs, tc shape, quicz version, raw output
 ```
 
-## 5. Checklist before trusting a number
+## 6. Checklist before trusting a number
 
 1. Build `-Doptimize=ReleaseFast` (never Debug).
 2. Sanity-check the raw path with `iperf3`; quicz should land within a
