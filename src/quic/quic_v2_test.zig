@@ -134,7 +134,7 @@ test "QUIC v2: selectMutualVersion prefers v2 when both support it" {
 
 test "QUIC v2: selectMutualVersion falls back to v1 when v2 not offered" {
     const preferred = [_]packet.Version{ .v2, .v1 };
-    const offered = [_]packet.Version{ .v1 };
+    const offered = [_]packet.Version{.v1};
 
     const selected = connection_version.selectMutualVersion(&preferred, &offered);
     try std.testing.expect(selected != null);
@@ -142,8 +142,8 @@ test "QUIC v2: selectMutualVersion falls back to v1 when v2 not offered" {
 }
 
 test "QUIC v2: selectMutualVersion returns null when no common version" {
-    const preferred = [_]packet.Version{ .v2 };
-    const offered = [_]packet.Version{ .v1 };
+    const preferred = [_]packet.Version{.v2};
+    const offered = [_]packet.Version{.v1};
 
     const selected = connection_version.selectMutualVersion(&preferred, &offered);
     try std.testing.expect(selected == null);
@@ -256,7 +256,7 @@ test "QUIC v2: validateLocalVersionInformation accepts consistent v2 config" {
 }
 
 test "QUIC v2: validateLocalVersionInformation rejects v2 not in available" {
-    const available = [_]packet.Version{ .v1 };
+    const available = [_]packet.Version{.v1};
     try std.testing.expectError(
         error.InvalidPacket,
         connection_version.validateLocalVersionInformation(.client, .{

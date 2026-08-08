@@ -137,11 +137,18 @@ pub fn main() !void {
     var srv_packets = std.atomic.Value(u64).init(0);
 
     var server_ctx = ServerContext{
-        .socket = &server_socket, .io = io, .server = &server,
-        .done = &done, .bytes_received = &bytes_received, .client_addr = server_addr,
-        .srv_recv_ns = &srv_recv_ns, .srv_process_ns = &srv_process_ns,
-        .srv_read_ns = &srv_read_ns, .srv_ack_build_ns = &srv_ack_build_ns,
-        .srv_ack_send_ns = &srv_ack_send_ns, .srv_packets = &srv_packets,
+        .socket = &server_socket,
+        .io = io,
+        .server = &server,
+        .done = &done,
+        .bytes_received = &bytes_received,
+        .client_addr = server_addr,
+        .srv_recv_ns = &srv_recv_ns,
+        .srv_process_ns = &srv_process_ns,
+        .srv_read_ns = &srv_read_ns,
+        .srv_ack_build_ns = &srv_ack_build_ns,
+        .srv_ack_send_ns = &srv_ack_send_ns,
+        .srv_packets = &srv_packets,
     };
 
     const srv_thread = try std.Thread.spawn(.{}, serverThread, .{&server_ctx});

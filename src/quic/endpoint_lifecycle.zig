@@ -1945,9 +1945,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
-
     // -----------------------------------------------------------------------
     // Unified feedDatagram + pending work + crypto backend drive step
     // -----------------------------------------------------------------------
@@ -1963,10 +1960,15 @@ pub const EndpointConnectionLifecycle = struct {
         feed_options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkNextDeadlineResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections, now_nanos,
+            receive_connections,
+            now_nanos,
         );
         return .{
             .feed = feed,
@@ -1986,10 +1988,15 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramPollResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections, now_nanos,
+            receive_connections,
+            now_nanos,
         );
         return .{
             .feed = feed,
@@ -2011,10 +2018,15 @@ pub const EndpointConnectionLifecycle = struct {
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkDatagramDrainResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(
-            receive_connections, now_nanos,
+            receive_connections,
+            now_nanos,
         );
         return .{
             .feed = feed,
@@ -2039,20 +2051,25 @@ pub const EndpointConnectionLifecycle = struct {
         deadline_connections: []const EndpointConnectionView,
     ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveNextDeadlineResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         var backend: ?EndpointCryptoBackendDriveNextDeadlineResult = null;
         switch (feed) {
             .routed => backend = try self.driveCryptoBackendStep(
-                spaces, drive_views,
+                spaces,
+                drive_views,
                 .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline },
-                compatibilities, deadline_connections,
+                compatibilities,
+                deadline_connections,
             ),
             else => {},
         }
         return .{ .feed = feed, .backend = backend };
     }
-
 
     /// Unified feed + crypto backend drive + installed-key drain (no pending work).
     pub fn feedStepWithCryptoInstalledKeyDrain(
@@ -2070,13 +2087,22 @@ pub const EndpointConnectionLifecycle = struct {
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedCryptoBackendDriveDatagramDrainResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         switch (feed) {
             .routed => backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
-                spaces, drive_views, crypto_opts, compatibilities,
-                poll_views, now_nanos, out,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
+                out,
             ),
             else => {},
         }
@@ -2121,8 +2147,13 @@ pub const EndpointConnectionLifecycle = struct {
                     var sweep = EndpointCryptoBackendDriveSweepResult{};
                     for (drive_views) |view| {
                         const progress = self.driveCryptoBackendStepInner(
-                            view.connection_id, view.connection, spaces,
-                            view.backend, view.scratch, crypto_opts, compatibilities,
+                            view.connection_id,
+                            view.connection,
+                            spaces,
+                            view.backend,
+                            view.scratch,
+                            crypto_opts,
+                            compatibilities,
                         ) catch |err| {
                             self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
                             return err;
@@ -2176,8 +2207,13 @@ pub const EndpointConnectionLifecycle = struct {
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
             switch (feed) {
                 .routed => backend = try self.driveCryptoBackendStepWithPoll(
-                    spaces, drive_views, crypto_opts, compatibilities,
-                    poll_views, now_nanos, poll_space,
+                    spaces,
+                    drive_views,
+                    crypto_opts,
+                    compatibilities,
+                    poll_views,
+                    now_nanos,
+                    poll_space,
                 ),
                 else => {},
             }
@@ -2224,8 +2260,14 @@ pub const EndpointConnectionLifecycle = struct {
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
             switch (feed) {
                 .routed => backend = try self.driveCryptoBackendStepWithDrain(
-                    spaces, drive_views, crypto_opts, compatibilities,
-                    poll_views, now_nanos, poll_space, out,
+                    spaces,
+                    drive_views,
+                    crypto_opts,
+                    compatibilities,
+                    poll_views,
+                    now_nanos,
+                    poll_space,
+                    out,
                 ),
                 else => {},
             }
@@ -2253,14 +2295,23 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(receive_connections, now_nanos);
         var backend: ?EndpointCryptoBackendDriveDatagramResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
             switch (feed) {
                 .routed => backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(
-                    spaces, drive_views, crypto_opts, compatibilities, poll_views, now_nanos,
+                    spaces,
+                    drive_views,
+                    crypto_opts,
+                    compatibilities,
+                    poll_views,
+                    now_nanos,
                 ),
                 else => {},
             }
@@ -2289,14 +2340,24 @@ pub const EndpointConnectionLifecycle = struct {
         out: []EndpointPolledDatagramResult,
     ) EndpointProtectedDatagramError!EndpointFeedPendingWorkCryptoBackendDatagramDrainResult {
         const feed = try self.feedDatagramWithInstalledKeysAcrossConnections(
-            receive_connections, path, now_nanos, datagram, feed_options,
+            receive_connections,
+            path,
+            now_nanos,
+            datagram,
+            feed_options,
         );
         const pending_work = try self.processPendingWorkAcrossConnections(receive_connections, now_nanos);
         var backend: ?EndpointCryptoBackendDriveDatagramDrainResult = null;
         if (pending_work.idle_retired_count == 0 and pending_work.close_retired_count == 0) {
             switch (feed) {
                 .routed => backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
-                    spaces, drive_views, crypto_opts, compatibilities, poll_views, now_nanos, out,
+                    spaces,
+                    drive_views,
+                    crypto_opts,
+                    compatibilities,
+                    poll_views,
+                    now_nanos,
+                    out,
                 ),
                 else => {},
             }
@@ -2308,7 +2369,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
 
     /// Feed one installed-key datagram, process pending work, then poll output.
     ///
@@ -2412,7 +2472,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadline(connection_id, connection),
         };
     }
-
 
     /// Feed one installed-key datagram, process pending work, then drain output.
     ///
@@ -2521,8 +2580,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
     /// Feed an installed-key datagram, then poll installed-key output.
     ///
     /// This is the socket-facing receive-to-output step for paths that do not
@@ -2594,8 +2651,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
-
 
     /// Feed an installed-key datagram, then drain installed-key output.
     ///
@@ -2712,7 +2767,6 @@ pub const EndpointConnectionLifecycle = struct {
         );
     }
 
-
     /// Feed an installed-key datagram, drive TLS backends, then poll output.
     ///
     /// This is a socket-loop receive-to-backend-to-output step for callers that
@@ -2783,8 +2837,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
     /// Feed an installed-key datagram, drive TLS backends, then drain output.
     ///
     /// This is the bounded-output form of
@@ -2821,8 +2873,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
-
 
     /// Feed an installed-key datagram, drive close-propagating backends, then poll output.
     ///
@@ -2891,8 +2941,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
     /// Feed an installed-key datagram, drive close-propagating backends, then drain output.
     ///
     /// Backend peer transport-parameter errors return before any output slot is
@@ -2927,8 +2975,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
-
 
     /// Feed an installed-key datagram, drive compatible-version backends, then poll output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndPollDatagram(
@@ -2996,8 +3042,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
     /// Feed an installed-key datagram, drive compatible-version backends, then drain output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
@@ -3030,8 +3074,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
-
 
     /// Feed an installed-key datagram, drive compatible-version close path, then poll output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
@@ -3099,8 +3141,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
-
     /// Feed an installed-key datagram, drive compatible-version close path, then drain output.
     pub fn feedDatagramWithInstalledKeysAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndDrainDatagrams(
         self: *EndpointConnectionLifecycle,
@@ -3133,9 +3173,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(receive_connections),
         };
     }
-
-
-
 
     /// Process a client-side Version Negotiation response and retire old routes.
     ///
@@ -3549,7 +3586,6 @@ pub const EndpointConnectionLifecycle = struct {
         try self.armRecoveryTimerFromConnection(connection_id, connection);
         return progress;
     }
-
 
     /// Drive one TLS backend, then poll one caller-keyed long-header output.
     ///
@@ -4140,7 +4176,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-
     // -----------------------------------------------------------------------
     // Unified crypto backend drive step
     // -----------------------------------------------------------------------
@@ -4224,39 +4259,59 @@ pub const EndpointConnectionLifecycle = struct {
             if (opts.close_on_error) {
                 if (single) {
                     return connection.driveCryptoBackendInSpaceWithCompatibleVersionOrClose(
-                        spaces[0], backend, scratch, compatibilities,
+                        spaces[0],
+                        backend,
+                        scratch,
+                        compatibilities,
                     );
                 }
                 return connection.driveCryptoBackendAcrossSpacesWithCompatibleVersionOrClose(
-                    spaces, backend, scratch, compatibilities,
+                    spaces,
+                    backend,
+                    scratch,
+                    compatibilities,
                 );
             }
             if (single) {
                 return connection.driveCryptoBackendInSpaceWithCompatibleVersion(
-                    spaces[0], backend, scratch, compatibilities,
+                    spaces[0],
+                    backend,
+                    scratch,
+                    compatibilities,
                 );
             }
             return connection.driveCryptoBackendAcrossSpacesWithCompatibleVersion(
-                spaces, backend, scratch, compatibilities,
+                spaces,
+                backend,
+                scratch,
+                compatibilities,
             );
         }
         if (opts.close_on_error) {
             if (single) {
                 return connection.driveCryptoBackendInSpaceOrClose(
-                    spaces[0], backend, scratch,
+                    spaces[0],
+                    backend,
+                    scratch,
                 );
             }
             return connection.driveCryptoBackendAcrossSpacesOrClose(
-                spaces, backend, scratch,
+                spaces,
+                backend,
+                scratch,
             );
         }
         if (single) {
             return connection.driveCryptoBackendInSpace(
-                spaces[0], backend, scratch,
+                spaces[0],
+                backend,
+                scratch,
             );
         }
         return connection.driveCryptoBackendAcrossSpaces(
-            spaces, backend, scratch,
+            spaces,
+            backend,
+            scratch,
         );
     }
 
@@ -4277,8 +4332,13 @@ pub const EndpointConnectionLifecycle = struct {
         var sweep = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
             const progress = self.driveCryptoBackendStepInner(
-                view.connection_id, view.connection, spaces,
-                view.backend, view.scratch, opts, compatibilities,
+                view.connection_id,
+                view.connection,
+                spaces,
+                view.backend,
+                view.scratch,
+                opts,
+                compatibilities,
             ) catch |err| {
                 self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
                 if (opts.close_on_error and spaces.len == 1 and
@@ -4288,7 +4348,10 @@ pub const EndpointConnectionLifecycle = struct {
                     return .{
                         .backend = sweep,
                         .datagram = try self.pollDatagramForBackendClose(
-                            view.connection_id, poll_views, now_nanos, poll_space,
+                            view.connection_id,
+                            poll_views,
+                            now_nanos,
+                            poll_space,
                         ),
                         .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
                     };
@@ -4300,10 +4363,14 @@ pub const EndpointConnectionLifecycle = struct {
         }
         const retained_before = countRetainedHandshakeSpaces(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsAfterBackendDrive(
-            poll_views, now_nanos, poll_space,
+            poll_views,
+            now_nanos,
+            poll_space,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
-            &sweep.progress, retained_before, countRetainedHandshakeSpaces(poll_views),
+            &sweep.progress,
+            retained_before,
+            countRetainedHandshakeSpaces(poll_views),
         );
         return .{
             .backend = sweep,
@@ -4330,8 +4397,13 @@ pub const EndpointConnectionLifecycle = struct {
         var sweep = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
             const progress = self.driveCryptoBackendStepInner(
-                view.connection_id, view.connection, spaces,
-                view.backend, view.scratch, opts, compatibilities,
+                view.connection_id,
+                view.connection,
+                spaces,
+                view.backend,
+                view.scratch,
+                opts,
+                compatibilities,
             ) catch |err| {
                 self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
                 if (opts.close_on_error and spaces.len == 1 and
@@ -4341,7 +4413,11 @@ pub const EndpointConnectionLifecycle = struct {
                     return .{
                         .backend = sweep,
                         .drain = try self.drainDatagramsForBackendClose(
-                            view.connection_id, poll_views, now_nanos, poll_space, out,
+                            view.connection_id,
+                            poll_views,
+                            now_nanos,
+                            poll_space,
+                            out,
                         ),
                         .next_deadline = self.nextDeadlineAcrossPollConnections(poll_views),
                     };
@@ -4353,10 +4429,15 @@ pub const EndpointConnectionLifecycle = struct {
         }
         const retained_before = countRetainedHandshakeSpaces(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsAfterBackendDrive(
-            poll_views, now_nanos, poll_space, out,
+            poll_views,
+            now_nanos,
+            poll_space,
+            out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
-            &sweep.progress, retained_before, countRetainedHandshakeSpaces(poll_views),
+            &sweep.progress,
+            retained_before,
+            countRetainedHandshakeSpaces(poll_views),
         );
         return .{
             .backend = sweep,
@@ -4381,8 +4462,13 @@ pub const EndpointConnectionLifecycle = struct {
         var sweep = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
             const progress = self.driveCryptoBackendStepInner(
-                view.connection_id, view.connection, spaces,
-                view.backend, view.scratch, opts, compatibilities,
+                view.connection_id,
+                view.connection,
+                spaces,
+                view.backend,
+                view.scratch,
+                opts,
+                compatibilities,
             ) catch |err| {
                 self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
                 if (opts.close_on_error and spaces.len == 1 and
@@ -4392,7 +4478,9 @@ pub const EndpointConnectionLifecycle = struct {
                     return .{
                         .backend = sweep,
                         .datagram = try self.pollDatagramWithInstalledKeyOptionsForBackendClose(
-                            view.connection_id, poll_views, now_nanos,
+                            view.connection_id,
+                            poll_views,
+                            now_nanos,
                         ),
                         .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
                     };
@@ -4404,10 +4492,12 @@ pub const EndpointConnectionLifecycle = struct {
         }
         const retained_before = countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const datagram = try self.pollDatagramAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views, now_nanos,
+            poll_views,
+            now_nanos,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
-            &sweep.progress, retained_before,
+            &sweep.progress,
+            retained_before,
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
         );
         return .{
@@ -4434,8 +4524,13 @@ pub const EndpointConnectionLifecycle = struct {
         var sweep = EndpointCryptoBackendDriveSweepResult{};
         for (drive_views) |view| {
             const progress = self.driveCryptoBackendStepInner(
-                view.connection_id, view.connection, spaces,
-                view.backend, view.scratch, opts, compatibilities,
+                view.connection_id,
+                view.connection,
+                spaces,
+                view.backend,
+                view.scratch,
+                opts,
+                compatibilities,
             ) catch |err| {
                 self.refreshRecoveryTimerAfterConnectionError(view.connection_id, view.connection);
                 if (opts.close_on_error and spaces.len == 1 and
@@ -4445,7 +4540,10 @@ pub const EndpointConnectionLifecycle = struct {
                     return .{
                         .backend = sweep,
                         .drain = try self.drainDatagramsWithInstalledKeyOptionsForBackendClose(
-                            view.connection_id, poll_views, now_nanos, out,
+                            view.connection_id,
+                            poll_views,
+                            now_nanos,
+                            out,
                         ),
                         .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
                     };
@@ -4457,10 +4555,13 @@ pub const EndpointConnectionLifecycle = struct {
         }
         const retained_before = countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views);
         const drain = self.drainDatagramsAcrossConnectionsWithInstalledKeyOptionsAfterBackendDrive(
-            poll_views, now_nanos, out,
+            poll_views,
+            now_nanos,
+            out,
         );
         markHandshakeSpaceDiscardedIfCountDrops(
-            &sweep.progress, retained_before,
+            &sweep.progress,
+            retained_before,
             countRetainedHandshakeSpacesWithInstalledKeyOptions(poll_views),
         );
         return .{
@@ -4469,7 +4570,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossInstalledKeyPollConnections(poll_views),
         };
     }
-
 
     /// Drive one backend, then select the next endpoint-visible deadline.
     ///
@@ -4495,15 +4595,6 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .output = .select_deadline }, &.{}, &deadline_connections);
     }
-
-
-
-
-
-
-
-
-
 
     /// Drive one backend, then poll one installed-key datagram.
     ///
@@ -4559,7 +4650,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-
     /// Drive one close-propagating backend, then select the next deadline.
     ///
     /// This is the single-connection no-output form for socket loops that want
@@ -4584,8 +4674,6 @@ pub const EndpointConnectionLifecycle = struct {
         }};
         return self.driveCryptoBackendStep(&.{space}, &drive_views, .{ .close_on_error = true, .output = .select_deadline }, &.{}, &deadline_connections);
     }
-
-
 
     /// Drive one close-propagating backend, then poll one installed-key datagram.
     ///
@@ -4667,7 +4755,6 @@ pub const EndpointConnectionLifecycle = struct {
         return progress;
     }
 
-
     /// Drive compatible-version crypto backends across caller-owned connections.
     ///
     /// This is the sweep form of
@@ -4694,8 +4781,6 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return result;
     }
-
-
 
     /// Drive one compatible-version backend across ordered packet number
     /// spaces, then select the next deadline.
@@ -4905,7 +4990,11 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStep(
-                spaces, drive_views, .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline }, compatibilities, deadline_connections,
+                spaces,
+                drive_views,
+                .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline },
+                compatibilities,
+                deadline_connections,
             ),
         };
     }
@@ -4932,8 +5021,13 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithPoll(
-                spaces, drive_views, crypto_opts, compatibilities,
-                poll_views, now_nanos, poll_space,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
+                poll_space,
             ),
         };
     }
@@ -4961,8 +5055,14 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithDrain(
-                spaces, drive_views, crypto_opts, compatibilities,
-                poll_views, now_nanos, poll_space, out,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
+                poll_space,
+                out,
             ),
         };
     }
@@ -4985,8 +5085,12 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(
-                spaces, drive_views, crypto_opts, compatibilities,
-                poll_views, now_nanos,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
             ),
         };
     }
@@ -5010,8 +5114,13 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .pending_work = pending_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
-                spaces, drive_views, crypto_opts, compatibilities,
-                poll_views, now_nanos, out,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
+                out,
             ),
         };
     }
@@ -5196,24 +5305,6 @@ pub const EndpointConnectionLifecycle = struct {
             .next_deadline = self.nextDeadlineAcrossReceiveConnections(pending_connections),
         };
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     fn pendingWorkSweepFromSingle(pending_work: EndpointPendingWorkResult) EndpointPendingWorkSweepResult {
         return .{
@@ -6403,7 +6494,8 @@ pub const EndpointConnectionLifecycle = struct {
         poll_views: []const EndpointConnectionInstalledKeyPollView,
     ) Error!?EndpointDueWorkCryptoBackendDatagramResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
-            deadline_connections, now_nanos,
+            deadline_connections,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -6414,7 +6506,12 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .due_work = due_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(
-                spaces, drive_views, crypto_opts, compatibilities, poll_views, now_nanos,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
             ),
         };
     }
@@ -6432,7 +6529,8 @@ pub const EndpointConnectionLifecycle = struct {
         out: []EndpointPolledDatagramResult,
     ) Error!?EndpointDueWorkCryptoBackendDatagramDrainResult {
         const due_work = (try self.processDueDeadlineAcrossConnectionsAndPollDatagramWithInstalledKeyOptions(
-            deadline_connections, now_nanos,
+            deadline_connections,
+            now_nanos,
         )) orelse return null;
         if (due_work.datagram != null or
             due_work.pending_work.idle_retired != null or
@@ -6443,7 +6541,13 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .due_work = due_work,
             .backend = try self.driveCryptoBackendStepWithInstalledKeyDrain(
-                spaces, drive_views, crypto_opts, compatibilities, poll_views, now_nanos, out,
+                spaces,
+                drive_views,
+                crypto_opts,
+                compatibilities,
+                poll_views,
+                now_nanos,
+                out,
             ),
         };
     }
@@ -6475,14 +6579,14 @@ pub const EndpointConnectionLifecycle = struct {
         return .{
             .due_work = due_work,
             .backend = try self.driveCryptoBackendStep(
-                spaces, drive_views,
+                spaces,
+                drive_views,
                 .{ .close_on_error = crypto_opts.close_on_error, .compatible_version = crypto_opts.compatible_version, .output = .select_deadline },
-                compatibilities, deadline_connections,
+                compatibilities,
+                deadline_connections,
             ),
         };
     }
-
-
 
     /// Process a due recovery deadline with caller-selected installed-key output.
     ///
@@ -6914,11 +7018,6 @@ pub const EndpointConnectionLifecycle = struct {
             },
         };
     }
-
-
-
-
-
 
     fn processDueDeadlineAndPollDatagramForBackendOutput(
         self: *EndpointConnectionLifecycle,
@@ -8139,7 +8238,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
     /// Process the earliest due deadline, then drive close-propagating TLS backends.
     ///
     /// Backend errors are returned only after a due deadline that did not emit a
@@ -8258,7 +8356,6 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.driveCryptoBackendStepWithInstalledKeyPoll(&.{backend_space}, drive_views, .{ .compatible_version = true }, compatibilities, poll_views, now_nanos),
         };
     }
-
 
     /// Process the earliest due deadline, then drive compatible-version close path.
     pub fn processDueDeadlineAcrossConnectionsAndDriveCryptoBackendsInSpaceWithCompatibleVersionOrCloseAndPollDatagram(
@@ -9981,8 +10078,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-
-
     /// Process caller-keyed 1-RTT input, then drain caller-keyed output.
     ///
     /// This is the bounded-output form of
@@ -10076,8 +10171,6 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return result;
     }
-
-
 
     /// Poll one explicit-key-phase protected 1-RTT datagram and refresh timers.
     ///
@@ -10287,8 +10380,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-
-
     /// Process explicit key-update 1-RTT input, then drain explicit-phase output.
     ///
     /// This is the bounded-output form of
@@ -10386,8 +10477,6 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return result;
     }
-
-
 
     /// Poll one caller-owned key-phase protected 1-RTT datagram and refresh timers.
     ///
@@ -10590,8 +10679,6 @@ pub const EndpointConnectionLifecycle = struct {
         } else null;
     }
 
-
-
     /// Process caller-owned key-phase 1-RTT input, then drain stateful output.
     ///
     /// This is the bounded-output form of
@@ -10685,8 +10772,6 @@ pub const EndpointConnectionLifecycle = struct {
         }
         return result;
     }
-
-
 
     /// Poll one installed-key protected Handshake datagram and refresh timers.
     ///
@@ -11162,8 +11247,6 @@ pub const EndpointConnectionLifecycle = struct {
         return result;
     }
 
-
-
     /// Process installed-key Handshake input, drive backend, and select a wakeup.
     ///
     /// This is the no-output TLS-owned Handshake receive/backend step for
@@ -11279,8 +11362,6 @@ pub const EndpointConnectionLifecycle = struct {
             .backend = try self.driveCryptoBackendStepWithDrain(&.{.handshake}, &drive_views, .{}, &.{}, &poll_views, now_nanos, .handshake, out),
         };
     }
-
-
 
     /// Poll one installed-key protected 0-RTT datagram and refresh timers.
     ///
@@ -11774,7 +11855,6 @@ pub const EndpointConnectionLifecycle = struct {
         return route;
     }
 
-
     /// Route and process one installed-key protected 1-RTT datagram, commit a
     /// validated path migration, and propagate close on frame errors.
     ///
@@ -12009,7 +12089,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
     /// Process installed-key 1-RTT input, drive a backend, and poll output.
     ///
     /// This is the direct receive-to-backend-to-output step for socket loops
@@ -12228,7 +12307,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
     /// Process installed-key 1-RTT input, drive a backend, and drain output.
     ///
     /// This is the bounded-output receive-to-backend step for socket loops
@@ -12445,7 +12523,6 @@ pub const EndpointConnectionLifecycle = struct {
         };
     }
 
-
     /// Process one installed-key 1-RTT datagram, then poll installed-key output.
     ///
     /// This is the single-connection receive-to-output loop step for callers
@@ -12513,7 +12590,6 @@ pub const EndpointConnectionLifecycle = struct {
             .datagram = out_datagram,
         } else null;
     }
-
 
     /// Route/process one installed-key 1-RTT datagram with close propagation, then poll output.
     ///
@@ -12641,8 +12717,6 @@ pub const EndpointConnectionLifecycle = struct {
             out,
         );
     }
-
-
 
     /// Retire all routes and any armed recovery timer for one connection handle.
     pub fn retireConnection(self: *EndpointConnectionLifecycle, connection_id: u64) EndpointConnectionRetireResult {

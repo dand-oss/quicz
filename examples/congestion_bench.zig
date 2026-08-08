@@ -37,7 +37,6 @@ const AlgoResult = struct {
 };
 
 pub fn main() !void {
-
     std.debug.print("=== Congestion Control Comparison Benchmark ===\n", .{});
     std.debug.print("Path: RTT={d}ms, MDS={d}B, loss every {d}ms, duration={d}ms\n\n", .{
         initial_rtt_ns,

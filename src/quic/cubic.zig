@@ -7,8 +7,6 @@
 const std = @import("std");
 const duration = @import("../time/duration.zig");
 
-
-
 /// CUBIC state tracked per packet number space.
 pub const CubicState = struct {
     /// Window size at the last loss event (W_max).
@@ -97,7 +95,6 @@ pub const CubicState = struct {
     /// TCP-friendly window estimate (RFC 9438 §4.2).
     /// W_est(t) = W_max * β + 3(1-β)/(1+β) × (t / RTT)
     /// Returns the estimate in segments (floating point).
-
     /// W_cubic(t) = C * (t - K)^3 + W_max, in segments (RFC 9438 §4.1).
     pub fn wCubicSegments(self: CubicState, t_sec: f64) f64 {
         const diff = t_sec - self.k;

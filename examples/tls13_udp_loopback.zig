@@ -94,7 +94,12 @@ pub fn main() !void {
     // 1. Client → ClientHello over UDP.
     _ = try client.driveCryptoBackendInSpace(.initial, client_backend.cryptoBackend(), &scratch);
     const client_dgram = (try client.pollProtectedLongCryptoDatagramInSpace(
-        .initial, 40, &original_dcid, &client_scid, &[_]u8{}, secrets.client,
+        .initial,
+        40,
+        &original_dcid,
+        &client_scid,
+        &[_]u8{},
+        secrets.client,
     )) orelse return error.UnexpectedState;
     defer allocator.free(client_dgram);
     try client_socket.send(io, &server_socket.address, client_dgram);
@@ -107,14 +112,21 @@ pub fn main() !void {
 
     // 3. Server → ServerHello (Initial) + EE/Cert/CV/Finished (Handshake) over UDP.
     const server_init_dgram = (try server.pollProtectedLongCryptoDatagramInSpace(
-        .initial, 42, &client_scid, &server_scid, &[_]u8{}, secrets.server,
+        .initial,
+        42,
+        &client_scid,
+        &server_scid,
+        &[_]u8{},
+        secrets.server,
     )) orelse return error.UnexpectedState;
     defer allocator.free(server_init_dgram);
     try server_socket.send(io, &client_socket.address, server_init_dgram);
 
     _ = try server.driveCryptoBackendInSpace(.handshake, server_backend.cryptoBackend(), &scratch);
     const server_hs_dgram = (try server.pollProtectedHandshakeDatagramWithInstalledKeys(
-        43, &client_scid, &server_scid,
+        43,
+        &client_scid,
+        &server_scid,
     )) orelse return error.UnexpectedState;
     defer allocator.free(server_hs_dgram);
     try server_socket.send(io, &client_socket.address, server_hs_dgram);
@@ -130,7 +142,9 @@ pub fn main() !void {
     const client_hs_prog = try client.driveCryptoBackendInSpace(.handshake, client_backend.cryptoBackend(), &scratch);
     try require(client_hs_prog.outbound_bytes > 0);
     const client_hs_dgram = (try client.pollProtectedHandshakeDatagramWithInstalledKeys(
-        46, &server_scid, &client_scid,
+        46,
+        &server_scid,
+        &client_scid,
     )) orelse return error.UnexpectedState;
     defer allocator.free(client_hs_dgram);
     try client_socket.send(io, &server_socket.address, client_hs_dgram);

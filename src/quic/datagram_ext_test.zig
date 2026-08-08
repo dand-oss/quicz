@@ -92,7 +92,6 @@ test "RFC 9221: datagram does not block stream delivery" {
     try std.testing.expectEqual(@as(usize, 1), conn.pending_datagrams.items.len);
 }
 
-
 test "RFC 9221: datagram at max size accepted" {
     var conn = try Connection.init(std.testing.allocator, .client, .{
         .max_datagram_frame_size = 100,

@@ -78,12 +78,15 @@ pub fn main() !void {
             // Client: poll datagrams → feed to server
             while (true) {
                 const dg = client.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &server_dcid,
+                    @intCast(nanoTime()),
+                    &server_dcid,
                 ) catch break orelse break;
                 defer allocator.free(dg);
                 pn += 1;
                 _ = server.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), client_dcid.len, dg,
+                    @intCast(nanoTime()),
+                    client_dcid.len,
+                    dg,
                 ) catch {};
             }
 
@@ -97,11 +100,14 @@ pub fn main() !void {
             // Server: send ACKs → feed to client
             while (true) {
                 const ack = server.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &client_dcid,
+                    @intCast(nanoTime()),
+                    &client_dcid,
                 ) catch break orelse break;
                 defer allocator.free(ack);
                 _ = client.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), server_dcid.len, ack,
+                    @intCast(nanoTime()),
+                    server_dcid.len,
+                    ack,
                 ) catch {};
             }
         }
@@ -142,12 +148,15 @@ pub fn main() !void {
             try client.sendOnStream(echo_stream, &echo_payload, false);
             while (true) {
                 const dg = client.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &server_dcid,
+                    @intCast(nanoTime()),
+                    &server_dcid,
                 ) catch break orelse break;
                 defer allocator.free(dg);
                 echo_pn += 1;
                 _ = server.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), client_dcid.len, dg,
+                    @intCast(nanoTime()),
+                    client_dcid.len,
+                    dg,
                 ) catch {};
             }
 
@@ -156,12 +165,15 @@ pub fn main() !void {
             try server.sendOnStream(echo_stream, &echo_payload, false);
             while (true) {
                 const dg = server.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &client_dcid,
+                    @intCast(nanoTime()),
+                    &client_dcid,
                 ) catch break orelse break;
                 defer allocator.free(dg);
                 echo_pn += 1;
                 _ = client.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), server_dcid.len, dg,
+                    @intCast(nanoTime()),
+                    server_dcid.len,
+                    dg,
                 ) catch {};
             }
 
@@ -178,7 +190,6 @@ pub fn main() !void {
         std.debug.print("  P99   = {d:.1} us\n", .{@as(f64, @floatFromInt(latencies[echo_iters * 99 / 100])) / 1000.0});
         std.debug.print("  P99.9 = {d:.1} us\n", .{@as(f64, @floatFromInt(latencies[echo_iters * 999 / 1000])) / 1000.0});
     }
-
 
     // --- Benchmark 3: Multi-stream throughput ---
     {
@@ -209,11 +220,14 @@ pub fn main() !void {
             }
             while (true) {
                 const dg = client.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &server_dcid,
+                    @intCast(nanoTime()),
+                    &server_dcid,
                 ) catch break orelse break;
                 defer allocator.free(dg);
                 _ = server.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), client_dcid.len, dg,
+                    @intCast(nanoTime()),
+                    client_dcid.len,
+                    dg,
                 ) catch {};
             }
             for (0..num_streams) |si| {
@@ -225,11 +239,14 @@ pub fn main() !void {
             }
             while (true) {
                 const ack = server.pollProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), &client_dcid,
+                    @intCast(nanoTime()),
+                    &client_dcid,
                 ) catch break orelse break;
                 defer allocator.free(ack);
                 _ = client.processProtectedShortDatagramWithInstalledKeys(
-                    @intCast(nanoTime()), server_dcid.len, ack,
+                    @intCast(nanoTime()),
+                    server_dcid.len,
+                    ack,
                 ) catch {};
             }
         }

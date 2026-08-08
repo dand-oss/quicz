@@ -537,7 +537,6 @@ fn measureLoss(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 }
 
-
 /// One real handshake on fresh stack connections; returns elapsed nanoseconds.
 fn measureOneHandshakeNs(allocator: std.mem.Allocator, io: std.Io) !u64 {
     var client_socket = try bindLoopback(io);
@@ -668,8 +667,6 @@ fn measureStreamChurn(allocator: std.mem.Allocator, io: std.Io) !void {
         seconds,
     });
 }
-
-
 
 /// Server thread that drains received DATAGRAM frames (RFC 9221) and counts bytes.
 fn serverDatagramThread(ctx: *SrvCtx) void {
@@ -808,7 +805,6 @@ const WorkerCtx = struct {
     allocator: std.mem.Allocator,
     bytes_out: *std.atomic.Value(usize),
 };
-
 
 /// One connection transfer as a std.Io concurrent task (returns Cancelable!void).
 /// Used to test whether std.Io's async multiplexing (Group.concurrent on a shared

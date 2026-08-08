@@ -27,7 +27,6 @@ const server_id = "echo.example.com:4433";
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
-
     std.debug.print("=== 0-RTT Session Resumption Echo Demo ===\n\n", .{});
 
     // ---------------------------------------------------------------

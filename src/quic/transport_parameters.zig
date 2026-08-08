@@ -471,11 +471,9 @@ test "transport parameters reject max_idle_timeout exceeding cap" {
     // Exactly the cap (1<<32 ms ~ 49 days) is allowed.
     try validateIntegerParameter(.max_idle_timeout, max_idle_timeout_ms_cap);
     // One above the cap is rejected.
-    try std.testing.expectError(error.InvalidParameterValue,
-        validateIntegerParameter(.max_idle_timeout, max_idle_timeout_ms_cap + 1));
+    try std.testing.expectError(error.InvalidParameterValue, validateIntegerParameter(.max_idle_timeout, max_idle_timeout_ms_cap + 1));
     // A hostile near-max varint (would overflow millisToNanos) is rejected.
-    try std.testing.expectError(error.InvalidParameterValue,
-        validateIntegerParameter(.max_idle_timeout, std.math.maxInt(u64)));
+    try std.testing.expectError(error.InvalidParameterValue, validateIntegerParameter(.max_idle_timeout, std.math.maxInt(u64)));
 }
 
 test "reserved transport parameter identifiers follow RFC 9000 greasing pattern" {

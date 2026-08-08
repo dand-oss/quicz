@@ -126,8 +126,12 @@ pub fn main() !void {
     var bytes_received = std.atomic.Value(usize).init(0);
 
     var server_ctx = ServerContext{
-        .socket = &server_socket, .io = io, .server = &server,
-        .done = &done, .bytes_received = &bytes_received, .client_addr = server_addr,
+        .socket = &server_socket,
+        .io = io,
+        .server = &server,
+        .done = &done,
+        .bytes_received = &bytes_received,
+        .client_addr = server_addr,
     };
 
     const srv_thread = try std.Thread.spawn(.{}, serverThread, .{&server_ctx});
