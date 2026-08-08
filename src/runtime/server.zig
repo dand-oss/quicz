@@ -179,10 +179,14 @@ pub const Server = struct {
         cert_der: []const u8,
         private_key: []const u8,
         prefer_chacha20: bool = false,
+        /// IPv4 address to bind. Defaults to loopback (127.0.0.1); set to
+        /// `.{0,0,0,0}` to listen on all interfaces (cross-host benchmarks).
+        bind_addr: ?[4]u8 = null,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Server {
-        var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = config.port } };
+        const local_ip = if (config.bind_addr) |ip| ip else [_]u8{ 127, 0, 0, 1 };
+        var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = local_ip, .port = config.port } };
         const socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
         enlargeSocketReceiveBuffer(socket.handle);
         const server_ep = try ServerEndpoint.initWithCapacity(allocator, 16, .{

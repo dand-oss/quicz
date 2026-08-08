@@ -593,6 +593,22 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe_h3_runtime_loopback);
 
+    const exe_multi_client_bench = b.addExecutable(.{
+        .name = "quicz-multi-client-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/multi_client_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_multi_client_bench);
+    const run_multi_client_bench = b.step("run-multi-client-bench", "Multi-client concurrent connection benchmark (handshake + aggregate throughput)");
+    const run_multi_client_bench_cmd = b.addRunArtifact(exe_multi_client_bench);
+    run_multi_client_bench.dependOn(&run_multi_client_bench_cmd.step);
+
     // Pure-Zig TLS 1.3 with EndpointConnectionLifecycle ownership
     const exe_tls13_lifecycle_loopback = b.addExecutable(.{
         .name = "quicz-tls13-lifecycle-loopback",
