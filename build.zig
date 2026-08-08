@@ -770,7 +770,8 @@ pub fn build(b: *std.Build) void {
     exe_tls_openssl_probe.root_module.link_libc = true;
     exe_tls_openssl_probe.root_module.linkSystemLibrary("ssl", .{});
     exe_tls_openssl_probe.root_module.linkSystemLibrary("crypto", .{});
-    b.installArtifact(exe_tls_openssl_probe);
+    // Not installed by default: requires OpenSSL 3.4+ QUIC API (probe tool).
+    // b.installArtifact(exe_tls_openssl_probe);
 
     // OpenSSL-backed TLS backend adapter executable
     const exe_tls_openssl_backend_adapter = b.addExecutable(.{
@@ -801,7 +802,8 @@ pub fn build(b: *std.Build) void {
     exe_tls_openssl_backend_adapter.root_module.link_libc = true;
     exe_tls_openssl_backend_adapter.root_module.linkSystemLibrary("ssl", .{});
     exe_tls_openssl_backend_adapter.root_module.linkSystemLibrary("crypto", .{});
-    b.installArtifact(exe_tls_openssl_backend_adapter);
+    // Not installed by default: requires OpenSSL 3.4+ QUIC API (probe tool).
+    // b.installArtifact(exe_tls_openssl_backend_adapter);
 
     // OpenSSL client/server TLS transcript executable
     const exe_tls_openssl_pair_transcript = b.addExecutable(.{
@@ -828,7 +830,8 @@ pub fn build(b: *std.Build) void {
     exe_tls_openssl_pair_transcript.root_module.link_libc = true;
     exe_tls_openssl_pair_transcript.root_module.linkSystemLibrary("ssl", .{});
     exe_tls_openssl_pair_transcript.root_module.linkSystemLibrary("crypto", .{});
-    b.installArtifact(exe_tls_openssl_pair_transcript);
+    // Not installed by default: requires OpenSSL 3.4+ QUIC API (probe tool).
+    // b.installArtifact(exe_tls_openssl_pair_transcript);
 
     // Graceful close executable
     const exe_graceful_close = b.addExecutable(.{

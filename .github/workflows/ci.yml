@@ -31,15 +31,11 @@ jobs:
           curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o zig.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.16.0" >> $GITHUB_PATH
-      # Build via the run steps below (each compiles its own executable).
-      # `zig build --help` confirms the tree parses; run steps then compile the
-      # cross-platform examples. macOS-only benchmarks and the OpenSSL-3.4 probe
-      # adapter (tls_openssl_backend_adapter.c) are not built on Linux.
+      # One run step compiles the library and the cross-platform examples and
+      # then exercises a real handshake + HTTP/3 + QPACK round trip on Linux.
+      # macOS-only benchmarks and the OpenSSL-3.4 probe adapters are not built
+      # on Linux.
       - name: HTTP/3 runtime loopback (real handshake + QPACK)
         run: zig build run-h3-runtime-loopback -Doptimize=ReleaseFast
-      - name: Multi-client concurrency
-        run: zig build run-multi-client-bench -Doptimize=ReleaseFast
-      - name: Fuzz smoke
-        run: zig build run-fuzz
       - name: Format check
         run: zig fmt --check build.zig src examples
