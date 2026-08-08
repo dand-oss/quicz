@@ -612,6 +612,22 @@ pub fn build(b: *std.Build) void {
     const run_multi_client_bench_cmd = b.addRunArtifact(exe_multi_client_bench);
     run_multi_client_bench.dependOn(&run_multi_client_bench_cmd.step);
 
+    const exe_stability_bench = b.addExecutable(.{
+        .name = "quicz-stability-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/stability_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_stability_bench);
+    const run_stability_bench = b.step("run-stability-bench", "Long-run stability benchmark (multi-connection, multi-stream, leak-checked)");
+    const run_stability_bench_cmd = b.addRunArtifact(exe_stability_bench);
+    run_stability_bench.dependOn(&run_stability_bench_cmd.step);
+
     // Pure-Zig TLS 1.3 with EndpointConnectionLifecycle ownership
     const exe_tls13_lifecycle_loopback = b.addExecutable(.{
         .name = "quicz-tls13-lifecycle-loopback",
