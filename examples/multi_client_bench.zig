@@ -62,6 +62,23 @@ const Result = struct {
     ok: bool = false,
 };
 
+/// Remote server address for the client tasks (loopback by default; set to a
+/// peer container's IP in cross-host mode).
+var g_server_host: [4]u8 = .{ 127, 0, 0, 1 };
+
+fn parseIpv4(s: []const u8) ![4]u8 {
+    var out: [4]u8 = undefined;
+    var it = std.mem.splitScalar(u8, s, '.');
+    var i: usize = 0;
+    while (it.next()) |part| {
+        if (i >= 4) return error.BadAddress;
+        out[i] = try std.fmt.parseInt(u8, part, 10);
+        i += 1;
+    }
+    if (i != 4) return error.BadAddress;
+    return out;
+}
+
 /// Server echo handler: one per connection (server.serve model); read the full
 /// stream to EOF and echo every chunk back.
 fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
@@ -77,6 +94,7 @@ fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
 
 fn clientTask(io: std.Io, idx: usize, results: []Result) std.Io.Cancelable!void {
     var client = Client.init(std.heap.c_allocator, io, .{
+        .server_host = g_server_host,
         .server_port = port,
         .server_name = "localhost",
         .alpn = &alpn,
@@ -118,21 +136,8 @@ fn clientTask(io: std.Io, idx: usize, results: []Result) std.Io.Cancelable!void 
     results[idx].ok = received == payload.len;
 }
 
-pub fn main() !void {
-    var threaded = std.Io.Threaded.init(std.heap.c_allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var server = try Server.init(std.heap.c_allocator, io, .{
-        .port = port,
-        .alpn = &alpn,
-        .cert_der = &certificate_der,
-        .private_key = &server_private_key,
-    });
-    defer server.deinit();
-    try server.serve(&echoHandler);
-    std.debug.print("multi-client bench: server on 127.0.0.1:{d}, clients={d}\n", .{ port, num_clients });
-
+fn runClients(io: std.Io, host: [4]u8) !void {
+    g_server_host = host;
     var results: [num_clients]Result = .{Result{}} ** num_clients;
     var group: std.Io.Group = .init;
     for (0..num_clients) |i| {
@@ -150,9 +155,69 @@ pub fn main() !void {
         std.debug.print("  client {d}: connect={d} ms  {d:.1} Mbit/s\n", .{ i, r.connect_ms, r.throughput_mbps });
     }
     std.debug.print(
-        "multi-client bench: ok={d}/{d} avg_connect={d} ms  aggregate={d:.1} Mbit/s\n",
-        .{ total_ok, num_clients, sum_connect / num_clients, sum_mbps },
+        "multi-client bench: ok={d}/{d} avg_connect={d} ms  aggregate={d:.1} Mbit/s (host={}.{}.{}.{})\n",
+        .{ total_ok, num_clients, sum_connect / num_clients, sum_mbps, host[0], host[1], host[2], host[3] },
     );
-    server.stop();
     if (total_ok != num_clients) return error.BenchFailed;
+}
+
+/// Modes:
+///   (no args)   — loopback: server + N clients in one process
+///   server      — server only, listening on 0.0.0.0 (run in a server container)
+///   client HOST — N clients connecting to HOST (run in a client container)
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
+    var it = std.process.Args.Iterator.init(init.minimal.args);
+    var mode: enum { loopback, server, client } = .loopback;
+    var remote_host: [4]u8 = .{ 127, 0, 0, 1 };
+    var idx: usize = 0;
+    while (it.next()) |a| {
+        if (idx == 1) {
+            if (std.mem.eql(u8, a, "server")) {
+                mode = .server;
+            } else if (std.mem.eql(u8, a, "client")) {
+                mode = .client;
+            }
+        } else if (idx == 2 and mode == .client) {
+            remote_host = parseIpv4(a) catch remote_host;
+        }
+        idx += 1;
+    }
+
+    if (mode == .server) {
+        var server = try Server.init(std.heap.c_allocator, io, .{
+            .port = port,
+            .alpn = &alpn,
+            .cert_der = &certificate_der,
+            .private_key = &server_private_key,
+            .bind_addr = .{ 0, 0, 0, 0 },
+        });
+        defer server.deinit();
+        try server.serve(&echoHandler);
+        std.debug.print("multi-client bench: server on 0.0.0.0:{d}\n", .{port});
+        server.drive_group.await(io) catch {};
+        return;
+    }
+
+    if (mode == .client) {
+        std.debug.print("multi-client bench: client, {d} concurrent to {}.{}.{}.{}:{d}\n", .{
+            num_clients, remote_host[0], remote_host[1], remote_host[2], remote_host[3], port,
+        });
+        try runClients(io, remote_host);
+        return;
+    }
+
+    // Loopback: server + clients in one process.
+    var server = try Server.init(std.heap.c_allocator, io, .{
+        .port = port,
+        .alpn = &alpn,
+        .cert_der = &certificate_der,
+        .private_key = &server_private_key,
+    });
+    defer server.deinit();
+    try server.serve(&echoHandler);
+    std.debug.print("multi-client bench: server on 127.0.0.1:{d}, clients={d}\n", .{ port, num_clients });
+    try runClients(io, .{ 127, 0, 0, 1 });
+    server.stop();
 }

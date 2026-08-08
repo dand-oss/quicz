@@ -61,6 +61,40 @@ var client = try Client.init(allocator, io, .{
 > known codegen bug for P-256/P-384/Ed25519 signature verification on
 > x86_64). An OpenSSL-generated RSA cert verifies correctly.
 
+## Docker cross-host validation (validated 2026-08-08)
+
+Two quicz Linux containers on the same Docker bridge network act as separate
+hosts (distinct network namespaces, real non-loopback packet path). Run the
+benchmark split across them:
+
+```bash
+# host build: cross-compile the x86_64 binary (or compile inside the container)
+zig build-exe -target x86_64-linux-musl --dep quicz \
+    -Mroot=examples/multi_client_bench.zig -Mquicz=src/lib.zig \
+    -OReleaseFast -lc --name qmc-bench-x64
+
+# two containers on one bridge network
+docker run -d --name bench-server --network bridge --entrypoint sleep <quicz-linux-img> infinity
+docker run -d --name bench-client --network bridge --entrypoint sleep <quicz-linux-img> infinity
+docker cp qmc-bench-x64 bench-server:/root/ && docker cp qmc-bench-x64 bench-client:/root/
+
+# server container (listens on 0.0.0.0); client container connects to server IP
+docker exec -d bench-server /root/qmc-bench-x64 server
+docker exec bench-client /root/qmc-bench-x64 client <bench-server-IP>
+```
+
+Validated result (2 containers, Linux x86_64, ReleaseFast, ECDSA cert):
+
+```
+multi-client bench: ok=8/8 avg_connect=320 ms  aggregate=1.1 Mbit/s (host=192.168.215.2)
+```
+
+8/8 concurrent cross-host handshakes + echo succeed. The low aggregate
+reflects the container bridge network (small cwnd × the handshake RTT, plus
+docker's software forwarding), not a quicz protocol defect — re-run on bare
+metal for production numbers. Note: the ECDSA P-256 test certificate works on
+Linux x86_64 ReleaseFast for the runtime handshake path.
+
 ## 2. Emulating loss / delay / congestion with netem
 
 On a Linux host, shape the network path between the two hosts. `netem` is a

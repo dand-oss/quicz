@@ -153,7 +153,7 @@ pub const Client = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Client {
-        var client_address = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
+        var client_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 0, 0, 0, 0 }, .port = 0 } };
         const socket = try client_address.bind(io, .{ .mode = .dgram, .protocol = .udp });
         enlargeSocketReceiveBuffer(socket.handle);
         const server_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = config.server_host, .port = config.server_port } };
