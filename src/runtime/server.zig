@@ -8,6 +8,7 @@
 //! Handlers block on std.Io.Semaphore wakeups.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const quicz = @import("../lib.zig");
 const h3_proto = @import("../h3/server.zig");
 const runtime_h3 = @import("h3_server.zig");
@@ -414,9 +415,23 @@ pub const Server = struct {
         self.mutex.unlock();
         var out: [16]ServerEndpoint.DatagramPathResult = undefined;
         const drained = self.server_ep.drainDatagramsAcrossRecordsWithRoutePathWithScratch(self.nowNanos(), .application, &out);
+        // Batch the drained datagrams: Linux sendmmsg amortizes the syscall
+        // across the batch (std.Io.Threaded netSend); macOS has no sendmmsg
+        // and its batching path is slower, so fall back to per-datagram sends.
+        var addrs: [16]std.Io.net.IpAddress = undefined;
+        var msgs: [16]std.Io.net.OutgoingMessage = undefined;
+        for (out[0..drained.datagrams_written], 0..) |o, i| {
+            addrs[i] = .{ .ip4 = .{ .bytes = o.path.remote.octets, .port = o.path.remote.port } };
+            msgs[i] = .{ .address = &addrs[i], .data_ptr = o.datagram.ptr, .data_len = o.datagram.len };
+        }
+        if (builtin.os.tag == .linux) {
+            self.socket.sendMany(io, msgs[0..drained.datagrams_written], .{}) catch {};
+        } else {
+            for (msgs[0..drained.datagrams_written]) |m| {
+                self.socket.send(io, m.address, m.data_ptr[0..m.data_len]) catch {};
+            }
+        }
         for (out[0..drained.datagrams_written]) |o| {
-            var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = o.path.remote.octets, .port = o.path.remote.port } };
-            self.socket.send(io, &dest, o.datagram) catch {};
             allocator.free(o.datagram);
         }
     }

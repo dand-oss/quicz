@@ -8,6 +8,7 @@
 //! semaphores instead of polling.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const quicz = @import("../lib.zig");
 
 const Tls13ClientEndpoint = quicz.Tls13ClientEndpoint;
@@ -784,8 +785,20 @@ pub const Client = struct {
         while (iterations < 16) : (iterations += 1) {
             const drained = self.client.drainApplicationDatagramsWithRoutePath(self.nowNanos(), &out) catch return;
             if (drained.datagrams_written == 0) return;
+            // All drained datagrams go to the server address; batch them so
+            // Linux sendmmsg amortizes the syscall (std.Io.Threaded netSend).
+            var msgs: [16]std.Io.net.OutgoingMessage = undefined;
+            for (out[0..drained.datagrams_written], 0..) |o, i| {
+                msgs[i] = .{ .address = &self.server_address, .data_ptr = o.datagram.ptr, .data_len = o.datagram.len };
+            }
+            if (builtin.os.tag == .linux) {
+                self.socket.sendMany(self.io, msgs[0..drained.datagrams_written], .{}) catch {};
+            } else {
+                for (msgs[0..drained.datagrams_written]) |m| {
+                    self.socket.send(self.io, &self.server_address, m.data_ptr[0..m.data_len]) catch {};
+                }
+            }
             for (out[0..drained.datagrams_written]) |o| {
-                self.socket.send(self.io, &self.server_address, o.datagram) catch {};
                 self.allocator.free(o.datagram);
             }
         }
