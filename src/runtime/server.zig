@@ -66,10 +66,59 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
 );
 
 /// Datagram received by the recv task, waiting for the drive task.
+const queued_datagram_pool_size = 16;
+
+/// Reusable receive buffers: the recv task takes a buffer from the pool
+/// instead of allocating per datagram, and the drive task returns it. Falls
+/// back to the allocator when the pool is exhausted. `release` matches by
+/// pointer, so a partial slice of a pooled buffer is returned correctly.
+const DatagramPool = struct {
+    buffers: [queued_datagram_pool_size][]u8 = undefined,
+    free: [queued_datagram_pool_size]bool = .{true} ** queued_datagram_pool_size,
+    mutex: std.atomic.Mutex = .unlocked,
+
+    fn init(allocator: std.mem.Allocator) DatagramPool {
+        var pool: DatagramPool = .{};
+        for (&pool.buffers) |*b| b.* = allocator.alloc(u8, max_datagram_size) catch &.{};
+        return pool;
+    }
+
+    fn deinit(self: *DatagramPool, allocator: std.mem.Allocator) void {
+        for (self.buffers) |b| {
+            if (b.len != 0) allocator.free(b);
+        }
+    }
+
+    fn take(self: *DatagramPool) ?[]u8 {
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        defer self.mutex.unlock();
+        for (&self.free, 0..) |*f, i| {
+            if (f.*) {
+                f.* = false;
+                return self.buffers[i];
+            }
+        }
+        return null;
+    }
+
+    fn release(self: *DatagramPool, buffer: []u8) void {
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        defer self.mutex.unlock();
+        for (&self.free, 0..) |*f, i| {
+            if (self.buffers[i].ptr == buffer.ptr) {
+                f.* = true;
+                return;
+            }
+        }
+    }
+};
+
 const QueuedDatagram = struct {
     from: std.Io.net.IpAddress,
     /// Owned copy; the drive task frees it after processing.
     data: []u8,
+    /// True when `data` is a pooled buffer (returned to the pool, not freed).
+    pooled: bool = false,
 };
 
 /// Per-stream receive buffer within a connection.
@@ -166,6 +215,8 @@ pub const Server = struct {
     /// Datagrams received by the recv task, consumed FIFO by the drive task.
     datagram_queue: std.ArrayList(QueuedDatagram),
     datagram_read_offset: usize = 0,
+    /// Reusable receive buffers, avoiding a per-datagram allocation.
+    datagram_pool: DatagramPool,
     drive_group: std.Io.Group = .init,
     started: bool = false,
     stopping: bool = false,
@@ -205,6 +256,7 @@ pub const Server = struct {
             .prefer_chacha20 = config.prefer_chacha20,
             .conns = std.AutoHashMap(u64, *ConnState).init(allocator),
             .datagram_queue = .empty,
+            .datagram_pool = DatagramPool.init(allocator),
         };
     }
 
@@ -315,9 +367,10 @@ pub const Server = struct {
         self.conns.deinit();
         self.pending_accept.deinit(self.allocator);
         for (self.datagram_queue.items[self.datagram_read_offset..]) |qd| {
-            self.allocator.free(qd.data);
+            if (qd.pooled) self.datagram_pool.release(qd.data) else self.allocator.free(qd.data);
         }
         self.datagram_queue.deinit(self.allocator);
+        self.datagram_pool.deinit(self.allocator);
         self.server_ep.deinit();
         self.socket.close(self.io);
     }
@@ -458,11 +511,15 @@ pub const Server = struct {
                     continue;
                 },
             };
-            const copy = allocator.dupe(u8, received.data) catch continue;
+            const pooled_buf = self.datagram_pool.take();
+            const copy = if (pooled_buf) |pb| blk: {
+                @memcpy(pb[0..received.data.len], received.data);
+                break :blk pb[0..received.data.len];
+            } else allocator.dupe(u8, received.data) catch continue;
             while (!self.queue_mutex.tryLock()) std.atomic.spinLoopHint();
-            self.datagram_queue.append(allocator, .{ .from = received.from, .data = copy }) catch {
+            self.datagram_queue.append(allocator, .{ .from = received.from, .data = copy, .pooled = pooled_buf != null }) catch {
                 self.queue_mutex.unlock();
-                allocator.free(copy);
+                if (pooled_buf != null) self.datagram_pool.release(copy) else allocator.free(copy);
                 continue;
             };
             self.queue_mutex.unlock();
@@ -484,7 +541,7 @@ pub const Server = struct {
             self.datagram_read_offset += 1;
             self.queue_mutex.unlock();
             self.processDatagram(io, allocator, qd.from, qd.data);
-            allocator.free(qd.data);
+            if (qd.pooled) self.datagram_pool.release(qd.data) else allocator.free(qd.data);
         }
     }
 
