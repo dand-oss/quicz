@@ -491,7 +491,10 @@ pub fn main() !void {
     try require(long_client.sentPacketCount(.handshake) == 0);
     try require(long_client.bytesInFlight(.handshake) == 0);
     try long_client_lifecycle.armRecoveryTimerFromConnection(long_client_connection_id, &long_client);
-    try require(long_client_lifecycle.recoveryTimerCount() == 0);
+    // The client's handshake is not confirmed, so the anti-deadlock PTO stays
+    // armed (RFC 9002 §6.2.2.1): with no in-flight data and no confirmed
+    // handshake, the connection must keep a timer to drive a retransmit.
+    try require(long_client_lifecycle.recoveryTimerCount() == 1);
 
     const zero_rtt_client_connection_id: u64 = 241;
     const zero_rtt_server_connection_id: u64 = 251;

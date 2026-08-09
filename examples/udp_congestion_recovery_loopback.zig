@@ -385,14 +385,21 @@ fn runPersistentCongestionPhase(allocator: std.mem.Allocator, io: std.Io) !Persi
     }, &client_receive_buf, secrets.server);
     try require(client.sentPacketCount(.application) == 0);
 
-    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 10, &server_receive_buf, secrets.client);
-    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 1000, &server_receive_buf, secrets.client);
-    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 1100, &server_receive_buf, secrets.client);
-    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 1200, &server_receive_buf, secrets.client);
-    try require(client.sentPacketCount(.application) == 4);
+    // Five pings spread over ~5 s (nanoseconds since 7bde798): the ACK below
+    // acknowledges only packet 5, so packets 1-4 are lost (RFC 9002 §6.1.1:
+    // packet-number threshold 3 for packets 1-2, time threshold for 3-4 at
+    // RTT ~200 ms). Their send span (100..4500 ms) far exceeds the
+    // persistent-congestion duration (3 x PTO ~= 1.2 s), so persistent
+    // congestion is established and the window drops to the minimum.
+    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 100_000_000, &server_receive_buf, secrets.client);
+    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 2_000_000_000, &server_receive_buf, secrets.client);
+    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 4_000_000_000, &server_receive_buf, secrets.client);
+    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 4_500_000_000, &server_receive_buf, secrets.client);
+    _ = try sendClientPing(allocator, io, &client_socket, &server_socket, &server_lifecycle, &client, &server, 5_000_000_000, &server_receive_buf, secrets.client);
+    try require(client.sentPacketCount(.application) == 5);
 
-    _ = try sendServerAck(allocator, io, &server_socket, &client_socket, &client_lifecycle, &client, 1300, 1, .{
-        .largest_acknowledged = 4,
+    _ = try sendServerAck(allocator, io, &server_socket, &client_socket, &client_lifecycle, &client, 5_200_000_000, 1, .{
+        .largest_acknowledged = 5,
         .ack_delay = 0,
         .first_ack_range = 0,
     }, &client_receive_buf, secrets.server);
