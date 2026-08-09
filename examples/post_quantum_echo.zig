@@ -179,7 +179,7 @@ fn demonstratePqKex(io: anytype) !void {
 
 // ─── Server mode ────────────────────────────────────────────────────
 
-fn runServer(io: anytype, allocator: std.mem.Allocator) !void {
+fn runServer(io: std.Io, allocator: std.mem.Allocator, stop: *const std.atomic.Value(bool)) !void {
     try demonstratePqKex(io);
 
     var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = bind_port } };
@@ -197,7 +197,7 @@ fn runServer(io: anytype, allocator: std.mem.Allocator) !void {
     var next_handle: u64 = 1;
     const alpn = [_][]const u8{"hq-interop"};
 
-    while (true) {
+    while (!stop.load(.acquire)) {
         const timeout = std.Io.Timeout{ .duration = .{
             .clock = .awake,
             .raw = std.Io.Duration.fromMilliseconds(100),
@@ -349,7 +349,7 @@ fn runServer(io: anytype, allocator: std.mem.Allocator) !void {
 
 // ─── Client mode ────────────────────────────────────────────────────
 
-fn runClient(io: anytype, allocator: std.mem.Allocator) !void {
+fn runClient(io: std.Io, allocator: std.mem.Allocator) !void {
     try demonstratePqKex(io);
 
     const server_port: u16 = bind_port;
@@ -483,6 +483,25 @@ fn runClient(io: anytype, allocator: std.mem.Allocator) !void {
 
 // ─── Entry point ────────────────────────────────────────────────────
 
+/// Single-process loopback: run the server event loop as an async task while
+/// the client drives handshake + echo on the main thread.
+fn runLoopback(io: std.Io, allocator: std.mem.Allocator) !void {
+    var stop = std.atomic.Value(bool).init(false);
+    var group: std.Io.Group = .init;
+    const server_task_args = .{ io, allocator, &stop };
+    try group.concurrent(io, runServerTask, server_task_args);
+    try runClient(io, allocator);
+    stop.store(true, .release);
+    group.cancel(io);
+    group.await(io) catch {};
+}
+
+fn runServerTask(io: std.Io, allocator: std.mem.Allocator, stop: *std.atomic.Value(bool)) std.Io.Cancelable!void {
+    runServer(io, allocator, stop) catch |err| {
+        if (err != error.Canceled) std.debug.print("pq server task: {}\n", .{err});
+    };
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
@@ -490,11 +509,11 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    // Parse --server / --client from command-line arguments.
+    // Parse --server / --client; default is a single-process loopback demo.
     var args_iter = std.process.Args.Iterator.init(init.minimal.args);
     _ = args_iter.next(); // skip program name
 
-    var mode: enum { server, client } = .client;
+    var mode: enum { server, client, loopback } = .loopback;
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--server")) {
             mode = .server;
@@ -504,7 +523,11 @@ pub fn main(init: std.process.Init) !void {
     }
 
     switch (mode) {
-        .server => try runServer(io, allocator),
+        .server => {
+            var stop = std.atomic.Value(bool).init(false);
+            try runServer(io, allocator, &stop);
+        },
         .client => try runClient(io, allocator),
+        .loopback => try runLoopback(io, allocator),
     }
 }

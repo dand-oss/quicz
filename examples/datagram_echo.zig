@@ -102,7 +102,7 @@ const ServerEndpoint = quicz.Tls13ServerEndpoint(
     ServerRecord.deinit,
 );
 
-fn runServer(allocator: std.mem.Allocator, io: std.Io) !void {
+fn runServer(allocator: std.mem.Allocator, io: std.Io, stop: *const std.atomic.Value(bool)) !void {
     var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 127, 0, 0, 1 }, .port = 4433 } };
     var socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer socket.close(io);
@@ -118,7 +118,7 @@ fn runServer(allocator: std.mem.Allocator, io: std.Io) !void {
     var next_handle: u64 = 1;
     const alpn = [_][]const u8{"hq-interop"};
 
-    while (true) {
+    while (!stop.load(.acquire)) {
         const timeout = std.Io.Timeout{ .duration = .{
             .clock = .awake,
             .raw = std.Io.Duration.fromMilliseconds(100),
@@ -376,6 +376,25 @@ fn runClient(allocator: std.mem.Allocator, io: std.Io) !void {
     }
 }
 
+/// Single-process loopback: run the server event loop as an async task while
+/// the client drives the handshake + DATAGRAM echo on the main thread.
+fn runLoopback(allocator: std.mem.Allocator, io: std.Io) !void {
+    var stop = std.atomic.Value(bool).init(false);
+    var group: std.Io.Group = .init;
+    const server_task_args = .{ allocator, io, &stop };
+    try group.concurrent(io, runServerTask, server_task_args);
+    try runClient(allocator, io);
+    stop.store(true, .release);
+    group.cancel(io);
+    group.await(io) catch {};
+}
+
+fn runServerTask(allocator: std.mem.Allocator, io: std.Io, stop: *std.atomic.Value(bool)) std.Io.Cancelable!void {
+    runServer(allocator, io, stop) catch |err| {
+        if (err != error.Canceled) std.debug.print("datagram echo server task: {}\n", .{err});
+    };
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
@@ -383,20 +402,17 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    // Parse --server / --client
+    // Parse --server / --client; default is a single-process loopback demo.
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // skip program name
-    const mode = args.next() orelse {
-        std.debug.print("Usage: datagram_echo --server | --client\n", .{});
-        return error.InvalidArgs;
-    };
+    const mode = args.next() orelse "loopback";
 
     if (std.mem.eql(u8, mode, "--server")) {
-        try runServer(allocator, io);
+        var stop = std.atomic.Value(bool).init(false);
+        try runServer(allocator, io, &stop);
     } else if (std.mem.eql(u8, mode, "--client")) {
         try runClient(allocator, io);
     } else {
-        std.debug.print("Usage: datagram_echo --server | --client\n", .{});
-        return error.InvalidArgs;
+        try runLoopback(allocator, io);
     }
 }
