@@ -150,7 +150,8 @@ pub fn main(init: std.process.Init) !void {
         .cert_der = &certificate_der,
         .private_key = &server_private_key,
     });
-    defer server.deinit();
+    var server_deinited = false;
+    errdefer if (!server_deinited) server.deinit();
     try server.serve(&echoHandler);
     std.debug.print("stability bench: server on 127.0.0.1:{d}, clients={d}, duration={d} ms\n", .{ port, num_clients, duration_ms });
 
@@ -162,6 +163,8 @@ pub fn main(init: std.process.Init) !void {
     try group.await(io);
 
     server.stop();
+    server.deinit();
+    server_deinited = true;
 
     var total_bytes: u64 = 0;
     var total_errors: u64 = 0;
