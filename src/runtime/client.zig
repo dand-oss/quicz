@@ -251,10 +251,6 @@ pub const Client = struct {
         return .{ .allocator = allocator, .io = io, .socket = socket, .client = client, .server_address = server_address, .datagram_pool = DatagramPool.init(allocator) };
     }
 
-    pub fn localPort(self: *const Client) u16 {
-        return self.socket.address.ip4.port;
-    }
-
     pub fn deinit(self: *Client) void {
         if (self.started) {
             @atomicStore(bool, &self.stopping, true, .release);
