@@ -7,14 +7,42 @@ completes or the connection closes).
 
 ## Top-level namespace (`src/lib.zig`)
 
+The top level exports ~98 names. They fall into three layers; most
+applications only touch the first.
+
+**1. Production entry points** — build HTTP/3 or QUIC apps:
+
 ```zig
 quicz.runtime                      // { server, client, h3_server, h3_client }
 quicz.h3_request                   // Request / Response / ResponseBody / decoded types
-quicz.h3_server                    // transport-agnostic H3 server state machine
-quicz.h3_client                    // transport-agnostic H3 client state machine
-quicz.h3 / quicz.qpack / quicz.webtransport / quicz.h3_connection / quicz.h3_limits
-quicz.Connection / quicz.Config / quicz.CryptoBackend   // low-level QUIC
-quicz.tls13 / quicz.Tls13ClientEndpoint / quicz.Tls13ServerEndpoint / ...
+quicz.h3_server / quicz.h3_client  // transport-agnostic H3 state machines
+quicz.h3 / quicz.qpack / quicz.h3_connection / quicz.h3_limits / quicz.h3_datagram
+quicz.webtransport                 // WebTransport session
+quicz.Connection / quicz.Config    // transport-level connection + config
+quicz.Tls13ClientEndpoint / quicz.Tls13ServerEndpoint   // handshake endpoints
+quicz.Tls13ClientTransport / quicz.Tls13ServerTransport // per-conn transports
+quicz.CryptoBackend / quicz.tls13  // TLS backend surface
+```
+
+**2. Low-level driver / extension modules** — for custom event loops or
+protocol extensions; reachable when the runtime is not a fit:
+
+```zig
+quicz.endpoint_types               // Endpoint* driver result/error types
+quicz.endpoint / quicz.EndpointConnectionLifecycle / quicz.EndpointConnectionRegistry
+quicz.protection / quicz.packet / quicz.frame / quicz.recovery   // RFC 9000/9001
+quicz.transport_parameters / quicz.transport_error / quicz.address_validation_token
+quicz.pacer / quicz.cubic / quicz.pmtu / quicz.gso / quicz.migration / quicz.multipath
+quicz.metrics / quicz.session_cache / quicz.connection_pool / quicz.udp_event_loop
+quicz.zero_rtt / quicz.lifecycle_options / quicz.buffer / quicz.qlog
+```
+
+**3. Primitives / tools** — used by the layers above and by interop testing:
+
+```zig
+quicz.tls_pem / quicz.pq_kex / quicz.tls13_backend   // TLS material + backend plumbing
+quicz.duration / quicz.qlog                          // time + qlog emission
+quicz.fuzz_targets / quicz.stress_test               // harness material
 ```
 
 ## `runtime.server.Server`
