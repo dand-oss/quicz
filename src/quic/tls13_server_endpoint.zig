@@ -5,6 +5,7 @@
 //! caller.
 
 const std = @import("std");
+const endpoint_types = @import("endpoint_types.zig");
 const address_validation_token = @import("address_validation_token.zig");
 const buffer = @import("buffer.zig");
 const root = @import("../lib.zig");
@@ -83,63 +84,63 @@ pub fn Tls13ServerEndpoint(
         /// Installed-key receive result with any immediate output route.
         pub const InstalledKeyDatagramRoutePollResult = struct {
             /// Receive, path validation, and route-update result when feed succeeded.
-            feed: ?root.EndpointFeedInstalledKeyPathUpdateResult = null,
+            feed: ?endpoint_types.EndpointFeedInstalledKeyPathUpdateResult = null,
             /// Feed error returned after the endpoint had selected a record.
-            feed_error: ?root.EndpointProtectedDatagramError = null,
+            feed_error: ?endpoint_types.EndpointProtectedDatagramError = null,
             /// Peer-issued CID sequence whose stateless reset token matched.
             stateless_reset_sequence_number: ?u64 = null,
             /// Protected output emitted after feed or close-on-error handling.
             datagram: ?DatagramPathResult = null,
             /// Next endpoint-visible deadline after receive processing and optional output.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Due-work result with every drained datagram paired to a route.
         pub const DueWorkDatagramPathDrainResult = struct {
             /// Deadline that was due when this pending-work pass started.
-            deadline: root.EndpointConnectionDeadline,
+            deadline: endpoint_types.EndpointConnectionDeadline,
             /// Pending-work actions applied for the due deadline.
-            pending_work: root.EndpointPendingWorkResult,
+            pending_work: endpoint_types.EndpointPendingWorkResult,
             /// Bounded output drain after a due recovery timer, if any.
             drain: DatagramPathDrainResult,
             /// Next endpoint-visible deadline after due work and output drain.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Pending-work sweep result with every drained datagram paired to a route.
         pub const PendingWorkDatagramPathDrainResult = struct {
             /// Pending-work actions applied across endpoint-owned records.
-            pending_work: root.EndpointPendingWorkSweepResult,
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult,
             /// Bounded output drain after pending recovery work, if any.
             drain: DatagramPathDrainResult,
             /// Next endpoint-visible deadline after pending work and output drain.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Installed-key receive plus pending-work result with route-bound output drain.
         pub const FeedPendingWorkDatagramPathDrainResult = struct {
             /// Receive classification and processing result.
-            feed: root.EndpointFeedInstalledKeyDatagramResult,
+            feed: endpoint_types.EndpointFeedInstalledKeyDatagramResult,
             /// Pending-work actions applied after receive processing.
-            pending_work: root.EndpointPendingWorkSweepResult,
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult,
             /// Bounded output drain after pending recovery work, if any.
             drain: DatagramPathDrainResult,
             /// Next endpoint-visible deadline after receive, pending work, and output drain.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Installed-key receive plus pending-work result with one route-bound output poll.
         pub const FeedPendingWorkDatagramPathPollResult = struct {
             /// Receive classification and processing result.
-            feed: root.EndpointFeedInstalledKeyDatagramResult,
+            feed: endpoint_types.EndpointFeedInstalledKeyDatagramResult,
             /// Pending-work actions applied after receive processing.
-            pending_work: root.EndpointPendingWorkSweepResult,
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult,
             /// Route preflight error before pending recovery work, if any.
             pending_route_error: ?endpoint.RouteError = null,
             /// Protected output emitted after pending recovery work, if any.
             datagram: ?DatagramPathResult = null,
             /// Next endpoint-visible deadline after receive, pending work, and output poll.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Result from draining active-record output with committed route paths.
@@ -155,30 +156,30 @@ pub fn Tls13ServerEndpoint(
         /// Explicit close result with bounded route-bound output.
         pub const CloseDatagramPathDrainResult = struct {
             drain: DatagramPathDrainResult = .{},
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Application stream/control result with bounded route-bound output.
         pub const OneRttControlDatagramPathDrainResult = struct {
             drain: DatagramPathDrainResult = .{},
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Accepted Initial output paired with the committed UDP route.
         pub const AcceptedInitialDatagramDrainPathResult = struct {
-            accepted: root.EndpointAcceptedInitialCryptoBackendDatagramDrainResult,
+            accepted: endpoint_types.EndpointAcceptedInitialCryptoBackendDatagramDrainResult,
             path: endpoint.Udp4Tuple,
         };
 
         /// Backend-driven installed-key output paired with the committed route.
         pub const CryptoBackendDatagramDrainPathResult = struct {
-            backend: root.EndpointCryptoBackendDriveDatagramDrainResult,
+            backend: endpoint_types.EndpointCryptoBackendDriveDatagramDrainResult,
             path: endpoint.Udp4Tuple,
         };
 
         /// Backend-driven long-header output paired with the committed route.
         pub const ProtectedLongBackendDatagramDrainPathResult = struct {
-            backend: root.EndpointCryptoBackendDriveProtectedLongDatagramDrainResult,
+            backend: endpoint_types.EndpointCryptoBackendDriveProtectedLongDatagramDrainResult,
             path: endpoint.Udp4Tuple,
         };
 
@@ -230,15 +231,15 @@ pub fn Tls13ServerEndpoint(
         /// Installed-key receive result with bounded route-bound output drain.
         pub const InstalledKeyDatagramRouteDrainResult = struct {
             /// Receive, path validation, and route-update result when feed succeeded.
-            feed: ?root.EndpointFeedInstalledKeyPathUpdateResult = null,
+            feed: ?endpoint_types.EndpointFeedInstalledKeyPathUpdateResult = null,
             /// Feed error returned after the endpoint had selected a record.
-            feed_error: ?root.EndpointProtectedDatagramError = null,
+            feed_error: ?endpoint_types.EndpointProtectedDatagramError = null,
             /// Peer-issued CID sequence whose stateless reset token matched.
             stateless_reset_sequence_number: ?u64 = null,
             /// Bounded protected output drain after receive or close-on-error handling.
-            drain: root.EndpointDatagramDrainResult = .{},
+            drain: endpoint_types.EndpointDatagramDrainResult = .{},
             /// Next endpoint-visible deadline after receive processing and bounded output.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Routed datagram dispatch with bounded route-bound output drain.
@@ -270,11 +271,11 @@ pub fn Tls13ServerEndpoint(
             /// Endpoint classification plus routed datagram processing result.
             process: DatagramProcessDrainPathResult,
             /// Pending work swept across endpoint-owned records after receive.
-            pending_work: root.EndpointPendingWorkSweepResult,
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult,
             /// Bounded route-bound output after pending recovery work, if any.
             pending_drain: DatagramPathDrainResult,
             /// Next endpoint-visible deadline after receive, drain, and pending work.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// One server socket-loop receive step that may admit a new Initial record.
@@ -284,17 +285,17 @@ pub fn Tls13ServerEndpoint(
             /// Admission result when `process` classified a fresh Initial.
             admission: ?InitialRecordAdmissionAttemptPathResult = null,
             /// Pending work swept across endpoint-owned records after receive.
-            pending_work: root.EndpointPendingWorkSweepResult,
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult,
             /// Bounded route-bound output after pending recovery work, if any.
             pending_drain: DatagramPathDrainResult,
             /// Next endpoint-visible deadline after receive, optional admission, and pending work.
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         const PendingStepPathResult = struct {
-            pending_work: root.EndpointPendingWorkSweepResult = .{},
+            pending_work: endpoint_types.EndpointPendingWorkSweepResult = .{},
             pending_drain: DatagramPathDrainResult = .{},
-            next_deadline: ?root.EndpointConnectionDeadline = null,
+            next_deadline: ?endpoint_types.EndpointConnectionDeadline = null,
         };
 
         /// Routed installed-key backend processing with route-bound output.
@@ -306,7 +307,7 @@ pub fn Tls13ServerEndpoint(
         /// Retry follow-up Initial validation with route-bound TLS output.
         pub const RetryInitialProcessPathResult = struct {
             /// Authenticated Retry follow-up metadata and token validation.
-            retry: root.EndpointRetryProtectedInitialResult,
+            retry: endpoint_types.EndpointRetryProtectedInitialResult,
             /// Initial-space TLS backend output after the Retry follow-up.
             initial: ProtectedLongBackendDatagramDrainPathResult,
             /// Handshake-space backend output after Initial installed keys.
@@ -316,7 +317,7 @@ pub fn Tls13ServerEndpoint(
         lifecycle: EndpointConnectionLifecycle,
         records: Registry,
 
-        fn packetNumberSpace(space: root.EndpointInstalledKeyDatagramSpace) root.PacketNumberSpace {
+        fn packetNumberSpace(space: endpoint_types.EndpointInstalledKeyDatagramSpace) root.PacketNumberSpace {
             return switch (space) {
                 .handshake => .handshake,
                 .zero_rtt, .application => .application,
@@ -344,7 +345,7 @@ pub fn Tls13ServerEndpoint(
         fn hasDueRecoveryForInstalledKeySpace(
             self: *const Self,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
         ) bool {
             const packet_space = packetNumberSpace(space);
             var iterator = self.records.records.iterator();
@@ -387,7 +388,7 @@ pub fn Tls13ServerEndpoint(
         fn retireRecordAfterTerminalPendingWork(
             self: *Self,
             connection_id: u64,
-            pending_work: root.EndpointPendingWorkResult,
+            pending_work: endpoint_types.EndpointPendingWorkResult,
         ) root.Error!void {
             if (pending_work.idle_retired == null and pending_work.close_retired == null) return;
             self.records.remove(connection_id) catch return error.Internal;
@@ -514,7 +515,7 @@ pub fn Tls13ServerEndpoint(
         pub fn retireRecord(
             self: *Self,
             connection_id: u64,
-        ) error{ Internal, UnknownConnectionId }!root.EndpointConnectionRetireResult {
+        ) error{ Internal, UnknownConnectionId }!endpoint_types.EndpointConnectionRetireResult {
             return self.records.retire(&self.lifecycle, connection_id);
         }
 
@@ -527,7 +528,7 @@ pub fn Tls13ServerEndpoint(
         pub fn nextDeadline(
             self: *Self,
             allocator: std.mem.Allocator,
-        ) !?root.EndpointConnectionDeadline {
+        ) !?endpoint_types.EndpointConnectionDeadline {
             return self.records.nextDeadline(&self.lifecycle, allocator);
         }
 
@@ -539,12 +540,12 @@ pub fn Tls13ServerEndpoint(
         pub fn nextDeadlineWithStorage(
             self: *Self,
             out: []root.EndpointConnectionView,
-        ) root.Error!?root.EndpointConnectionDeadline {
+        ) root.Error!?endpoint_types.EndpointConnectionDeadline {
             return self.records.nextDeadlineWithStorage(&self.lifecycle, out);
         }
 
         /// Select the earliest endpoint-owned deadline using registry scratch storage.
-        pub fn nextDeadlineWithScratch(self: *Self) root.Error!?root.EndpointConnectionDeadline {
+        pub fn nextDeadlineWithScratch(self: *Self) root.Error!?endpoint_types.EndpointConnectionDeadline {
             return self.records.nextDeadlineWithScratch(&self.lifecycle);
         }
 
@@ -554,7 +555,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkNextDeadlineResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkNextDeadlineResult {
             return self.records.processPendingWorkAndSelectNextDeadline(
                 &self.lifecycle,
                 allocator,
@@ -566,7 +567,7 @@ pub fn Tls13ServerEndpoint(
         pub fn processPendingWorkAndSelectNextDeadlineWithScratch(
             self: *Self,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkNextDeadlineResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkNextDeadlineResult {
             return self.records.processPendingWorkAndSelectNextDeadlineWithScratch(
                 &self.lifecycle,
                 now_nanos,
@@ -578,7 +579,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             out: []DatagramPathResult,
         ) root.Error!PendingWorkDatagramPathDrainResult {
             self.preflightDueRecoveryRoutes(now_nanos) catch |err| {
@@ -621,7 +622,7 @@ pub fn Tls13ServerEndpoint(
         pub fn processPendingWorkAndDrainDatagramsWithRoutePathWithScratch(
             self: *Self,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             out: []DatagramPathResult,
         ) root.Error!PendingWorkDatagramPathDrainResult {
             self.preflightDueRecoveryRoutes(now_nanos) catch |err| {
@@ -663,8 +664,8 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
-        ) root.Error!?root.EndpointDueWorkDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) root.Error!?endpoint_types.EndpointDueWorkDatagramDrainResult {
             const deadline = (try self.nextDeadline(allocator)) orelse return null;
             if (deadline.deadline_nanos > now_nanos) return null;
             const record = self.records.get(deadline.connection_id) orelse return error.Internal;
@@ -689,12 +690,12 @@ pub fn Tls13ServerEndpoint(
                     connection,
                     now_nanos,
                 );
-                const serviced = pending.recovery_serviced orelse break :pending root.EndpointPendingWorkDatagramDrainResult{
+                const serviced = pending.recovery_serviced orelse break :pending endpoint_types.EndpointPendingWorkDatagramDrainResult{
                     .pending_work = pending,
                     .drain = .{},
                 };
                 if (serviced.timer.space != .initial) return error.InvalidPacket;
-                break :pending root.EndpointPendingWorkDatagramDrainResult{
+                break :pending endpoint_types.EndpointPendingWorkDatagramDrainResult{
                     .pending_work = pending,
                     .drain = self.drainInitialDatagrams(
                         deadline.connection_id,
@@ -704,7 +705,7 @@ pub fn Tls13ServerEndpoint(
                         out,
                     ),
                 };
-            } else root.EndpointPendingWorkDatagramDrainResult{
+            } else endpoint_types.EndpointPendingWorkDatagramDrainResult{
                 .pending_work = try self.lifecycle.processPendingWork(
                     deadline.connection_id,
                     connection,
@@ -726,8 +727,8 @@ pub fn Tls13ServerEndpoint(
         pub fn processDueDeadlineAndDrainDatagramsWithScratch(
             self: *Self,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
-        ) root.Error!?root.EndpointDueWorkDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) root.Error!?endpoint_types.EndpointDueWorkDatagramDrainResult {
             const deadline = (try self.nextDeadlineWithScratch()) orelse return null;
             if (deadline.deadline_nanos > now_nanos) return null;
             const record = self.records.get(deadline.connection_id) orelse return error.Internal;
@@ -752,12 +753,12 @@ pub fn Tls13ServerEndpoint(
                     connection,
                     now_nanos,
                 );
-                const serviced = pending.recovery_serviced orelse break :pending root.EndpointPendingWorkDatagramDrainResult{
+                const serviced = pending.recovery_serviced orelse break :pending endpoint_types.EndpointPendingWorkDatagramDrainResult{
                     .pending_work = pending,
                     .drain = .{},
                 };
                 if (serviced.timer.space != .initial) return error.InvalidPacket;
-                break :pending root.EndpointPendingWorkDatagramDrainResult{
+                break :pending endpoint_types.EndpointPendingWorkDatagramDrainResult{
                     .pending_work = pending,
                     .drain = self.drainInitialDatagrams(
                         deadline.connection_id,
@@ -767,7 +768,7 @@ pub fn Tls13ServerEndpoint(
                         out,
                     ),
                 };
-            } else root.EndpointPendingWorkDatagramDrainResult{
+            } else endpoint_types.EndpointPendingWorkDatagramDrainResult{
                 .pending_work = try self.lifecycle.processPendingWork(
                     deadline.connection_id,
                     connection,
@@ -991,8 +992,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             path: endpoint.Udp4Tuple,
             out: []DatagramPathResult,
-        ) root.EndpointDatagramDrainResult {
-            var result = root.EndpointDatagramDrainResult{};
+        ) endpoint_types.EndpointDatagramDrainResult {
+            var result = endpoint_types.EndpointDatagramDrainResult{};
             const initial_secrets = protection.deriveInitialSecrets(
                 connection.chosenVersion(),
                 initial_destination_connection_id_of(record),
@@ -1035,9 +1036,9 @@ pub fn Tls13ServerEndpoint(
             record: *const Record,
             connection: *Connection,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
-        ) root.EndpointDatagramDrainResult {
-            var result = root.EndpointDatagramDrainResult{};
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) endpoint_types.EndpointDatagramDrainResult {
+            var result = endpoint_types.EndpointDatagramDrainResult{};
             const initial_secrets = protection.deriveInitialSecrets(
                 connection.chosenVersion(),
                 initial_destination_connection_id_of(record),
@@ -1078,11 +1079,11 @@ pub fn Tls13ServerEndpoint(
             connection_id: u64,
             connection: *Connection,
             now_nanos: i64,
-            options: root.EndpointPollInstalledKeyDatagramOptions,
+            options: endpoint_types.EndpointPollInstalledKeyDatagramOptions,
             path: endpoint.Udp4Tuple,
             out: []DatagramPathResult,
-        ) root.EndpointDatagramDrainResult {
-            var result = root.EndpointDatagramDrainResult{};
+        ) endpoint_types.EndpointDatagramDrainResult {
+            var result = endpoint_types.EndpointDatagramDrainResult{};
             while (result.datagrams_written < out.len) {
                 const datagram = self.lifecycle.pollDatagram(
                     connection_id,
@@ -1110,8 +1111,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramResult {
             _ = allocator;
             return self.feedDatagramWithInstalledKeysOwned(
                 path,
@@ -1126,8 +1127,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramResult {
             const action = try self.lifecycle.feedDatagram(
                 options.out,
                 path,
@@ -1159,8 +1160,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
             _ = try self.records.nextDeadlineWithScratch(&self.lifecycle);
             return .{
                 .feed = try self.feedDatagramWithInstalledKeysOwned(
@@ -1179,8 +1180,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedPendingWorkNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedPendingWorkNextDeadlineResult {
             _ = self.records.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const feed = try self.feedDatagramWithInstalledKeysOwned(
@@ -1203,10 +1204,10 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             out: []DatagramPathResult,
-        ) root.EndpointProtectedDatagramError!FeedPendingWorkDatagramPathDrainResult {
+        ) endpoint_types.EndpointProtectedDatagramError!FeedPendingWorkDatagramPathDrainResult {
             _ = self.records.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             _ = self.records.poll_view_scratch orelse return error.BufferTooSmall;
@@ -1235,9 +1236,9 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-            space: root.EndpointInstalledKeyDatagramSpace,
-        ) root.EndpointProtectedDatagramError!FeedPendingWorkDatagramPathPollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+        ) endpoint_types.EndpointProtectedDatagramError!FeedPendingWorkDatagramPathPollResult {
             _ = self.records.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             _ = self.records.poll_view_scratch orelse return error.BufferTooSmall;
@@ -1287,8 +1288,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedPathUpdateDatagramPollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedPathUpdateDatagramPollResult {
             const action = try self.lifecycle.feedDatagram(
                 options.out,
                 path,
@@ -1332,8 +1333,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             const action = try self.lifecycle.feedDatagram(
                 options.out,
                 path,
@@ -1380,8 +1381,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             _ = try self.records.nextDeadlineWithScratch(&self.lifecycle);
             const action = try self.lifecycle.feedDatagram(
                 options.out,
@@ -1427,8 +1428,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
             const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
@@ -1505,8 +1506,8 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
             const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
@@ -1585,9 +1586,9 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
             _ = try self.records.nextDeadlineWithScratch(&self.lifecycle);
             const action = try self.lifecycle.feedDatagram(
                 options.out,
@@ -1634,9 +1635,9 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
             const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
@@ -1722,9 +1723,9 @@ pub fn Tls13ServerEndpoint(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
             const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
@@ -1851,7 +1852,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
         ) (root.Error || endpoint.RouteError)!?DatagramPathResult {
             _ = try self.records.removeClosedRecords(&self.lifecycle);
             if (self.records.poll_view_scratch) |views| {
@@ -1878,7 +1879,7 @@ pub fn Tls13ServerEndpoint(
         pub fn pollDatagramWithRoutePathWithScratch(
             self: *Self,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
         ) (root.Error || endpoint.RouteError)!?DatagramPathResult {
             _ = try self.records.removeClosedRecords(&self.lifecycle);
             const views = self.records.poll_view_scratch orelse return error.BufferTooSmall;
@@ -1898,7 +1899,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             out: []DatagramPathResult,
         ) DatagramPathDrainResult {
             var result = DatagramPathDrainResult{};
@@ -1936,7 +1937,7 @@ pub fn Tls13ServerEndpoint(
         pub fn drainDatagramsAcrossRecordsWithRoutePathWithScratch(
             self: *Self,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             out: []DatagramPathResult,
         ) DatagramPathDrainResult {
             var result = DatagramPathDrainResult{};
@@ -1973,7 +1974,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             views: []const root.EndpointConnectionPollView,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
         ) (root.Error || endpoint.RouteError)!?DatagramPathResult {
             if (views.len == 0) {
                 self.records.next_poll_index = 0;
@@ -2642,8 +2643,8 @@ pub fn Tls13ServerEndpoint(
             options: endpoint.AcceptedInitialRouteOptions,
             backend: root.CryptoBackend,
             scratch: []u8,
-            out: []root.EndpointPolledDatagramResult,
-        ) root.EndpointProtectedInitialError!root.EndpointAcceptedInitialCryptoBackendDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) endpoint_types.EndpointProtectedInitialError!endpoint_types.EndpointAcceptedInitialCryptoBackendDatagramDrainResult {
             return self.lifecycle.processAcceptedProtectedInitialWithCryptoBackendAndDrainDatagrams(
                 connection_id,
                 connection,
@@ -2666,9 +2667,9 @@ pub fn Tls13ServerEndpoint(
         /// or timer installed before that failure is retired.
         pub const InitialRecordAdmissionResult = struct {
             /// Initial-space processing and bounded output drain.
-            initial: root.EndpointAcceptedInitialCryptoBackendDatagramDrainResult,
+            initial: endpoint_types.EndpointAcceptedInitialCryptoBackendDatagramDrainResult,
             /// Handshake-space output after Initial processing installed keys.
-            handshake: ?root.EndpointCryptoBackendDriveDatagramDrainResult = null,
+            handshake: ?endpoint_types.EndpointCryptoBackendDriveDatagramDrainResult = null,
         };
 
         pub fn acceptInitialRecord(
@@ -2681,9 +2682,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             options: endpoint.AcceptedInitialRouteOptions,
             scratch: []u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedInitialError || root.Error || error{ConnectionLimitReached})!InitialRecordAdmissionResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedInitialError || root.Error || error{ConnectionLimitReached})!InitialRecordAdmissionResult {
             _ = try self.records.removeClosedRecords(&self.lifecycle);
             if (self.records.get(connection_id) != null) return error.DuplicateConnectionId;
             if (!self.records.hasCapacity()) return error.ConnectionLimitReached;
@@ -2754,9 +2755,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             options: endpoint.AcceptedInitialRouteOptions,
             scratch: []u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedInitialError || root.Error || error{ConnectionLimitReached})!InitialRecordAdmissionPathResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedInitialError || root.Error || error{ConnectionLimitReached})!InitialRecordAdmissionPathResult {
             const admitted = try self.acceptInitialRecord(
                 connection_id,
                 record,
@@ -2798,9 +2799,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             options: endpoint.AcceptedInitialRouteOptions,
             scratch: []u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedInitialError || root.Error)!InitialRecordAdmissionAttemptPathResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedInitialError || root.Error)!InitialRecordAdmissionAttemptPathResult {
             const admitted = self.acceptInitialRecordWithRoutePath(
                 connection_id,
                 record,
@@ -2826,11 +2827,11 @@ pub fn Tls13ServerEndpoint(
         pub fn driveBackend(
             self: *Self,
             connection_id: u64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             scratch: []u8,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.Error || error{UnknownConnectionId})!root.EndpointCryptoBackendDriveDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (root.Error || error{UnknownConnectionId})!endpoint_types.EndpointCryptoBackendDriveDatagramDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const conn = connection_of(record);
             const drive_views = [_]root.EndpointCryptoBackendDriveView{.{
@@ -2852,10 +2853,10 @@ pub fn Tls13ServerEndpoint(
         pub fn driveBackendWithRoutePath(
             self: *Self,
             connection_id: u64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             scratch: []u8,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
         ) (root.Error || endpoint.RouteError)!CryptoBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const path = try self.currentRecordRoutePath(record);
@@ -2873,8 +2874,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             initial_token: []const u8,
             version: quic_packet.Version,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.Error || error{UnknownConnectionId})!root.EndpointCryptoBackendDriveProtectedLongDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (root.Error || error{UnknownConnectionId})!endpoint_types.EndpointCryptoBackendDriveProtectedLongDatagramDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const initial_secrets = protection.deriveInitialSecrets(
                 version,
@@ -2908,7 +2909,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             initial_token: []const u8,
             version: quic_packet.Version,
-            out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
         ) (root.Error || endpoint.RouteError)!ProtectedLongBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const path = try self.currentRecordRoutePath(record);
@@ -2934,7 +2935,7 @@ pub fn Tls13ServerEndpoint(
             path: endpoint.Udp4Tuple,
             datagram: []const u8,
             supported_versions: []const quic_packet.Version,
-        ) (root.EndpointRetryProtectedInitialError || error{UnknownConnectionId})!root.EndpointRetryProtectedInitialResult {
+        ) (endpoint_types.EndpointRetryProtectedInitialError || error{UnknownConnectionId})!endpoint_types.EndpointRetryProtectedInitialResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const result = try self.lifecycle.processRetryValidatedProtectedInitialDatagram(
                 policy,
@@ -2964,9 +2965,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             supported_versions: []const quic_packet.Version,
             scratch: []u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointRetryProtectedInitialError || root.Error || endpoint.RouteError)!RetryInitialProcessPathResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointRetryProtectedInitialError || root.Error || endpoint.RouteError)!RetryInitialProcessPathResult {
             const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
             if (info.packet_type != .initial) return error.InvalidPacket;
             _ = try self.lifecycle.currentRoutePath(info.dcid);
@@ -3018,8 +3019,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             datagram: []const u8,
             scratch: []u8,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedInitialError || root.Error || error{UnknownConnectionId})!root.EndpointRoutedCryptoBackendDriveDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedInitialError || root.Error || error{UnknownConnectionId})!endpoint_types.EndpointRoutedCryptoBackendDriveDatagramDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const route = try self.lifecycle.processRoutedProtectedLongDatagramWithInstalledHandshakeKeys(
                 connection_id,
@@ -3043,8 +3044,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             datagram: []const u8,
             scratch: []u8,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const output_path = try self.currentRecordRoutePath(record);
             const processed = try self.processInitialWithHandshakeKeys(
@@ -3067,9 +3068,9 @@ pub fn Tls13ServerEndpoint(
         /// Result of processing one routed Initial and any resulting Handshake drive.
         pub const InitialProcessResult = struct {
             /// Initial-space receive, backend drive, and bounded output drain.
-            initial: root.EndpointRoutedCryptoBackendDriveProtectedLongDatagramDrainResult,
+            initial: endpoint_types.EndpointRoutedCryptoBackendDriveProtectedLongDatagramDrainResult,
             /// Handshake-space backend drive after Initial processing installed keys.
-            handshake: ?root.EndpointCryptoBackendDriveDatagramDrainResult = null,
+            handshake: ?endpoint_types.EndpointCryptoBackendDriveDatagramDrainResult = null,
         };
 
         /// Authenticate a routed Initial, drive TLS, and drain bounded output.
@@ -3086,9 +3087,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             scratch: []u8,
             initial_token: []const u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || error{UnknownConnectionId})!InitialProcessResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || error{UnknownConnectionId})!InitialProcessResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
             if (info.packet_type != .initial) return error.InvalidPacket;
@@ -3138,9 +3139,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             scratch: []u8,
             initial_token: []const u8,
-            initial_out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!InitialProcessPathResult {
+            initial_out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!InitialProcessPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const output_path = try self.currentRecordRoutePath(record);
             const processed = try self.processInitial(
@@ -3176,8 +3177,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             datagram: []const u8,
             scratch: []u8,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || error{UnknownConnectionId})!root.EndpointRoutedCryptoBackendDriveDatagramDrainResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || error{UnknownConnectionId})!endpoint_types.EndpointRoutedCryptoBackendDriveDatagramDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             return self.lifecycle.processRoutedProtectedHandshakeDatagramWithInstalledKeysAndDriveCryptoBackendAndDrainDatagrams(
                 connection_id,
@@ -3201,8 +3202,8 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
             datagram: []const u8,
             scratch: []u8,
-            out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const output_path = try self.currentRecordRoutePath(record);
             const processed = try self.processHandshake(
@@ -3235,9 +3236,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!LongPacketProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!LongPacketProcessPathResult {
             const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
             return switch (info.packet_type) {
                 .initial => .{ .initial = try self.processInitialWithRoutePath(
@@ -3277,9 +3278,9 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!LongDatagramProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!LongDatagramProcessPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
             const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
             if (info.len < datagram.len) {
@@ -3335,12 +3336,12 @@ pub fn Tls13ServerEndpoint(
             path: endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramProcessPathResult {
             if (datagram.len == 0) return error.InvalidPacket;
             if ((datagram[0] & 0x40) == 0) return error.InvalidPacket;
             return switch (quic_packet.parseHeaderForm(datagram[0])) {
@@ -3379,12 +3380,12 @@ pub fn Tls13ServerEndpoint(
             path: endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramProcessPathResult {
             if (datagram.len == 0) return error.InvalidPacket;
             if ((datagram[0] & 0x40) == 0) return error.InvalidPacket;
             return switch (quic_packet.parseHeaderForm(datagram[0])) {
@@ -3419,13 +3420,13 @@ pub fn Tls13ServerEndpoint(
             path: endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramDrainPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramDrainPathResult {
             if (datagram.len == 0) return error.InvalidPacket;
             if ((datagram[0] & 0x40) == 0) return error.InvalidPacket;
             return switch (quic_packet.parseHeaderForm(datagram[0])) {
@@ -3465,13 +3466,13 @@ pub fn Tls13ServerEndpoint(
             path: endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramDrainPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!RoutedDatagramDrainPathResult {
             if (datagram.len == 0) return error.InvalidPacket;
             if ((datagram[0] & 0x40) == 0) return error.InvalidPacket;
             return switch (quic_packet.parseHeaderForm(datagram[0])) {
@@ -3512,12 +3513,12 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessPathResult {
             const action = try self.feedDatagramWithResponsePath(
                 installed_key_options.out,
                 path,
@@ -3552,12 +3553,12 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessPathResult {
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessPathResult {
             const action = try self.feedDatagramWithResponsePath(
                 installed_key_options.out,
                 path,
@@ -3592,13 +3593,13 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessDrainPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessDrainPathResult {
             const action = try self.feedDatagramWithResponsePath(
                 installed_key_options.out,
                 path,
@@ -3634,13 +3635,13 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessDrainPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramProcessDrainPathResult {
             const action = try self.feedDatagramWithResponsePath(
                 installed_key_options.out,
                 path,
@@ -3677,15 +3678,15 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramStepPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramStepPathResult {
             const process = try self.processDatagramAndDrainWithRoutePath(
                 path,
                 now_nanos,
@@ -3721,15 +3722,15 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramStepPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!DatagramStepPathResult {
             try self.ensureReceiveStepScratch();
             const process = try self.processDatagramAndDrainWithRoutePathWithScratch(
                 path,
@@ -3770,19 +3771,19 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             connection_id: u64,
             record: *Record,
             server_source_connection_id: []const u8,
             options: endpoint.AcceptedInitialRouteOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!InitialAdmissionDatagramStepPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint_types.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!InitialAdmissionDatagramStepPathResult {
             try self.ensureReceiveStepScratch();
             const process = try self.processDatagramAndDrainWithRoutePathWithScratch(
                 path,
@@ -3844,19 +3845,19 @@ pub fn Tls13ServerEndpoint(
             datagram: []const u8,
             unpredictable_prefix: []const u8,
             supported_versions: []const quic_packet.Version,
-            installed_key_options: root.EndpointFeedInstalledKeyDatagramOptions,
+            installed_key_options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
             connection_id: u64,
             record: *Record,
             server_source_connection_id: []const u8,
             options: endpoint.AcceptedInitialRouteOptions,
             scratch: []u8,
             initial_token: []const u8,
-            out: []root.EndpointPolledDatagramResult,
-            handshake_out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+            handshake_out: []endpoint_types.EndpointPolledDatagramResult,
             installed_key_out: []DatagramPathResult,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
-        ) (root.EndpointProtectedDatagramError || root.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!InitialAdmissionDatagramStepPathResult {
+        ) (endpoint_types.EndpointProtectedDatagramError || endpoint_types.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!InitialAdmissionDatagramStepPathResult {
             const process = try self.processDatagramAndDrainWithRoutePath(
                 path,
                 now_nanos,
@@ -3912,7 +3913,7 @@ pub fn Tls13ServerEndpoint(
         fn sweepPendingWorkAndDrainWithRoutePathWithScratch(
             self: *Self,
             now_nanos: i64,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
         ) root.Error!PendingStepPathResult {
             self.preflightDueRecoveryRoutes(now_nanos) catch |err| {
@@ -3953,7 +3954,7 @@ pub fn Tls13ServerEndpoint(
             self: *Self,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            pending_space: root.EndpointInstalledKeyDatagramSpace,
+            pending_space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             pending_out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!PendingStepPathResult {
             self.preflightDueRecoveryRoutes(now_nanos) catch |err| {

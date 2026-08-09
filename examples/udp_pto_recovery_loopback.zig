@@ -122,7 +122,7 @@ fn sendClientLongPacket(
     server_dcid: []const u8,
     receive_buf: []u8,
     keys: quicz.ProtectedLongDatagramKeys,
-) !quicz.EndpointProtectedLongDatagramResult {
+) !quicz.endpoint_types.EndpointProtectedLongDatagramResult {
     try client_socket.send(io, &server_socket.address, packet);
 
     const received = try receiveDatagram(io, server_socket, receive_buf);
@@ -151,7 +151,7 @@ fn sendServerLongPacket(
     client_dcid: []const u8,
     receive_buf: []u8,
     keys: quicz.ProtectedLongDatagramKeys,
-) !quicz.EndpointProtectedLongDatagramResult {
+) !quicz.endpoint_types.EndpointProtectedLongDatagramResult {
     try server_socket.send(io, &client_socket.address, packet);
 
     const received = try receiveDatagram(io, client_socket, receive_buf);

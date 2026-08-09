@@ -284,7 +284,7 @@ fn serveConcurrent(
             recvTimeoutForDeadline(io, if (next_deadline) |deadline| deadline.deadline_nanos else null),
         ) catch |err| switch (err) {
             error.Timeout => {
-                var due_datagrams: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                var due_datagrams: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                 const due = (try server_endpoint.processDueDeadlineAndDrainDatagrams(
                     allocator,
                     nowMillis(io),
@@ -435,8 +435,8 @@ fn serveConcurrent(
                 }
 
                 var scratch: [8192]u8 = undefined;
-                var initial_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
-                var handshake_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                var initial_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
+                var handshake_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                 const accepted = try server_endpoint.acceptInitialRecord(
                     handle,
                     managed,
@@ -477,7 +477,7 @@ fn serveConcurrent(
                     );
                     managed.retry_datagram_len = 0;
                     var retry_scratch: [8192]u8 = undefined;
-                    var retry_initial_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                    var retry_initial_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                     const retry_initial_progress = try server_endpoint.driveInitialBackend(
                         managed.handle,
                         &retry_scratch,
@@ -492,7 +492,7 @@ fn serveConcurrent(
                     }
                     if (retry_initial_progress.drain.first_error) |drain_error| return drain_error;
                     if (!retry_initial_progress.backend.handshake_keys_installed) continue;
-                    var retry_handshake_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                    var retry_handshake_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                     const retry_handshake_progress = try server_endpoint.driveBackend(
                         managed.handle,
                         .handshake,
@@ -526,7 +526,7 @@ fn serveConcurrent(
                         managed.transport.connection.hasHandshakeProtectionKeys())
                     {
                         var coalesced_scratch: [8192]u8 = undefined;
-                        var coalesced_handshake_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                        var coalesced_handshake_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                         const coalesced_handshake = try server_endpoint.processInitialWithHandshakeKeys(
                             managed.handle,
                             path,
@@ -549,8 +549,8 @@ fn serveConcurrent(
                         const long_packet = packet_bytes[0..long_info.len];
                         switch (long_info.packet_type) {
                             .initial => {
-                                var initial_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
-                                var handshake_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                                var initial_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
+                                var handshake_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                                 var initial_scratch: [8192]u8 = undefined;
                                 const initial = try server_endpoint.processInitial(
                                     managed.handle,
@@ -582,7 +582,7 @@ fn serveConcurrent(
                                 }
                             },
                             .handshake => {
-                                var handshake_outputs: [max_initial_datagrams]quicz.EndpointPolledDatagramResult = undefined;
+                                var handshake_outputs: [max_initial_datagrams]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
                                 var handshake_scratch: [8192]u8 = undefined;
                                 const handshake = try server_endpoint.processHandshake(
                                     managed.handle,

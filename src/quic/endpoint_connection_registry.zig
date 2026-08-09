@@ -6,6 +6,7 @@
 //! destruction together without making the endpoint own a UDP socket.
 
 const std = @import("std");
+const endpoint_types = @import("endpoint_types.zig");
 const root = @import("../lib.zig");
 
 /// Build an endpoint-owned registry for one connection record type.
@@ -179,7 +180,7 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             connection_id: u64,
-        ) error{ Internal, UnknownConnectionId }!root.EndpointConnectionRetireResult {
+        ) error{ Internal, UnknownConnectionId }!endpoint_types.EndpointConnectionRetireResult {
             if (self.records.get(connection_id) == null) return error.UnknownConnectionId;
             const retired = lifecycle.retireConnection(connection_id);
             self.remove(connection_id) catch return error.Internal;
@@ -281,7 +282,7 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
-        ) !?root.EndpointConnectionDeadline {
+        ) !?endpoint_types.EndpointConnectionDeadline {
             _ = try self.removeClosedRecords(lifecycle);
             if (self.deadline_view_scratch) |views| {
                 return lifecycle.nextDeadlineAcrossConnections(try self.fillDeadlineViews(views));
@@ -300,7 +301,7 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             out: []root.EndpointConnectionView,
-        ) root.Error!?root.EndpointConnectionDeadline {
+        ) root.Error!?endpoint_types.EndpointConnectionDeadline {
             _ = try self.removeClosedRecords(lifecycle);
             return lifecycle.nextDeadlineAcrossConnections(try self.fillDeadlineViews(out));
         }
@@ -314,7 +315,7 @@ pub fn EndpointConnectionRegistry(
         pub fn nextDeadlineWithScratch(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
-        ) root.Error!?root.EndpointConnectionDeadline {
+        ) root.Error!?endpoint_types.EndpointConnectionDeadline {
             const views = self.deadline_view_scratch orelse return error.BufferTooSmall;
             return self.nextDeadlineWithStorage(lifecycle, views);
         }
@@ -351,7 +352,7 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkSweepResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkSweepResult {
             _ = try self.removeClosedRecords(lifecycle);
             const pending_work = if (self.receive_view_scratch) |views|
                 try lifecycle.processPendingWorkAcrossConnections(
@@ -375,7 +376,7 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkSweepResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkSweepResult {
             _ = try self.removeClosedRecords(lifecycle);
             const views = self.receive_view_scratch orelse return error.BufferTooSmall;
             const pending_work = try lifecycle.processPendingWorkAcrossConnections(
@@ -394,11 +395,11 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
-            out: []root.EndpointPolledDatagramResult,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+            out: []endpoint_types.EndpointPolledDatagramResult,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!root.EndpointPendingWorkSweepDatagramDrainResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkSweepDatagramDrainResult {
             if (self.receive_view_scratch != null and self.poll_view_scratch != null) {
                 return self.processPendingWorkAndDrainDatagramsWithScratch(
                     lifecycle,
@@ -460,11 +461,11 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
-            out: []root.EndpointPolledDatagramResult,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+            out: []endpoint_types.EndpointPolledDatagramResult,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!root.EndpointPendingWorkSweepDatagramDrainResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkSweepDatagramDrainResult {
             _ = self.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.poll_view_scratch orelse return error.BufferTooSmall;
             const pending_work = try self.processPendingWorkWithScratch(
@@ -499,11 +500,11 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
-            out: []root.EndpointPolledDatagramResult,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+            out: []endpoint_types.EndpointPolledDatagramResult,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!root.EndpointDatagramDrainResult {
+        ) root.Error!endpoint_types.EndpointDatagramDrainResult {
             const views = self.poll_view_scratch orelse return error.BufferTooSmall;
             _ = try self.removeClosedRecords(lifecycle);
             return self.drainDatagramsAcrossConnectionViews(
@@ -520,10 +521,10 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             views: []const root.EndpointConnectionPollView,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
-            out: []root.EndpointPolledDatagramResult,
-        ) root.EndpointDatagramDrainResult {
-            var result = root.EndpointDatagramDrainResult{};
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+            out: []endpoint_types.EndpointPolledDatagramResult,
+        ) endpoint_types.EndpointDatagramDrainResult {
+            var result = endpoint_types.EndpointDatagramDrainResult{};
             while (result.datagrams_written < out.len) {
                 const polled = self.pollDatagramAcrossConnectionViews(
                     lifecycle,
@@ -550,7 +551,7 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkNextDeadlineResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkNextDeadlineResult {
             if (self.receive_view_scratch != null and self.deadline_view_scratch != null) {
                 return self.processPendingWorkAndSelectNextDeadlineWithScratch(
                     lifecycle,
@@ -572,7 +573,7 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-        ) root.Error!root.EndpointPendingWorkNextDeadlineResult {
+        ) root.Error!endpoint_types.EndpointPendingWorkNextDeadlineResult {
             _ = self.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.deadline_view_scratch orelse return error.BufferTooSmall;
             return .{
@@ -590,10 +591,10 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!?root.EndpointDueWorkDatagramDrainResult {
+        ) root.Error!?endpoint_types.EndpointDueWorkDatagramDrainResult {
             if (self.poll_view_scratch != null) {
                 return self.processDueDeadlineAndDrainDatagramsWithScratch(
                     lifecycle,
@@ -632,10 +633,10 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-            out: []root.EndpointPolledDatagramResult,
+            out: []endpoint_types.EndpointPolledDatagramResult,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!?root.EndpointDueWorkDatagramDrainResult {
+        ) root.Error!?endpoint_types.EndpointDueWorkDatagramDrainResult {
             const views = self.poll_view_scratch orelse return error.BufferTooSmall;
             _ = try self.removeClosedRecords(lifecycle);
             const result = try lifecycle.processDueDeadlineAcrossConnectionsAndDrainDatagrams(
@@ -660,10 +661,10 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             allocator: std.mem.Allocator,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!?root.EndpointPolledDatagramResult {
+        ) root.Error!?endpoint_types.EndpointPolledDatagramResult {
             if (self.poll_view_scratch != null) {
                 return self.pollDatagramAcrossConnectionsWithScratch(
                     lifecycle,
@@ -697,10 +698,10 @@ pub fn EndpointConnectionRegistry(
             self: *Self,
             lifecycle: *root.EndpointConnectionLifecycle,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
             comptime destination_connection_id: *const fn (*const Record) []const u8,
             comptime source_connection_id: *const fn (*const Record) []const u8,
-        ) root.Error!?root.EndpointPolledDatagramResult {
+        ) root.Error!?endpoint_types.EndpointPolledDatagramResult {
             const views = self.poll_view_scratch orelse return error.BufferTooSmall;
             _ = try self.removeClosedRecords(lifecycle);
             return self.pollDatagramAcrossConnectionViews(
@@ -716,8 +717,8 @@ pub fn EndpointConnectionRegistry(
             lifecycle: *root.EndpointConnectionLifecycle,
             views: []const root.EndpointConnectionPollView,
             now_nanos: i64,
-            space: root.EndpointInstalledKeyDatagramSpace,
-        ) root.Error!?root.EndpointPolledDatagramResult {
+            space: endpoint_types.EndpointInstalledKeyDatagramSpace,
+        ) root.Error!?endpoint_types.EndpointPolledDatagramResult {
             if (views.len == 0) {
                 self.next_poll_index = 0;
                 return null;
@@ -769,8 +770,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramResult {
             if (self.receive_view_scratch != null) {
                 return self.feedDatagramWithInstalledKeysWithScratch(
                     lifecycle,
@@ -800,8 +801,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
             if (self.receive_view_scratch != null and self.deadline_view_scratch != null) {
                 return self.feedDatagramWithInstalledKeysAndSelectNextDeadlineWithScratch(
                     lifecycle,
@@ -835,8 +836,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramNextDeadlineResult {
             _ = self.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.deadline_view_scratch orelse return error.BufferTooSmall;
             return .{
@@ -859,8 +860,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedPendingWorkNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedPendingWorkNextDeadlineResult {
             if (self.receive_view_scratch != null and self.deadline_view_scratch != null) {
                 return self.feedDatagramWithInstalledKeysAndProcessPendingWorkAndSelectNextDeadlineWithScratch(
                     lifecycle,
@@ -899,8 +900,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedPendingWorkNextDeadlineResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedPendingWorkNextDeadlineResult {
             _ = self.receive_view_scratch orelse return error.BufferTooSmall;
             _ = self.deadline_view_scratch orelse return error.BufferTooSmall;
             const feed = try self.feedDatagramWithInstalledKeysWithScratch(
@@ -933,8 +934,8 @@ pub fn EndpointConnectionRegistry(
             path: root.endpoint.Udp4Tuple,
             now_nanos: i64,
             datagram: []const u8,
-            options: root.EndpointFeedInstalledKeyDatagramOptions,
-        ) root.EndpointProtectedDatagramError!root.EndpointFeedInstalledKeyDatagramResult {
+            options: endpoint_types.EndpointFeedInstalledKeyDatagramOptions,
+        ) endpoint_types.EndpointProtectedDatagramError!endpoint_types.EndpointFeedInstalledKeyDatagramResult {
             const views = self.receive_view_scratch orelse return error.BufferTooSmall;
             _ = try self.removeClosedRecords(lifecycle);
             return lifecycle.feedDatagramWithInstalledKeysAcrossConnections(
@@ -1111,7 +1112,7 @@ test "EndpointConnectionRegistry owns records and exposes lifecycle views" {
     try std.testing.expectEqual(@as(usize, 0), feed_pending_deadline.pending_work.recovery_serviced_count);
     try std.testing.expect(feed_pending_deadline.next_deadline == null);
 
-    var due_datagrams: [1]root.EndpointPolledDatagramResult = undefined;
+    var due_datagrams: [1]endpoint_types.EndpointPolledDatagramResult = undefined;
     try std.testing.expect((try registry.processDueDeadlineAndDrainDatagrams(
         &lifecycle,
         no_allocation_allocator.allocator(),
@@ -1417,7 +1418,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
     record_owned = false;
 
     const idle_deadline = (try registry.nextDeadline(&lifecycle, std.testing.allocator)) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, idle_deadline.kind);
+    try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.idle_timeout, idle_deadline.kind);
     try std.testing.expectEqual(@as(u64, 42), idle_deadline.connection_id);
     try std.testing.expectEqual(@as(i64, 20 * ms), idle_deadline.deadline_nanos);
 
@@ -1450,7 +1451,7 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
         19 * ms,
     ));
 
-    var out: [1]root.EndpointPolledDatagramResult = undefined;
+    var out: [1]endpoint_types.EndpointPolledDatagramResult = undefined;
     try std.testing.expectError(error.BufferTooSmall, dynamic_registry.processDueDeadlineAndDrainDatagramsWithScratch(
         &lifecycle,
         19 * ms,
@@ -1475,9 +1476,9 @@ test "EndpointConnectionRegistry removes record after due idle retirement" {
         TestRecord.destinationConnectionId,
         TestRecord.sourceConnectionId,
     )) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, due.deadline.kind);
+    try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.idle_timeout, due.deadline.kind);
     try std.testing.expect(due.pending_work.idle_retired != null);
-    try std.testing.expectEqual(@as(?root.EndpointConnectionRetireResult, null), due.pending_work.close_retired);
+    try std.testing.expectEqual(@as(?endpoint_types.EndpointConnectionRetireResult, null), due.pending_work.close_retired);
     try std.testing.expectEqual(@as(usize, 0), due.drain.datagrams_written);
     try std.testing.expectEqual(@as(usize, 0), registry.count());
     try std.testing.expect(registry.hasCapacity());
@@ -2111,7 +2112,7 @@ test "EndpointConnectionRegistry next deadline retires closed records before sel
     )) orelse return error.TestUnexpectedResult;
     closed_lifecycle_registered = false;
     try std.testing.expectEqual(@as(u64, live_handle), deadline.connection_id);
-    try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, deadline.kind);
+    try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.idle_timeout, deadline.kind);
     try std.testing.expectEqual(@as(i64, 35 * ms), deadline.deadline_nanos);
     try std.testing.expectEqual(@as(usize, 1), registry.count());
     try std.testing.expect(registry.get(closed_handle) == null);
@@ -2208,7 +2209,7 @@ test "EndpointConnectionRegistry due drain retires closed records before servici
 
     var no_allocation_storage: [0]u8 = .{};
     var no_allocation_allocator = std.heap.FixedBufferAllocator.init(&no_allocation_storage);
-    var out: [1]root.EndpointPolledDatagramResult = undefined;
+    var out: [1]endpoint_types.EndpointPolledDatagramResult = undefined;
     const due = (try registry.processDueDeadlineAndDrainDatagrams(
         &lifecycle,
         no_allocation_allocator.allocator(),
@@ -2219,7 +2220,7 @@ test "EndpointConnectionRegistry due drain retires closed records before servici
     )) orelse return error.TestUnexpectedResult;
     closed_lifecycle_registered = false;
     try std.testing.expectEqual(@as(u64, live_handle), due.deadline.connection_id);
-    try std.testing.expectEqual(root.EndpointConnectionDeadlineKind.idle_timeout, due.deadline.kind);
+    try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.idle_timeout, due.deadline.kind);
     try std.testing.expect(due.pending_work.idle_retired != null);
     try std.testing.expectEqual(@as(usize, 0), due.drain.datagrams_written);
     try std.testing.expect(registry.get(closed_handle) == null);
@@ -2317,7 +2318,7 @@ test "EndpointConnectionRegistry installed-key feed retires closed records befor
         },
     );
     lifecycle_registered = false;
-    try std.testing.expectEqual(root.EndpointFeedInstalledKeyDatagramResult.dropped, feed);
+    try std.testing.expectEqual(endpoint_types.EndpointFeedInstalledKeyDatagramResult.dropped, feed);
     try std.testing.expectEqual(@as(usize, 0), registry.count());
     try std.testing.expect(registry.hasCapacity());
     try std.testing.expectEqual(@as(usize, 0), lifecycle.routeCount());
@@ -2407,7 +2408,7 @@ test "EndpointConnectionRegistry rotates cross-record output polling" {
 
     var dynamic_registry = Registry.init(std.testing.allocator);
     defer dynamic_registry.deinit();
-    var drain_out: [2]root.EndpointPolledDatagramResult = undefined;
+    var drain_out: [2]endpoint_types.EndpointPolledDatagramResult = undefined;
     try std.testing.expectError(error.BufferTooSmall, dynamic_registry.drainDatagramsAcrossConnectionsWithScratch(
         &lifecycle,
         10,

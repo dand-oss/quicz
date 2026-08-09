@@ -133,8 +133,8 @@ pub fn main() !void {
         const local_addr = endpoint.Udp4Address.init(socket.address.ip4.bytes, socket.address.ip4.port);
         const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
 
-        var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
-        var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
+        var initial_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
+        var handshake_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
         var installed_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var scratch: [8192]u8 = undefined;

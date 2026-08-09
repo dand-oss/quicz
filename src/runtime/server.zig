@@ -481,8 +481,8 @@ pub const Server = struct {
         const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
         const now = self.nowNanos();
 
-        var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
-        var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
+        var initial_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
+        var handshake_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
         var installed_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var scratch: [8192]u8 = undefined;
@@ -602,7 +602,7 @@ pub const Server = struct {
                     }
                 }
                 // Detect packet type from first byte to select the correct key space.
-                const space: quicz.EndpointInstalledKeyDatagramSpace = blk: {
+                const space: quicz.endpoint_types.EndpointInstalledKeyDatagramSpace = blk: {
                     if (effective_data.len == 0) break :blk .application;
                     if (effective_data[0] & 0x80 != 0) {
                         break :blk switch ((effective_data[0] >> 4) & 0x03) {

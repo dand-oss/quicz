@@ -37,7 +37,7 @@ const Tls13Backend = quicz.tls13_backend.Tls13Backend;
 const protection = quicz.protection;
 const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
 const EndpointConnectionLifecycle = quicz.EndpointConnectionLifecycle;
-const EndpointConnectionDeadline = quicz.EndpointConnectionDeadline;
+const EndpointConnectionDeadline = quicz.endpoint_types.EndpointConnectionDeadline;
 const Udp4Tuple = quicz.endpoint.Udp4Tuple;
 const Udp4Address = quicz.endpoint.Udp4Address;
 

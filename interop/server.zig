@@ -248,8 +248,8 @@ pub fn main(init: std.process.Init) !void {
         const path = endpoint.Udp4Tuple{ .local = local_addr, .remote = from_addr };
 
         // Classify the datagram
-        var initial_out: [4]quicz.EndpointPolledDatagramResult = undefined;
-        var handshake_out: [4]quicz.EndpointPolledDatagramResult = undefined;
+        var initial_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
+        var handshake_out: [4]quicz.endpoint_types.EndpointPolledDatagramResult = undefined;
         var installed_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var pending_out: [16]ServerEndpoint.DatagramPathResult = undefined;
         var scratch: [8192]u8 = undefined;
