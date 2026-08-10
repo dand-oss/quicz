@@ -44,5 +44,13 @@ jobs:
           output=$(zig build run-multi-client-bench -Doptimize=ReleaseFast 2>&1)
           echo "$output"
           echo "$output" | grep -q "ok=8/8" || exit 1
+      # Fuzz regression guard: 100k iterations of the standalone fuzz harness
+      # (QPACK / WebTransport / H3 / transport-parameter state machines). Fails
+      # on any crash or leak.
+      - name: Fuzz regression
+        run: |
+          output=$(zig build run-fuzz -Doptimize=ReleaseFast 2>&1)
+          echo "$output"
+          echo "$output" | grep -q "no crashes" || exit 1
       - name: Format check
         run: zig fmt --check build.zig src examples
