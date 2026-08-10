@@ -21,6 +21,8 @@ const port: u16 = 4438;
 const num_clients: usize = 4;
 const payload_len: usize = 256 * 1024;
 const duration_ms: u64 = 30_000;
+/// Overridden by the first CLI argument (ms); default 30 s.
+var g_run_duration_ms: u64 = duration_ms;
 const alpn = [_][]const u8{"hq-interop"};
 
 // Local test-only P-256 key pair (same static identity used by the other
@@ -115,7 +117,7 @@ fn clientSession(io: std.Io, allocator: std.mem.Allocator, idx: usize, stats: []
     var errors: u64 = 0;
     while (true) {
         const now = std.Io.Timestamp.now(io, .awake);
-        if (now.nanoseconds - t0.nanoseconds >= @as(i96, @intCast(duration_ms)) * 1_000_000) break;
+        if (now.nanoseconds - t0.nanoseconds >= @as(i96, @intCast(g_run_duration_ms)) * 1_000_000) break;
 
         const sid = client.send(payload, true) catch {
             errors += 1;
@@ -144,6 +146,15 @@ pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     const allocator = gpa.allocator();
 
+    // Optional first argument overrides the run duration in milliseconds
+    // (default 30 s; use e.g. 3600000 for a one-hour soak).
+    var args = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args.next(); // program name
+    g_run_duration_ms = if (args.next()) |arg|
+        std.fmt.parseInt(u64, arg, 10) catch duration_ms
+    else
+        duration_ms;
+
     var server = try Server.init(allocator, io, .{
         .port = port,
         .alpn = &alpn,
@@ -153,7 +164,7 @@ pub fn main(init: std.process.Init) !void {
     var server_deinited = false;
     errdefer if (!server_deinited) server.deinit();
     try server.serve(&echoHandler);
-    std.debug.print("stability bench: server on 127.0.0.1:{d}, clients={d}, duration={d} ms\n", .{ port, num_clients, duration_ms });
+    std.debug.print("stability bench: server on 127.0.0.1:{d}, clients={d}, duration={d} ms\n", .{ port, num_clients, g_run_duration_ms });
 
     var stats: [num_clients]Stats = .{Stats{}} ** num_clients;
     var group: std.Io.Group = .init;
@@ -175,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
         if (!s.ok or s.errors > 0) all_ok = false;
         std.debug.print("  client {d}: {d} bytes  {d} errors\n", .{ i, s.transfer_bytes, s.errors });
     }
-    const seconds: f64 = @as(f64, @floatFromInt(duration_ms)) / 1000.0;
+    const seconds: f64 = @as(f64, @floatFromInt(g_run_duration_ms)) / 1000.0;
     std.debug.print(
         "stability bench: ok={} bytes={d} errors={d}  aggregate={d:.1} Mbit/s\n",
         .{ all_ok, total_bytes, total_errors, @as(f64, @floatFromInt(total_bytes)) * 8.0 / 1e6 / seconds },

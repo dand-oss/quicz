@@ -625,6 +625,9 @@ pub fn build(b: *std.Build) void {
     const run_stability_bench = b.step("run-stability-bench", "Long-run stability benchmark (multi-connection, multi-stream, leak-checked)");
     const run_stability_bench_cmd = b.addRunArtifact(exe_stability_bench);
     run_stability_bench.dependOn(&run_stability_bench_cmd.step);
+    if (b.args) |args| {
+        run_stability_bench_cmd.addArgs(args);
+    }
 
     const exe_scale_bench = b.addExecutable(.{
         .name = "quicz-scale-bench",
