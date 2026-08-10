@@ -570,17 +570,17 @@ test "HTTP/3 request rejects uppercase header name" {
     var block: [64]u8 = undefined;
     block[0] = 0x00; // Required Insert Count = 0
     block[1] = 0x00; // Delta Base = 0
-    block[2] = 0x20; // Literal without Name Reference, 001NXXXX (N=0)
-    block[3] = 5; // name length
-    @memcpy(block[4..9], "X-Big"); // uppercase name
-    block[9] = 1; // value length
-    block[10] = 'v';
+    block[2] = 0x25; // Literal without Name Reference: 001N + H=0 + name len 5
+    @memcpy(block[3..8], "X-Big"); // uppercase name
+    block[8] = 1; // value length (8-bit prefix)
+    block[9] = 'v';
 
+    const block_len = 10;
     var buf: [64]u8 = undefined;
     buf[0] = @intFromEnum(h3_frame.FrameType.headers); // HEADERS
-    buf[1] = 11; // 1-byte length
-    @memcpy(buf[2 .. 2 + 11], block[0..11]);
-    try std.testing.expectError(error.UppercaseHeaderName, decodeRequest(buf[0..13]));
+    buf[1] = @intCast(block_len); // 1-byte length
+    @memcpy(buf[2 .. 2 + block_len], block[0..block_len]);
+    try std.testing.expectError(error.UppercaseHeaderName, decodeRequest(buf[0 .. 2 + block_len]));
 }
 
 test "HTTP/3 response encode/decode roundtrip" {

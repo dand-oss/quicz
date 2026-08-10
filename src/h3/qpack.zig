@@ -181,10 +181,8 @@ pub fn encodeHeaderBlock(out: []u8, fields: []const HeaderField) !usize {
             }
             pos = try encodeStringToBuf(out, pos, field.value);
         } else {
-            // Literal without Name Reference: 001NXXXX
-            out[pos] = 0x20;
-            pos += 1;
-            pos = try encodeStringToBuf(out, pos, field.name);
+            // Literal without Name Reference: 001N + 4-bit-prefix name string
+            pos = try encodeStringToBuf4(out, pos, field.name);
             pos = try encodeStringToBuf(out, pos, field.value);
         }
     }
@@ -229,6 +227,39 @@ fn decodeVarintFromBuf(data: []const u8, pos: usize) !struct { value: u64, end: 
 /// smaller than the raw bytes (and the value fits a single-byte length prefix),
 /// it is emitted with H=1; otherwise the raw literal is used (H=0). This matches
 /// quiche's encoder behavior.
+/// Encode a 4-bit-prefix string literal (RFC 9204 §4.5.6): the literal field
+/// name in a "Literal Field Line with Literal Name" uses H in bit 3 and a
+/// 3-bit length prefix (bits 2-0), unlike the 8-bit-prefix value strings.
+fn encodeStringToBuf4(out: []u8, pos: usize, s: []const u8) !usize {
+    var p = pos;
+    var huffman_buf: [16384]u8 = undefined;
+    const huffman_len = huffman.encode(s, &huffman_buf) catch 0;
+    const use_huffman = huffman_len != 0 and huffman_len < s.len and s.len < 8;
+    if (s.len < 8) {
+        const payload_len = if (use_huffman) huffman_len else s.len;
+        out[p] = 0x20 | @as(u8, if (use_huffman) 0x08 else 0x00) | @as(u8, @intCast(payload_len));
+        p += 1;
+    } else {
+        out[p] = 0x27; // 001N + 3-bit prefix all 1s
+        p += 1;
+        var remaining = s.len - 7;
+        while (remaining >= 128) : (remaining -= 128) {
+            out[p] = 0x80 | 127;
+            p += 1;
+        }
+        out[p] = @intCast(remaining);
+        p += 1;
+    }
+    if (use_huffman) {
+        @memcpy(out[p .. p + huffman_len], huffman_buf[0..huffman_len]);
+        p += huffman_len;
+    } else {
+        @memcpy(out[p .. p + s.len], s);
+        p += s.len;
+    }
+    return p;
+}
+
 fn encodeStringToBuf(out: []u8, pos: usize, s: []const u8) !usize {
     var p = pos;
     var huffman_buf: [16384]u8 = undefined;
@@ -309,8 +340,11 @@ test "QPACK encode header block with custom headers" {
     var encoded: [256]u8 = undefined;
     const len = try encodeHeaderBlock(&encoded, &fields);
 
-    // Literal without name reference: 0x20
-    try std.testing.expectEqual(@as(u8, 0x20), encoded[2]);
+    // Literal without name reference: 001N + 4-bit-prefix name string.
+    // "x-custom-header" (15 bytes) exceeds the 3-bit length prefix, so the
+    // field-header byte is 001N + all-1s prefix (0x27) + a varint remainder.
+    try std.testing.expectEqual(@as(u8, 0x27), encoded[2]);
+    try std.testing.expectEqual(@as(u8, 8), encoded[3]); // 15 - 7
     try std.testing.expect(len > 3);
 }
 
@@ -367,9 +401,9 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
             count += 1;
             pos = value_result.end;
         } else if (first & 0x20 != 0) {
-            // Literal without Name Reference: 001NXXXX
-            pos += 1;
-            const name_result = try decodeString(data, pos);
+            // Literal without Name Reference: the field-header byte carries
+            // N + H + 3-bit length (4-bit-prefix name string).
+            const name_result = try decodeString4(data, pos);
             const value_result = try decodeString(data, name_result.end);
             out_fields[count] = .{
                 .name = name_result.value,
@@ -391,6 +425,32 @@ pub fn decodeHeaderBlock(data: []const u8, out_fields: []HeaderField) !usize {
 /// default max field section size).
 var huffman_scratch: [16384]u8 = undefined;
 var huffman_scratch_pos: usize = 0;
+
+/// Decode a 4-bit-prefix string literal (RFC 9204 §4.5.6): the literal field
+/// name in a "Literal Field Line with Literal Name" uses H in bit 3 and a
+/// 3-bit length prefix (bits 2-0), unlike the 8-bit-prefix value strings.
+fn decodeString4(data: []const u8, start: usize) !struct { value: []const u8, end: usize } {
+    if (start >= data.len) return error.IncompleteString;
+    const first = data[start];
+    const is_huffman = (first & 0x08) != 0;
+    var pos = start + 1;
+    var len: usize = first & 0x07;
+    if (len == 0x07) {
+        const v = try decodeVarintFromBuf(data, pos);
+        len = 0x07 + @as(usize, v.value);
+        pos = v.end;
+    }
+    if (pos + len > data.len) return error.IncompleteString;
+    const raw = data[pos .. pos + len];
+    pos += len;
+    if (is_huffman) {
+        const n = try huffman.decode(raw, huffman_scratch[huffman_scratch_pos..]);
+        const value = huffman_scratch[huffman_scratch_pos..][0..n];
+        huffman_scratch_pos += n;
+        return .{ .value = value, .end = pos };
+    }
+    return .{ .value = raw, .end = pos };
+}
 
 fn decodeString(data: []const u8, start: usize) !struct { value: []const u8, end: usize } {
     if (start >= data.len) return error.IncompleteString;
@@ -1681,10 +1741,8 @@ pub fn encodeHeaderBlockWithDynamicInfo(
                 pos = try encodeStringToBuf(out, pos, ref.value);
             },
             .literal => |lit| {
-                // Literal without Name Reference: 001NXXXX, N=0
-                out[pos] = 0x20;
-                pos += 1;
-                pos = try encodeStringToBuf(out, pos, lit.name);
+                // Literal without Name Reference: 001N + 4-bit-prefix name
+                pos = try encodeStringToBuf4(out, pos, lit.name);
                 pos = try encodeStringToBuf(out, pos, lit.value);
             },
         }
@@ -1863,9 +1921,9 @@ pub fn decodeHeaderBlockWithDynamicInfo(
             out_fields[field_count] = .{ .name = name, .value = str.value };
             field_count += 1;
         } else if (byte & 0xe0 == 0x20) {
-            // Literal without Name Reference: 001NXXXX
-            pos += 1;
-            const name_str = try decodeString(data, pos);
+            // Literal without Name Reference: the field-header byte carries
+            // N + H + 3-bit length (4-bit-prefix name string).
+            const name_str = try decodeString4(data, pos);
             pos = name_str.end;
             const value_str = try decodeString(data, pos);
             pos = value_str.end;

@@ -594,6 +594,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe_h3_runtime_loopback);
 
+    const exe_h3_external_client = b.addExecutable(.{
+        .name = "quicz-h3-external-client",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/h3_external_client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_h3_external_client);
+
     const exe_multi_client_bench = b.addExecutable(.{
         .name = "quicz-multi-client-bench",
         .root_module = b.createModule(.{
@@ -1981,6 +1994,12 @@ pub fn build(b: *std.Build) void {
     const run_h3_runtime_loopback = b.step("run-h3-runtime-loopback", "Run HTTP/3 + QPACK on the production std.Io runtime");
     const run_h3_runtime_loopback_cmd = b.addRunArtifact(exe_h3_runtime_loopback);
     run_h3_runtime_loopback.dependOn(&run_h3_runtime_loopback_cmd.step);
+
+    // zig build run-h3-external-client (needs a go quic-go http3.Server on
+    // 127.0.0.1:4439, see examples/interop/http3_server/main.go)
+    const run_h3_external_client = b.step("run-h3-external-client", "Run HTTP/3 client against an external go quic-go http3.Server");
+    const run_h3_external_client_cmd = b.addRunArtifact(exe_h3_external_client);
+    run_h3_external_client.dependOn(&run_h3_external_client_cmd.step);
 
     // zig build run-tls13-lifecycle-loopback
     const run_tls13_lifecycle_loopback = b.step("run-tls13-lifecycle-loopback", "Run pure-Zig TLS 1.3 lifecycle loopback");
