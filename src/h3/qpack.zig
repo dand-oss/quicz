@@ -12,69 +12,109 @@ pub const StaticEntry = struct {
     value: []const u8,
 };
 
-/// QPACK static table (RFC 9204 Appendix A, all 99 entries).
+/// QPACK static table (RFC 9204 Appendix A, all 99 entries). Note this is
+/// NOT the HPACK static table (RFC 7541): QPACK uses its own traffic-derived
+/// table, indexed from 0.
 pub const static_table = [_]StaticEntry{
     .{ .name = ":authority", .value = "" },
-    .{ .name = ":method", .value = "GET" },
-    .{ .name = ":method", .value = "POST" },
     .{ .name = ":path", .value = "/" },
-    .{ .name = ":path", .value = "/index.html" },
-    .{ .name = ":scheme", .value = "http" },
-    .{ .name = ":scheme", .value = "https" },
-    .{ .name = ":status", .value = "200" },
-    .{ .name = ":status", .value = "204" },
-    .{ .name = ":status", .value = "206" },
-    .{ .name = ":status", .value = "304" },
-    .{ .name = ":status", .value = "400" },
-    .{ .name = ":status", .value = "404" },
-    .{ .name = ":status", .value = "500" },
-    .{ .name = "accept-charset", .value = "" },
-    .{ .name = "accept-encoding", .value = "gzip, deflate" },
-    .{ .name = "accept-language", .value = "" },
-    .{ .name = "accept-ranges", .value = "" },
-    .{ .name = "accept", .value = "" },
-    .{ .name = "access-control-allow-origin", .value = "" },
-    .{ .name = "age", .value = "" },
-    .{ .name = "allow", .value = "" },
-    .{ .name = "authorization", .value = "" },
-    .{ .name = "cache-control", .value = "" },
+    .{ .name = "age", .value = "0" },
     .{ .name = "content-disposition", .value = "" },
-    .{ .name = "content-encoding", .value = "" },
-    .{ .name = "content-language", .value = "" },
-    .{ .name = "content-length", .value = "" },
-    .{ .name = "content-location", .value = "" },
-    .{ .name = "content-range", .value = "" },
-    .{ .name = "content-type", .value = "" },
+    .{ .name = "content-length", .value = "0" },
     .{ .name = "cookie", .value = "" },
     .{ .name = "date", .value = "" },
     .{ .name = "etag", .value = "" },
-    .{ .name = "expect", .value = "" },
-    .{ .name = "expires", .value = "" },
-    .{ .name = "from", .value = "" },
-    .{ .name = "host", .value = "" },
-    .{ .name = "if-match", .value = "" },
     .{ .name = "if-modified-since", .value = "" },
     .{ .name = "if-none-match", .value = "" },
-    .{ .name = "if-range", .value = "" },
-    .{ .name = "if-unmodified-since", .value = "" },
     .{ .name = "last-modified", .value = "" },
     .{ .name = "link", .value = "" },
     .{ .name = "location", .value = "" },
-    .{ .name = "max-forwards", .value = "" },
-    .{ .name = "proxy-authenticate", .value = "" },
-    .{ .name = "proxy-authorization", .value = "" },
-    .{ .name = "range", .value = "" },
     .{ .name = "referer", .value = "" },
-    .{ .name = "refresh", .value = "" },
-    .{ .name = "retry-after", .value = "" },
-    .{ .name = "server", .value = "" },
     .{ .name = "set-cookie", .value = "" },
-    .{ .name = "strict-transport-security", .value = "" },
-    .{ .name = "transfer-encoding", .value = "" },
+    .{ .name = ":method", .value = "CONNECT" },
+    .{ .name = ":method", .value = "DELETE" },
+    .{ .name = ":method", .value = "GET" },
+    .{ .name = ":method", .value = "HEAD" },
+    .{ .name = ":method", .value = "OPTIONS" },
+    .{ .name = ":method", .value = "POST" },
+    .{ .name = ":method", .value = "PUT" },
+    .{ .name = ":scheme", .value = "http" },
+    .{ .name = ":scheme", .value = "https" },
+    .{ .name = ":status", .value = "103" },
+    .{ .name = ":status", .value = "200" },
+    .{ .name = ":status", .value = "304" },
+    .{ .name = ":status", .value = "404" },
+    .{ .name = ":status", .value = "503" },
+    .{ .name = "accept", .value = "*/*" },
+    .{ .name = "accept", .value = "application/dns-message" },
+    .{ .name = "accept-encoding", .value = "gzip, deflate, br" },
+    .{ .name = "accept-ranges", .value = "bytes" },
+    .{ .name = "access-control-allow-headers", .value = "cache-control" },
+    .{ .name = "access-control-allow-headers", .value = "content-type" },
+    .{ .name = "access-control-allow-origin", .value = "*" },
+    .{ .name = "cache-control", .value = "max-age=0" },
+    .{ .name = "cache-control", .value = "max-age=2592000" },
+    .{ .name = "cache-control", .value = "max-age=604800" },
+    .{ .name = "cache-control", .value = "no-cache" },
+    .{ .name = "cache-control", .value = "no-store" },
+    .{ .name = "cache-control", .value = "public, max-age=31536000" },
+    .{ .name = "content-encoding", .value = "br" },
+    .{ .name = "content-encoding", .value = "gzip" },
+    .{ .name = "content-type", .value = "application/dns-message" },
+    .{ .name = "content-type", .value = "application/javascript" },
+    .{ .name = "content-type", .value = "application/json" },
+    .{ .name = "content-type", .value = "application/x-www-form-urlencoded" },
+    .{ .name = "content-type", .value = "image/gif" },
+    .{ .name = "content-type", .value = "image/jpeg" },
+    .{ .name = "content-type", .value = "image/png" },
+    .{ .name = "content-type", .value = "text/css" },
+    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+    .{ .name = "content-type", .value = "text/plain" },
+    .{ .name = "content-type", .value = "text/plain;charset=utf-8" },
+    .{ .name = "range", .value = "bytes=0-" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000; includesubdomains" },
+    .{ .name = "strict-transport-security", .value = "max-age=31536000; includesubdomains; preload" },
+    .{ .name = "vary", .value = "accept-encoding" },
+    .{ .name = "vary", .value = "origin" },
+    .{ .name = "x-content-type-options", .value = "nosniff" },
+    .{ .name = "x-xss-protection", .value = "1; mode=block" },
+    .{ .name = ":status", .value = "100" },
+    .{ .name = ":status", .value = "204" },
+    .{ .name = ":status", .value = "206" },
+    .{ .name = ":status", .value = "302" },
+    .{ .name = ":status", .value = "400" },
+    .{ .name = ":status", .value = "403" },
+    .{ .name = ":status", .value = "421" },
+    .{ .name = ":status", .value = "425" },
+    .{ .name = ":status", .value = "500" },
+    .{ .name = "accept-language", .value = "" },
+    .{ .name = "access-control-allow-credentials", .value = "FALSE" },
+    .{ .name = "access-control-allow-credentials", .value = "TRUE" },
+    .{ .name = "access-control-allow-headers", .value = "*" },
+    .{ .name = "access-control-allow-methods", .value = "get" },
+    .{ .name = "access-control-allow-methods", .value = "get, post, options" },
+    .{ .name = "access-control-allow-methods", .value = "options" },
+    .{ .name = "access-control-expose-headers", .value = "content-length" },
+    .{ .name = "access-control-request-headers", .value = "content-type" },
+    .{ .name = "access-control-request-method", .value = "get" },
+    .{ .name = "access-control-request-method", .value = "post" },
+    .{ .name = "alt-svc", .value = "clear" },
+    .{ .name = "authorization", .value = "" },
+    .{ .name = "content-security-policy", .value = "script-src 'none'; object-src 'none'; base-uri 'none'" },
+    .{ .name = "early-data", .value = "1" },
+    .{ .name = "expect-ct", .value = "" },
+    .{ .name = "forwarded", .value = "" },
+    .{ .name = "if-range", .value = "" },
+    .{ .name = "origin", .value = "" },
+    .{ .name = "purpose", .value = "prefetch" },
+    .{ .name = "server", .value = "" },
+    .{ .name = "timing-allow-origin", .value = "*" },
+    .{ .name = "upgrade-insecure-requests", .value = "1" },
     .{ .name = "user-agent", .value = "" },
-    .{ .name = "vary", .value = "" },
-    .{ .name = "via", .value = "" },
-    .{ .name = "www-authenticate", .value = "" },
+    .{ .name = "x-forwarded-for", .value = "" },
+    .{ .name = "x-frame-options", .value = "deny" },
+    .{ .name = "x-frame-options", .value = "sameorigin" },
 };
 
 /// An HTTP header field.
@@ -220,18 +260,18 @@ fn encodeStringToBuf(out: []u8, pos: usize, s: []const u8) !usize {
 }
 
 test "QPACK static table lookup" {
-    // RFC 7541 Table: :method GET = 1, :status 200 = 7, :scheme https = 6, :path / = 3
-    try std.testing.expectEqual(@as(?u64, 1), findStaticIndex(":method", "GET"));
-    try std.testing.expectEqual(@as(?u64, 7), findStaticIndex(":status", "200"));
-    try std.testing.expectEqual(@as(?u64, 6), findStaticIndex(":scheme", "https"));
-    try std.testing.expectEqual(@as(?u64, 3), findStaticIndex(":path", "/"));
+    // RFC 9204 Table: :method GET = 17, :status 200 = 25, :scheme https = 23, :path / = 1
+    try std.testing.expectEqual(@as(?u64, 17), findStaticIndex(":method", "GET"));
+    try std.testing.expectEqual(@as(?u64, 25), findStaticIndex(":status", "200"));
+    try std.testing.expectEqual(@as(?u64, 23), findStaticIndex(":scheme", "https"));
+    try std.testing.expectEqual(@as(?u64, 1), findStaticIndex(":path", "/"));
     // Unknown
     try std.testing.expect(findStaticIndex("x-custom", "value") == null);
 }
 
 test "QPACK static name lookup" {
-    // RFC 7541 Table: :method first occurrence at 1, :authority at 0
-    try std.testing.expectEqual(@as(?u64, 1), findStaticNameIndex(":method"));
+    // RFC 9204 Table: :method first occurrence at 15, :authority at 0
+    try std.testing.expectEqual(@as(?u64, 15), findStaticNameIndex(":method"));
     try std.testing.expectEqual(@as(?u64, 0), findStaticNameIndex(":authority"));
     try std.testing.expect(findStaticNameIndex("x-custom") == null);
 }
@@ -250,12 +290,12 @@ test "QPACK encode header block with static entries" {
     // First 2 bytes: Required Insert Count (0) + Delta Base (0)
     try std.testing.expectEqual(@as(u8, 0x00), encoded[0]);
     try std.testing.expectEqual(@as(u8, 0x00), encoded[1]);
-    // RFC 7541: :method GET = 0xc0 | 1 = 0xc1
-    try std.testing.expectEqual(@as(u8, 0xc1), encoded[2]);
-    // :path / = 0xc0 | 3 = 0xc3
-    try std.testing.expectEqual(@as(u8, 0xc3), encoded[3]);
-    // :scheme https = 0xc0 | 6 = 0xc6
-    try std.testing.expectEqual(@as(u8, 0xc6), encoded[4]);
+    // RFC 9204: :method GET = 0xc0 | 17 = 0xd1
+    try std.testing.expectEqual(@as(u8, 0xd1), encoded[2]);
+    // :path / = 0xc0 | 1 = 0xc1
+    try std.testing.expectEqual(@as(u8, 0xc1), encoded[3]);
+    // :scheme https = 0xc0 | 23 = 0xd7
+    try std.testing.expectEqual(@as(u8, 0xd7), encoded[4]);
     // :authority with literal value (name ref index 0): 0x50 | 0 = 0x50
     try std.testing.expectEqual(@as(u8, 0x50), encoded[5]);
     try std.testing.expect(len > 6);
@@ -1875,8 +1915,8 @@ test "encodeHeaderBlockWithDynamic: dynamic exact match" {
     // Prefix: Required Insert Count = 1, Delta Base = 0
     try std.testing.expectEqual(@as(u8, 1), encoded[0]);
     try std.testing.expectEqual(@as(u8, 0), encoded[1]);
-    // :method GET = static index 1: 0xc0 | 1 = 0xc1
-    try std.testing.expectEqual(@as(u8, 0xc1), encoded[2]);
+    // :method GET = static index 17: 0xc0 | 17 = 0xd1
+    try std.testing.expectEqual(@as(u8, 0xd1), encoded[2]);
     // x-custom my-value = dynamic index 0: 0x80 | 0 = 0x80
     try std.testing.expectEqual(@as(u8, 0x80), encoded[3]);
     try std.testing.expectEqual(@as(usize, 4), len);
@@ -1984,10 +2024,10 @@ test "encodeHeaderBlockWithDynamic: empty dynamic table falls back to static" {
     // Prefix: RIC=0, DB=0
     try std.testing.expectEqual(@as(u8, 0), encoded[0]);
     try std.testing.expectEqual(@as(u8, 0), encoded[1]);
-    // :method GET = static 1: 0xc1
-    try std.testing.expectEqual(@as(u8, 0xc1), encoded[2]);
-    // :status 200 = static 7: 0xc0 | 7 = 0xc7
-    try std.testing.expectEqual(@as(u8, 0xc7), encoded[3]);
+    // :method GET = static 17: 0xd1
+    try std.testing.expectEqual(@as(u8, 0xd1), encoded[2]);
+    // :status 200 = static 25: 0xc0 | 25 = 0xd9
+    try std.testing.expectEqual(@as(u8, 0xd9), encoded[3]);
     try std.testing.expectEqual(@as(usize, 4), len);
 
     // Decode roundtrip
@@ -2068,9 +2108,9 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     // The peer has not acknowledged the insertions yet, so the first block must
     // not reference them (RFC 9204 §2.2.2).
     try std.testing.expectEqual(@as(u64, 0), enc_res.required_insert_count);
-    // :method GET and :path /index.html are RFC 7541 static exact matches;
-    // only x-custom is inserted.
-    try std.testing.expectEqual(@as(usize, 1), enc_table.insert_count);
+    // :method GET is an RFC 9204 static exact match; :path /index.html and
+    // x-custom are not in the static table, so both are inserted.
+    try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count);
 
     // Decoder side: consume the encoder stream instructions, then the block.
     var dec_table = DynamicTable.init(std.testing.allocator);
@@ -2101,9 +2141,9 @@ test "encoder insertion roundtrip: instructions fill decoder table" {
     const enc_res2 = try encodeHeaderBlockWithDynamicInserting(&block2, &instr2, &fields2, &enc_table);
     const block2_len = enc_res2.header_block_len;
     try std.testing.expectEqual(@as(usize, 0), enc_res2.encoder_stream_len); // no instructions needed
-    try std.testing.expectEqual(@as(u64, 1), enc_res2.required_insert_count);
+    try std.testing.expectEqual(@as(u64, 2), enc_res2.required_insert_count);
     // Insert count unchanged (nothing new inserted).
-    try std.testing.expectEqual(@as(usize, 1), enc_table.insert_count);
+    try std.testing.expectEqual(@as(usize, 2), enc_table.insert_count);
 
     var decoded2: [8]HeaderField = undefined;
     const count2 = try decodeHeaderBlockWithDynamic(block2[0..block2_len], &decoded2, &dec_table);

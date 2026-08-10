@@ -120,13 +120,13 @@ test "fuzz: H3 request decode wrong frame type" {
 
 test "fuzz: H3 response decode missing status" {
     // Valid HEADERS frame but QPACK block with no :status (only :path /).
-    const data = [_]u8{ 0x01, 0x03, 0x00, 0x00, 0xc3 }; // :path / = RFC 7541 static 3
+    const data = [_]u8{ 0x01, 0x03, 0x00, 0x00, 0xc1 }; // :path / = RFC 9204 static index 1
     try std.testing.expectError(error.MissingStatus, h3_request.decodeResponse(&data));
 }
 
 test "fuzz: H3 request decode missing method" {
     // Valid HEADERS frame but QPACK block with only :path / (no :method).
-    const data = [_]u8{ 0x01, 0x03, 0x00, 0x00, 0xc3 };
+    const data = [_]u8{ 0x01, 0x03, 0x00, 0x00, 0xc1 };
     try std.testing.expectError(error.MissingMethod, h3_request.decodeRequest(&data));
 }
 
