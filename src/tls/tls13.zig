@@ -4125,7 +4125,8 @@ pub const Tls13Handshake = struct {
             if (localAlpnProtocolSeenBefore(self.config.alpn, index, proto)) return error.DecodeError;
         }
 
-        const msg = (try self.readHandshakeMsg()) orelse return .wait_for_data;
+        const ch_msg = (try self.readHandshakeMsg());
+        const msg = ch_msg orelse return .wait_for_data;
         if (msg.len < 4 or msg[0] != @intFromEnum(HandshakeType.client_hello)) return error.UnexpectedMessage;
 
         const body = msg[4..];
@@ -4280,7 +4281,10 @@ pub const Tls13Handshake = struct {
                         if (clientHelloSupportedGroupsContains(body[ext_start..ext_end], group)) |listed| {
                             if (!listed) {
                                 if (group == group_x25519) return error.NoKeyShare;
-                                return error.DecodeError;
+                                // RFC 8446 §4.2.8: ignore key shares for
+                                // groups we do not support.
+                                sp += klen;
+                                continue;
                             }
                             const group_index = clientHelloSupportedGroupIndex(body[ext_start..ext_end], group) orelse return error.DecodeError;
                             if (previous_key_share_supported_group_index) |previous_index| {
@@ -4512,7 +4516,10 @@ pub const Tls13Handshake = struct {
         if (have_supported_groups and !client_supports_x25519 and !client_supports_secp256r1) return error.NoKeyShare;
         if (self.config.alpn.len > 0 and selected_alpn_len == 0) return error.NoApplicationProtocol;
         if (self.config.server_name != null and !have_server_name) return error.UnrecognizedName;
-        if (offered_early_data and !offered_psk) return error.DecodeError;
+        // RFC 9001 §4.5: a client sending early_data without a pre_shared_key
+        // (e.g. probing 0-RTT support) is tolerated — ignore the 0-RTT offer
+        // rather than rejecting the handshake.
+        if (offered_early_data and !offered_psk) offered_early_data = false;
         if (offered_psk and !have_psk_key_exchange_modes) return error.MissingExtension;
         if (offered_psk and !client_supports_psk_dhe_ke) return error.UnsupportedPskKeyExchangeMode;
 
@@ -4580,7 +4587,9 @@ pub const Tls13Handshake = struct {
             next_key_schedule = KeySchedule.init();
         }
         if (!next_psk_selected) {
-            if (offered_psk and self.config.cert_chain_der.len == 0) return error.BadCertificate;
+            if (offered_psk and self.config.cert_chain_der.len == 0) {
+                return error.BadCertificate;
+            }
             if (self.config.cert_chain_der.len > 0 and !have_signature_algorithms) return error.MissingExtension;
             if (have_signature_algorithms and !client_supports_server_sig) return error.UnsupportedSignatureAlgorithm;
             if (self.config.cert_chain_der.len > 0) {
@@ -7556,7 +7565,7 @@ test "Tls13Handshake server rejects non-empty ClientHello early_data extension" 
     try std.testing.expectError(error.DecodeError, server.step());
 }
 
-test "Tls13Handshake server rejects ClientHello early_data without PSK without committing offer flags" {
+test "Tls13Handshake server tolerates ClientHello early_data without PSK (ignores 0-RTT offer)" {
     var hello_buf: [1024]u8 = undefined;
     const base_hello = try clientHelloBytes(.{}, &hello_buf);
     const hello = try appendClientHelloRawExtension(
@@ -7567,14 +7576,14 @@ test "Tls13Handshake server rejects ClientHello early_data without PSK without c
     );
 
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
-    const transcript_before = server.transcript.current();
     server.provideData(hello);
 
-    try std.testing.expectError(error.DecodeError, server.step());
+    // RFC 9001 §4.5: a client probing 0-RTT without a PSK is tolerated; the
+    // early_data offer is ignored and the handshake proceeds on the full
+    // transcript (no early-data offer flags committed).
+    _ = try server.step();
     try std.testing.expect(!server.peer_offered_early_data);
     try std.testing.expect(!server.peer_offered_psk);
-    try std.testing.expectEqualSlices(u8, &transcript_before, &server.transcript.current());
-    try std.testing.expectEqual(HandshakeState.server_wait_client_hello, server.state);
 }
 
 test "Tls13Handshake server rejects ClientHello pre_shared_key before trailing extension" {
@@ -7635,7 +7644,7 @@ test "Tls13Handshake server rejects pre_shared_key without psk_dhe_ke mode" {
     try std.testing.expectError(error.UnsupportedPskKeyExchangeMode, server.step());
 }
 
-test "Tls13Handshake server rejects early_data without pre_shared_key" {
+test "Tls13Handshake server tolerates early_data without pre_shared_key" {
     var hello_buf: [1024]u8 = undefined;
     const base_hello = try clientHelloBytes(.{}, &hello_buf);
     const hello = try appendClientHelloRawExtension(
@@ -7647,7 +7656,7 @@ test "Tls13Handshake server rejects early_data without pre_shared_key" {
 
     var server = Tls13Handshake.initServer(.{}, &[_]u8{});
     server.provideData(hello);
-    try std.testing.expectError(error.DecodeError, server.step());
+    _ = try server.step();
 }
 
 test "Tls13Handshake server rejects malformed ClientHello PSK identity vector" {
