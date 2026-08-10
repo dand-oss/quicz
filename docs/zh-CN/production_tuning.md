@@ -53,10 +53,6 @@ CUBIC (RFC 9438) 是大多数生产 QUIC 栈的默认拥塞控制。quicz 的 CU
 NewReno (RFC 9002) 是默认算法。更简单但在高带宽、高延迟路径上效率较低。
 适用于低吞吐控制通道或不需要 CUBIC 调优的场景。
 
-### BBR
-
-BBR 可用但尚未生产级加固。生产环境请使用 CUBIC。
-
 ## 初始 RTT
 
 `initial_rtt_ns` 参数设置首次测量前的 RTT 估计值。RFC 9002 默认 333 ms。
@@ -78,7 +74,7 @@ BBR 可用但尚未生产级加固。生产环境请使用 CUBIC。
 - **接收缓冲池化**：recv task 从 16 项缓冲池取 buffer（而非每报文分配），耗尽回退分配器。自动生效。
 - **SO_RCVBUF 提升到 4 MB**（server + client socket），避免客户端突发在 drive 排空前溢出内核接收缓冲；丢包恢复仍兜底余下丢弃。
 - **空闲超时**：`max_idle_timeout_ms`（runtime 默认 30s）关闭停止发送的连接；按 keep-alive 需求调整。
-- **并发模型**：每个 `Server` 一个 drive task 串行处理所有连接（单线程事件循环，与 s2n-quic / quiche / quic-zig 相同）。单连接内多流并发已被利用（多流吞吐超过单流）。要跨核扩展多连接聚合吞吐，需在独立 socket/端口跑多个 `Server` 实例（SO_REUSEPORT 未打通 Zig std 的 `IpAddress.bind`，当前用不同端口或负载均衡）。
+- **并发模型**：每个 `Server` 一个 drive task 串行处理所有连接（单线程事件循环，与 s2n-quic / quiche / quic-zig 相同）。单连接内多流并发已被利用（多流吞吐超过单流）。要跨核扩展多连接聚合吞吐，需在独立 socket/端口跑多个 `Server` 实例（当前用不同端口或负载均衡）。
 - **绑定地址**：`Server.Config.bind_addr` 默认 `127.0.0.1`；设 `.{0,0,0,0}` 接受远程客户端。
 - **Linux x86_64 证书**：用 RSA 证书（Zig 0.16 `std.crypto` 在 x86_64 有 P-256/P-384/Ed25519 签名验证代码生成 bug）；aarch64 与 macOS 用 ECDSA 正常。
 

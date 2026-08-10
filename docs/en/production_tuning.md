@@ -64,10 +64,6 @@ NewReno (RFC 9002) is the default algorithm. Simpler but less efficient on
 high-bandwidth, high-latency paths. Suitable for low-throughput control
 channels or environments where CUBIC tuning is not needed.
 
-### BBR
-
-BBR is available but not yet production-hardened. Use CUBIC for production.
-
 ## Initial RTT
 
 The `initial_rtt_ns` parameter sets the RTT estimate before any measurement.
@@ -104,9 +100,7 @@ I/O, routing, and stream delivery automatically. A few deployment notes:
   s2n-quic / quiche / quic-zig). Per-connection multi-stream concurrency is
   already exploited (multi-stream throughput exceeds single-stream). To scale
   aggregate multi-connection throughput across cores, run multiple `Server`
-  instances on separate sockets/ports (SO_REUSEPORT is not plumbed through
-  Zig std's `IpAddress.bind`, so currently use distinct ports or a load
-  balancer).
+  instances on distinct ports or behind a load balancer.
 - **Bind address**: `Server.Config.bind_addr` defaults to `127.0.0.1`; set
   `.{0,0,0,0}` to accept remote clients.
 - **Certificates on Linux x86_64**: use an RSA certificate (Zig 0.16 `std.crypto`

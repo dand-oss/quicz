@@ -241,7 +241,7 @@ This benefits from pure Zig with no GC pauses, no runtime scheduling overhead, a
 
 Zig 0.16 `std.Io.Threaded` uses `poll(timeout_ms=0)` for non-blocking receive with `Duration(0)`.
 Benchmark uses a 100μs `receiveTimeout`; `nanoTime()` is nanosecond-precision (macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`).
-Throughput is limited by the ACK clock and the shared I/O path (server per-packet processing capacity ~900 MB/s, with headroom; concurrent connections give no scaling); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP `sendto` ~3.5–4.7 μs/packet, neither a bottleneck. ~313 MB/s is near the practical limit on macOS loopback, no GSO; higher throughput needs GSO/GRO (platform capabilities; std.Io is multi-threaded and auto-adapts on Linux, not separately benchmarked).
+Throughput is limited by the ACK clock and the shared I/O path (server per-packet processing capacity ~900 MB/s, with headroom; concurrent connections give no scaling); per-packet AES-128-GCM is hardware accelerated (~4.9 μs) and UDP `sendto` ~3.5–4.7 μs/packet, neither a bottleneck. ~313 MB/s is near the practical limit on macOS loopback; Linux gains batch sending via std.Io.Threaded sendmmsg.
 
 ## References
 

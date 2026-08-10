@@ -243,7 +243,7 @@ than the runtime's stream API:
   `session_cache`; without the runtime's socket loop. Runnable:
   `examples/zero_rtt_echo.zig`, `examples/udp_zero_rtt_loopback.zig`.
 - **WebTransport**: `src/h3/webtransport.zig` builds a WebTransport session on
-  `h3_connection` (extended CONNECT). No runtime integration yet.
+  `h3_connection` (extended CONNECT).
 - **Sans-IO driving**: `Connection` + `endpoint_types` +
   `EndpointConnectionLifecycle` — feed datagrams, poll output, no TLS/socket.
   See `examples/interop_event_loopback.zig` and the `examples/udp_*_loopback.zig`
