@@ -233,94 +233,94 @@ pub fn build(b: *std.Build) void {
     const run_congestion_bench_cmd = b.addRunArtifact(exe_congestion_bench);
     run_congestion_bench.dependOn(&run_congestion_bench_cmd.step);
 
-        const exe_quic_bench = b.addExecutable(.{
-            .name = "quicz-quic-bench",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/quic_bench.zig"),
-                .target = target,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "quicz", .module = quicz_bench_mod },
-                },
-            }),
-        });
-        b.installArtifact(exe_quic_bench);
-        const run_quic_bench = b.step("run-quic-bench", "Run QUIC transport micro-benchmark (throughput + latency)");
-        const run_quic_bench_cmd = b.addRunArtifact(exe_quic_bench);
-        run_quic_bench.dependOn(&run_quic_bench_cmd.step);
+    const exe_quic_bench = b.addExecutable(.{
+        .name = "quicz-quic-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_bench_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench);
+    const run_quic_bench = b.step("run-quic-bench", "Run QUIC transport micro-benchmark (throughput + latency)");
+    const run_quic_bench_cmd = b.addRunArtifact(exe_quic_bench);
+    run_quic_bench.dependOn(&run_quic_bench_cmd.step);
 
-        const exe_quic_bench_hs = b.addExecutable(.{
-            .name = "quicz-quic-bench-hs",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/quic_bench_hs.zig"),
-                .target = target,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "quicz", .module = quicz_bench_mod },
-                },
-            }),
-        });
-        b.installArtifact(exe_quic_bench_hs);
-        const run_quic_bench_hs = b.step("run-quic-bench-hs", "Run QUIC benchmark with real TLS 1.3 handshakes (throughput + latency)");
-        const run_quic_bench_hs_cmd = b.addRunArtifact(exe_quic_bench_hs);
-        run_quic_bench_hs.dependOn(&run_quic_bench_hs_cmd.step);
+    const exe_quic_bench_hs = b.addExecutable(.{
+        .name = "quicz-quic-bench-hs",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench_hs.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_bench_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench_hs);
+    const run_quic_bench_hs = b.step("run-quic-bench-hs", "Run QUIC benchmark with real TLS 1.3 handshakes (throughput + latency)");
+    const run_quic_bench_hs_cmd = b.addRunArtifact(exe_quic_bench_hs);
+    run_quic_bench_hs.dependOn(&run_quic_bench_hs_cmd.step);
 
-        const exe_quic_bench_simple = b.addExecutable(.{
-            .name = "quicz-quic-bench-simple",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/quic_bench_simple.zig"),
-                .target = target,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "quicz", .module = quicz_bench_mod },
-                },
-            }),
-        });
-        b.installArtifact(exe_quic_bench_simple);
-        const run_quic_bench_simple = b.step("run-quic-bench-simple", "Run single-threaded raw QUIC processing benchmark");
-        const run_quic_bench_simple_cmd = b.addRunArtifact(exe_quic_bench_simple);
-        run_quic_bench_simple.dependOn(&run_quic_bench_simple_cmd.step);
+    const exe_quic_bench_simple = b.addExecutable(.{
+        .name = "quicz-quic-bench-simple",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench_simple.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_bench_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench_simple);
+    const run_quic_bench_simple = b.step("run-quic-bench-simple", "Run single-threaded raw QUIC processing benchmark");
+    const run_quic_bench_simple_cmd = b.addRunArtifact(exe_quic_bench_simple);
+    run_quic_bench_simple.dependOn(&run_quic_bench_simple_cmd.step);
 
-        const exe_quic_bench_datagram = b.addExecutable(.{
-            .name = "quicz-quic-bench-datagram",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/quic_bench_datagram.zig"),
-                .target = target,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "quicz", .module = quicz_bench_mod },
-                },
-            }),
-        });
-        b.installArtifact(exe_quic_bench_datagram);
-        const run_quic_bench_datagram = b.step("run-quic-bench-datagram", "Run RFC 9221 DATAGRAM throughput benchmark");
-        const run_quic_bench_datagram_cmd = b.addRunArtifact(exe_quic_bench_datagram);
-        run_quic_bench_datagram.dependOn(&run_quic_bench_datagram_cmd.step);
+    const exe_quic_bench_datagram = b.addExecutable(.{
+        .name = "quicz-quic-bench-datagram",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench_datagram.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_bench_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench_datagram);
+    const run_quic_bench_datagram = b.step("run-quic-bench-datagram", "Run RFC 9221 DATAGRAM throughput benchmark");
+    const run_quic_bench_datagram_cmd = b.addRunArtifact(exe_quic_bench_datagram);
+    run_quic_bench_datagram.dependOn(&run_quic_bench_datagram_cmd.step);
 
-        const exe_quic_bench_profile = b.addExecutable(.{
-            .name = "quicz-quic-bench-profile",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/quic_bench_profile.zig"),
-                .target = target,
-                .optimize = .ReleaseFast,
-                .imports = &.{
-                    .{ .name = "quicz", .module = quicz_bench_mod },
-                },
-            }),
-        });
-        b.installArtifact(exe_quic_bench_profile);
-        const run_quic_bench_profile = b.step("run-quic-bench-profile", "Run per-phase QUIC profiling benchmark");
-        const run_quic_bench_profile_cmd = b.addRunArtifact(exe_quic_bench_profile);
-        run_quic_bench_profile.dependOn(&run_quic_bench_profile_cmd.step);
+    const exe_quic_bench_profile = b.addExecutable(.{
+        .name = "quicz-quic-bench-profile",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/quic_bench_profile.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_bench_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_quic_bench_profile);
+    const run_quic_bench_profile = b.step("run-quic-bench-profile", "Run per-phase QUIC profiling benchmark");
+    const run_quic_bench_profile_cmd = b.addRunArtifact(exe_quic_bench_profile);
+    run_quic_bench_profile.dependOn(&run_quic_bench_profile_cmd.step);
 
-        // Standardized benchmark suite: build + run every benchmark in fixed order.
-        const bench_suite = b.step("bench-suite", "Run the full standardized benchmark suite");
-        bench_suite.dependOn(&run_quic_bench_cmd.step);
-        bench_suite.dependOn(&run_quic_bench_hs_cmd.step);
-        bench_suite.dependOn(&run_quic_bench_simple_cmd.step);
-        bench_suite.dependOn(&run_quic_bench_datagram_cmd.step);
-        bench_suite.dependOn(&run_quic_bench_profile_cmd.step);
-        bench_suite.dependOn(&run_congestion_bench_cmd.step);
+    // Standardized benchmark suite: build + run every benchmark in fixed order.
+    const bench_suite = b.step("bench-suite", "Run the full standardized benchmark suite");
+    bench_suite.dependOn(&run_quic_bench_cmd.step);
+    bench_suite.dependOn(&run_quic_bench_hs_cmd.step);
+    bench_suite.dependOn(&run_quic_bench_simple_cmd.step);
+    bench_suite.dependOn(&run_quic_bench_datagram_cmd.step);
+    bench_suite.dependOn(&run_quic_bench_profile_cmd.step);
+    bench_suite.dependOn(&run_congestion_bench_cmd.step);
 
     // I/O runtime - async streaming echo (std.Io)
     const exe_io_echo = b.addExecutable(.{
