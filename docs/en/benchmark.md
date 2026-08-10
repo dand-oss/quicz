@@ -8,7 +8,7 @@ secnetperf-style micro-benchmarks measuring raw QUIC transport performance over 
 - **Socket**: loopback UDP, 8900-byte datagrams (macOS UDP limit 9000B)
 - **I/O layer**: std.Io.Threaded (cross-platform, Linux auto-enables sendmmsg batching)
 - **Build**: `zig build-exe -OReleaseFast`
-- **Platform**: Apple M-series macOS, Zig 0.16 (std.Io is cross-platform; on Linux it auto-selects io_uring/sendmmsg, not separately benchmarked)
+- **Platform**: Apple M-series macOS (native) + aarch64 Linux (native container); benchmarks are cross-platform (the `nanoTime()` helper has a Linux `clock_gettime` branch, and all bench artifacts build on Linux). Loopback UDP, ReleaseFast.
 - **Congestion control**: CUBIC (RFC 8312/9438)
 - **Pacer**: Token bucket, ns precision (loopback srtt ~1μs, no truncation)
 - **Variance**: loopback throughput swings ±20% run-to-run (system load, CUBIC window dynamics, thermal state); figures below are point measurements — **trends and orders of magnitude matter more than absolutes**. Where multiple runs were taken, a range is given.
@@ -94,10 +94,25 @@ High sys CPU comes from per-packet UDP sendto/recvfrom syscalls; throughput is A
 
 ## Cross-platform Architecture
 
-- **No custom Linux GSO layer**: Zig `std.Io.Threaded` already has `sendmmsg` batching on Linux (`Threaded.zig:1971`)
+- **No custom Linux GSO layer**: Zig `std.Io.Threaded` already has `sendmmsg` batching on Linux (`Threaded.zig:1971`); the runtime `drainOutgoing` collects drained datagrams into an `OutgoingMessage[]` and calls `socket.sendMany`, so Linux sends each batch with one `sendmmsg` syscall. macOS has no `sendmmsg` (and std's batching path is slower there), so it keeps per-datagram sends.
 - **std.Io defaults to io_uring on Linux** (`Io.zig:32`); Threaded is the explicitly chosen backend
-- **sendMany API only benefits Linux** (sendmmsg); on macOS it adds array-building overhead
+- **Receive buffers pooled**: the runtime recv task takes a buffer from a 16-entry pool instead of allocating per datagram, and the drive task returns it by pointer — two allocator calls removed per datagram on the hot path.
 - **nanoTime cross-platform**: comptime conditional, macOS `mach_absolute_time` / Linux `clock_gettime(MONOTONIC)`
+
+### Linux numbers (native aarch64 container, ReleaseFast)
+
+Containers share the host CPU and loopback goes through the Docker virtual
+NIC, so these are **environment-bound ceilings, not quicz limits** — the
+DATAGRAM bench (no flow control) also tops out near them:
+
+| Metric | macOS (native) | aarch64 Linux container |
+|---|---|---|
+| Single-stream (real handshake) | **426–507 MB/s** | ~51 MB/s (docker veth UDP ~60 MB/s ceiling) |
+| DATAGRAM | **199 MB/s** | ~64 MB/s |
+| Echo latency P50 | 20.1 μs | 31.6 μs |
+
+Real bare-metal Linux throughput needs a non-virtualized host; these numbers
+establish the container ceiling, not the library's headroom.
 
 ## Handshake & Connection Baselines (real handshake)
 

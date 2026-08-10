@@ -1,10 +1,12 @@
 # Production Tuning Guide
 
-Updated: 2026-07-28.
+Updated: 2026-08-10.
 
 This document covers recommended configuration for deploying quicz in
-production environments. All parameters are set via `ConnectionConfig`
-(`src/quic/connection_config.zig`).
+production environments. Connection-level parameters are set via
+`ConnectionConfig` (`src/quic/connection_config.zig`); runtime deployment
+recommendations are in the [Runtime Deployment](#runtime-deployment) section
+below.
 
 ## Quick Reference
 
@@ -79,6 +81,37 @@ initial window growth:
 | Metro / CDN edge | 10_000_000–30_000_000 (10–30 ms) |
 | WAN / intercontinental | 50_000_000–150_000_000 (50–150 ms) |
 | Unknown / public internet | 333_000_000 (333 ms, default) |
+
+## Runtime Deployment
+
+The `runtime.Server` / `runtime.Client` (`std.Io.Threaded`) handle packet
+I/O, routing, and stream delivery automatically. A few deployment notes:
+
+- **Send batching is automatic on Linux**: `drainOutgoing` collects drained
+  datagrams into an `OutgoingMessage[]` and uses `socket.sendMany`, which the
+  Threaded backend implements with `sendmmsg`. macOS has no `sendmmsg` and
+  keeps per-datagram sends. No configuration needed.
+- **Receive buffers are pooled**: the recv task takes a 16-entry buffer pool
+  instead of allocating per datagram; the pool falls back to the allocator
+  when exhausted. Automatic.
+- **SO_RCVBUF is raised to 4 MB** on the server and client sockets so client
+  bursts do not overflow the kernel receive buffer before the drive task
+  drains; loss recovery still covers residual drops.
+- **Idle timeout**: `max_idle_timeout_ms` (default 30 s in the runtime) closes
+  connections that stop sending; tune it to your keep-alive requirements.
+- **Concurrency model**: each `Server` runs one drive task that processes all
+  accepted connections serially (single-threaded event loop, same as
+  s2n-quic / quiche / quic-zig). Per-connection multi-stream concurrency is
+  already exploited (multi-stream throughput exceeds single-stream). To scale
+  aggregate multi-connection throughput across cores, run multiple `Server`
+  instances on separate sockets/ports (SO_REUSEPORT is not plumbed through
+  Zig std's `IpAddress.bind`, so currently use distinct ports or a load
+  balancer).
+- **Bind address**: `Server.Config.bind_addr` defaults to `127.0.0.1`; set
+  `.{0,0,0,0}` to accept remote clients.
+- **Certificates on Linux x86_64**: use an RSA certificate (Zig 0.16 `std.crypto`
+  has a P-256/P-384/Ed25519 signature-verification codegen bug on x86_64);
+  aarch64 and macOS use ECDSA fine.
 
 ## Related Documents
 
