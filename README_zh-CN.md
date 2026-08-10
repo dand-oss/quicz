@@ -94,6 +94,7 @@ const qlog = quicz.qlog;
 | 密码套件（5 项） | 5/5 — AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、X25519、X25519Kyber768（后量子） |
 | 应用层（6/6） | HTTP/3 完整连接管理、QPACK 静态+动态表、WebTransport 完整会话、HTTP Datagrams (RFC 9297)、流重置部分交付 |
 | 外部互通 | ✅ quic-go、quiche、s2n-quic — 握手 + 传输全部验证 |
+| HTTP/3 第三方互通 | ✅ go quic-go http3 双向验证 — 正向（go client → quicz server）+ 反向（quicz client → go server），QPACK 静态表 / 4 位字面名前缀 / 动态表控制流 |
 | 测试 | 1820 个单元测试，零泄漏 |
 
 完整对比见[传输任务矩阵](docs/zh-CN/quic_transport_tasks.md)。

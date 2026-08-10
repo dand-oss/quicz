@@ -182,6 +182,16 @@ a proper CA (`testdata/quicz-echo-ca.pem`) + CA-signed leaf
 (`testdata/cert.pem`), so strict webpki-based clients (s2n-quic, rustls/quinn)
 accept the trust chain.
 
+**HTTP/3 application-layer interop** is verified both directions against a real
+third-party H3 stack (go quic-go `http3`), exercising the RFC 9204 QPACK
+static table, the 4-bit literal-name prefix, and the dynamic-table control
+flow over real sockets:
+
+| Direction | Peer | Scenario |
+|---|---|---|
+| Forward (go http3 client → quicz server) | quic-go http3.Transport | GET /, GET /stream (65536 B), POST /echo |
+| Reverse (quicz h3 client → go server) | quic-go http3.Server | GET /, GET /headers, POST /echo |
+
 | Direction | Peer | Result |
 |---|---|---|
 | Forward (quicz client → server) | quic-go | echo_bytes=19, cert verified |
