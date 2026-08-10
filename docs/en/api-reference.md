@@ -126,7 +126,6 @@ pub fn stopSending(self: Stream, code: u64) !void
 
 ```zig
 pub fn init(allocator, io: std.Io, config: Config) !Client
-pub fn localPort(self: *const Client) u16
 pub fn connect(self: *Client) !void        // start recv/drive tasks, block until handshake confirmed
 pub fn send(self: *Client, data: []const u8, fin: bool) !u64     // new bidi stream; returns id
 pub fn sendOnStream(self: *Client, sid: u64, data, fin) !void    // send on existing stream
