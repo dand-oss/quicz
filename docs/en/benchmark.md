@@ -111,8 +111,8 @@ DATAGRAM bench (no flow control) also tops out near them:
 | DATAGRAM | **199 MB/s** | ~64 MB/s |
 | Echo latency P50 | 20.1 μs | 31.6 μs |
 
-Real bare-metal Linux throughput needs a non-virtualized host; these numbers
-establish the container ceiling, not the library's headroom.
+These numbers establish the container ceiling, not a statement about the
+library's headroom on a dedicated host.
 
 ## Handshake & Connection Baselines (real handshake)
 

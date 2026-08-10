@@ -78,7 +78,7 @@ docker exec bench-client /root/qmc-bench-x64 client <bench-server-IP>
 multi-client bench: ok=8/8 avg_connect=320 ms  aggregate=1.1 Mbit/s (host=192.168.215.2)
 ```
 
-8/8 并发跨主机握手 + echo 成功。低聚合反映容器 bridge 网络（小 cwnd × 握手 RTT + docker 软件转发），非 quicz 协议缺陷——生产数值需裸金属重跑。注意：ECDSA P-256 测试证书在 Linux x86_64 ReleaseFast 下 runtime 握手路径可用。
+8/8 并发跨主机握手 + echo 成功。低聚合反映容器 bridge 网络（小 cwnd × 握手 RTT + docker 软件转发），非 quicz 协议缺陷。注意：ECDSA P-256 测试证书在 Linux x86_64 ReleaseFast 下 runtime 握手路径可用。
 
 ## 3. 用 netem 模拟丢包 / 延迟 / 拥塞
 

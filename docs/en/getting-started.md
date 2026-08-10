@@ -231,7 +231,7 @@ client is its own `runtime.Client` with its own drive task, so they parallel
 across cores. See `examples/multi_client_bench.zig` (concurrent handshakes +
 aggregate throughput) and `examples/stability_bench.zig` (long-run leak check).
 
-### DATAGRAM, 0-RTT, WebTransport, bare-metal driving
+### DATAGRAM, 0-RTT, WebTransport, lower-layer driving
 
 These live on the lower API layers (see [API Layers](api-layers.md)) rather
 than the runtime's stream API:
@@ -244,7 +244,7 @@ than the runtime's stream API:
   `examples/zero_rtt_echo.zig`, `examples/udp_zero_rtt_loopback.zig`.
 - **WebTransport**: `src/h3/webtransport.zig` builds a WebTransport session on
   `h3_connection` (extended CONNECT). No runtime integration yet.
-- **Bare-metal driving**: `Connection` + `endpoint_types` +
+- **Sans-IO driving**: `Connection` + `endpoint_types` +
   `EndpointConnectionLifecycle` — feed datagrams, poll output, no TLS/socket.
   See `examples/interop_event_loopback.zig` and the `examples/udp_*_loopback.zig`
   set; `examples/udp_path_validation_loopback.zig` (connection migration + path

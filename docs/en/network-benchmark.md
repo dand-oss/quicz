@@ -91,9 +91,9 @@ multi-client bench: ok=8/8 avg_connect=320 ms  aggregate=1.1 Mbit/s (host=192.16
 
 8/8 concurrent cross-host handshakes + echo succeed. The low aggregate
 reflects the container bridge network (small cwnd × the handshake RTT, plus
-docker's software forwarding), not a quicz protocol defect — re-run on bare
-metal for production numbers. Note: the ECDSA P-256 test certificate works on
-Linux x86_64 ReleaseFast for the runtime handshake path.
+docker's software forwarding), not a quicz protocol defect. Note: the ECDSA
+P-256 test certificate works on Linux x86_64 ReleaseFast for the runtime
+handshake path.
 
 ## 3. Emulating loss / delay / congestion with netem
 

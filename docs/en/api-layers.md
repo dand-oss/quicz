@@ -56,7 +56,7 @@ endpoint, without the runtime's socket loop. `runtime.Server` is built on
 `Tls13ServerEndpoint`; you can drive it directly for a custom event loop that
 still wants the full TLS handshake + transport.
 
-## Layer 4 — sans-IO transport (bare metal)
+## Layer 4 — sans-IO transport
 
 `Connection` + `endpoint_types` + `EndpointConnectionLifecycle` /
 `EndpointConnectionRegistry`. Pure QUIC state machines with **no TLS and no
@@ -88,7 +88,7 @@ Most `examples/*_loopback.zig` and the interop tools drive this layer.
 |---|---|---|---|---|---|---|---|
 | Turnkey H3 | Server + tls provider | `http3.Server/Transport` | — | `tokio-quiche` | — | `event_loop` + Handler | **`runtime.serveH3`** |
 | Transport + custom stream | `Connection` + streams | `quic.Transport`/`Conn` | `Endpoint` + `Connection` | `Connection` | `Registration`/`Listener`/`Connection` | `Connection` + manager | **`runtime.serve`/`Client`** |
-| Sans-IO / bare metal | `s2n-quic-core`/`dc` | — | `quinn-proto` | `Config` + `Connection` | top-level objects | `Connection` self-driven | **`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`** |
+| Sans-IO | `s2n-quic-core`/`dc` | — | `quinn-proto` | `Config` + `Connection` | top-level objects | `Connection` self-driven | **`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`** |
 
 quicz's layering matches the mainstream: a turnkey HTTP/3 layer on top of a
 runtime transport layer, with a sans-IO core underneath. The main difference

@@ -202,14 +202,14 @@ try client.enableH3();                        // 轮询服务端 uni 流
 
 `std.Io.Group.concurrent` 对单 server 运行 N 个独立客户端；每个客户端是独立 `runtime.Client`（自己的 drive task），跨核并行。见 `examples/multi_client_bench.zig`（并发握手 + 聚合吞吐）与 `examples/stability_bench.zig`（长稳泄漏检查）。
 
-### DATAGRAM、0-RTT、WebTransport、裸金属驱动
+### DATAGRAM、0-RTT、WebTransport、底层驱动
 
 这些在底层 API 层（见 [API 分层](api-layers.md)），而非运行时的流 API：
 
 - **DATAGRAM（RFC 9221）**：sans-IO 核心上的不可靠应用消息（`Connection` datagram 方法 + `h3_datagram`）。可运行：`examples/datagram_echo.zig`（`DATAGRAM Throughput`）。
 - **0-RTT**：经 `Tls13ClientEndpoint` + `session_cache` 的会话恢复 early data；不含运行时 socket 循环。可运行：`examples/zero_rtt_echo.zig`、`examples/udp_zero_rtt_loopback.zig`。
 - **WebTransport**：`src/h3/webtransport.zig` 在 `h3_connection` 上构建 WebTransport 会话（extended CONNECT）。尚无运行时集成。
-- **裸金属驱动**：`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`——喂数据报、轮询输出，无 TLS/socket。见 `examples/interop_event_loopback.zig` 与 `examples/udp_*_loopback.zig` 系列；`examples/udp_path_validation_loopback.zig`（连接迁移 + 路径验证）与 `examples/udp_key_update_loopback.zig`（key update）最丰富。
+- **sans-IO 驱动**：`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`——喂数据报、轮询输出，无 TLS/socket。见 `examples/interop_event_loopback.zig` 与 `examples/udp_*_loopback.zig` 系列；`examples/udp_path_validation_loopback.zig`（连接迁移 + 路径验证）与 `examples/udp_key_update_loopback.zig`（key update）最丰富。
 
 ## 另见
 

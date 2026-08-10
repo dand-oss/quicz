@@ -45,7 +45,7 @@ try server.serve(&echoHandler);
 `Tls13ServerEndpoint` / `Tls13ClientEndpoint` + `Tls13ServerTransport` /
 `Tls13ClientTransport`。绑定到多连接端点的 TLS 1.3 握手，不含运行时的 socket 循环。`runtime.Server` 构建在 `Tls13ServerEndpoint` 之上；可在自建事件循环中直接驱动它，仍获得完整 TLS 握手 + 传输。
 
-## 层 4 — sans-IO 传输（裸金属）
+## 层 4 — sans-IO 传输
 
 `Connection` + `endpoint_types` + `EndpointConnectionLifecycle` /
 `EndpointConnectionRegistry`。纯 QUIC 状态机，**无 TLS、无 socket I/O**：你喂入数据报、轮询输出。这是 quiche / zttp 风格——interop 客户端、基准测试、XDP/GSO 实验的基础。
@@ -75,6 +75,6 @@ switch (action) {
 |---|---|---|---|---|---|---|---|
 | 开箱 H3 | Server + tls provider | `http3.Server/Transport` | — | `tokio-quiche` | — | `event_loop` + Handler | **`runtime.serveH3`** |
 | 传输 + 自定义流 | `Connection` + streams | `quic.Transport`/`Conn` | `Endpoint` + `Connection` | `Connection` | `Registration`/`Listener`/`Connection` | `Connection` + manager | **`runtime.serve`/`Client`** |
-| sans-IO / 裸金属 | `s2n-quic-core`/`dc` | — | `quinn-proto` | `Config` + `Connection` | 顶层对象 | `Connection` 自驱 | **`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`** |
+| sans-IO | `s2n-quic-core`/`dc` | — | `quinn-proto` | `Config` + `Connection` | 顶层对象 | `Connection` 自驱 | **`Connection` + `endpoint_types` + `EndpointConnectionLifecycle`** |
 
 quicz 的分层符合主流：开箱 HTTP/3 层叠在运行时传输层之上，底层是 sans-IO 核心。与 quic-go / quinn / s2n-quic 的主要差异是 quicz 运行时为单线程事件循环（同 quiche 与 quic-zig），而非每连接 task 生成器；见 `production_tuning.md`“运行时部署”。
