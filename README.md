@@ -233,6 +233,15 @@ token forgery), each with code and test references.
 | `examples/` | Runnable examples and interop probes |
 | `docs/en/` / `docs/zh-CN/` | Design docs and task matrix |
 
+## Documentation
+
+- [Getting Started](docs/en/getting-started.md) — build H3 servers/clients, custom stream protocols, and advanced patterns.
+- [API Layers](docs/en/api-layers.md) — high/low API map + comparison to s2n-quic / quic-go / quinn / quiche / msquic / quic-zig.
+- [API Reference](docs/en/api-reference.md) — full signature reference for `runtime.*`, H3, and `Connection`.
+- [Benchmark](docs/en/benchmark.md) / [Production Tuning](docs/en/production_tuning.md) — measured performance and deployment guidance.
+- [Network Benchmarking](docs/en/network-benchmark.md) — cross-host / lossy-path benchmarking with `tc netem`.
+- [Architecture](docs/en/architecture.md) — internal design and module layout.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

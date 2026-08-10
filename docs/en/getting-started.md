@@ -2,8 +2,13 @@
 
 This guide walks through building real client/server applications with quicz's
 production I/O runtime (`std.Io` async + QUIC stream model). It covers the
-HTTP/3 path (recommended for most applications) and the low-level stream echo
-path (for custom protocols).
+HTTP/3 path (recommended for most applications), custom stream protocols, and
+the advanced patterns (DATAGRAM, 0-RTT, server push, WebTransport).
+
+quicz exposes four API layers — turnkey HTTP/3, runtime transport, TLS
+endpoints, and a sans-IO core. This guide uses the top two; the lower layers
+are documented in [API Layers](api-layers.md) with a comparison to
+s2n-quic / quic-go / quinn / quiche / msquic / quic-zig.
 
 Prerequisites: Zig 0.16.0. The library is pure Zig — no C dependencies.
 
@@ -200,8 +205,55 @@ The examples bundle a local test-only P-256 key pair (see any
 - **Concurrency**: `std.Io.Group.concurrent` runs independent client/server
   tasks; see `examples/multi_client_bench.zig` for N concurrent clients.
 
+## 8. Advanced patterns
+
+### Server → client unidirectional push
+
+A server can open a unidirectional stream and push data the client reads
+(`openUniStream` on the connection, `openUniStream`/`sendOnStream` on the
+client). The client must enable server-uni-stream polling (`enableH3()`) for
+the drive task to deliver them.
+
+```zig
+// server handler
+var push = try conn.openUniStream();          // server-initiated uni stream
+try push.send("server push payload", true);   // fin
+
+// client
+try client.enableH3();                        // poll server uni streams
+// ... after connect; the pushed stream is a client-opened id the client reads
+```
+
+### Multi-client concurrency
+
+`std.Io.Group.concurrent` runs N independent clients against one server; each
+client is its own `runtime.Client` with its own drive task, so they parallel
+across cores. See `examples/multi_client_bench.zig` (concurrent handshakes +
+aggregate throughput) and `examples/stability_bench.zig` (long-run leak check).
+
+### DATAGRAM, 0-RTT, WebTransport, bare-metal driving
+
+These live on the lower API layers (see [API Layers](api-layers.md)) rather
+than the runtime's stream API:
+
+- **DATAGRAM (RFC 9221)**: unreliable application messages on the sans-IO core
+  (`Connection` datagram methods + `h3_datagram`). Runnable:
+  `examples/datagram_echo.zig` (`DATAGRAM Throughput`).
+- **0-RTT**: session-resumption early data via `Tls13ClientEndpoint` +
+  `session_cache`; without the runtime's socket loop. Runnable:
+  `examples/zero_rtt_echo.zig`, `examples/udp_zero_rtt_loopback.zig`.
+- **WebTransport**: `src/h3/webtransport.zig` builds a WebTransport session on
+  `h3_connection` (extended CONNECT). No runtime integration yet.
+- **Bare-metal driving**: `Connection` + `endpoint_types` +
+  `EndpointConnectionLifecycle` — feed datagrams, poll output, no TLS/socket.
+  See `examples/interop_event_loopback.zig` and the `examples/udp_*_loopback.zig`
+  set; `examples/udp_path_validation_loopback.zig` (connection migration + path
+  validation) and `examples/udp_key_update_loopback.zig` (key update) are the
+  richest examples.
+
 ## See also
 
+- `docs/en/api-layers.md` — high/low layer map + comparison to other stacks.
 - `docs/en/api-reference.md` — full signature reference.
 - `docs/en/architecture.md` — internal design.
 - `examples/h3_runtime_loopback.zig`, `examples/io_echo.zig`,
