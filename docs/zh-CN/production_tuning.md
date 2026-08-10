@@ -1,6 +1,6 @@
 # 生产环境调优指南
 
-更新时间：2026-07-28。
+更新时间：2026-08-10。
 
 本文档介绍 quicz 在生产环境部署时的推荐配置。所有参数通过
 `ConnectionConfig`（`src/quic/connection_config.zig`）设置。
@@ -69,6 +69,18 @@ BBR 可用但尚未生产级加固。生产环境请使用 CUBIC。
 | 城域 / CDN 边缘 | 10_000_000–30_000_000（10–30 ms） |
 | 广域网 / 跨洲 | 50_000_000–150_000_000（50–150 ms） |
 | 未知 / 公网 | 333_000_000（333 ms，默认） |
+
+## 运行时部署
+
+`runtime.Server` / `runtime.Client`（`std.Io.Threaded`）自动处理报文 I/O、路由与流交付。部署注意：
+
+- **Linux 上发送批量自动生效**：`drainOutgoing` 把排空的报文收集进 `OutgoingMessage[]` 并调用 `socket.sendMany`，Threaded 后端用 `sendmmsg` 实现；macOS 无 `sendmmsg` 保持逐包发送。无需配置。
+- **接收缓冲池化**：recv task 从 16 项缓冲池取 buffer（而非每报文分配），耗尽回退分配器。自动生效。
+- **SO_RCVBUF 提升到 4 MB**（server + client socket），避免客户端突发在 drive 排空前溢出内核接收缓冲；丢包恢复仍兜底余下丢弃。
+- **空闲超时**：`max_idle_timeout_ms`（runtime 默认 30s）关闭停止发送的连接；按 keep-alive 需求调整。
+- **并发模型**：每个 `Server` 一个 drive task 串行处理所有连接（单线程事件循环，与 s2n-quic / quiche / quic-zig 相同）。单连接内多流并发已被利用（多流吞吐超过单流）。要跨核扩展多连接聚合吞吐，需在独立 socket/端口跑多个 `Server` 实例（SO_REUSEPORT 未打通 Zig std 的 `IpAddress.bind`，当前用不同端口或负载均衡）。
+- **绑定地址**：`Server.Config.bind_addr` 默认 `127.0.0.1`；设 `.{0,0,0,0}` 接受远程客户端。
+- **Linux x86_64 证书**：用 RSA 证书（Zig 0.16 `std.crypto` 在 x86_64 有 P-256/P-384/Ed25519 签名验证代码生成 bug）；aarch64 与 macOS 用 ECDSA 正常。
 
 ## 相关文档
 
