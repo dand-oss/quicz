@@ -37,5 +37,12 @@ jobs:
       # on Linux.
       - name: HTTP/3 runtime loopback (real handshake + QPACK)
         run: zig build run-h3-runtime-loopback -Doptimize=ReleaseFast
+      # Concurrency + aggregate throughput regression guard (cross-platform).
+      # Fails if any of the 8 concurrent real-handshake clients fail.
+      - name: Multi-client concurrency + throughput
+        run: |
+          output=$(zig build run-multi-client-bench -Doptimize=ReleaseFast 2>&1)
+          echo "$output"
+          echo "$output" | grep -q "ok=8/8" || exit 1
       - name: Format check
         run: zig fmt --check build.zig src examples
