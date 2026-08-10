@@ -45,6 +45,23 @@ jobs:
         run: |
           bash examples/interop/run_external_interop.sh all
           bash examples/interop/run_reverse_interop.sh all
+      # HTTP/3 application-layer interop with a real third-party H3 stack
+      # (go quic-go): forward = go http3.Transport client -> quicz h3-server;
+      # reverse = quicz h3 client -> go http3.Server. Guards the QPACK static
+      # table (RFC 9204), the 4-bit literal-name prefix, the TLS key-share /
+      # early-data tolerance, and the shared example certificate.
+      - name: HTTP/3 interop (go quic-go http3)
+        run: |
+          set -e
+          # forward: go http3 client -> quicz h3-server (GET /, /stream, POST /echo)
+          ./zig-out/bin/quicz-h3-server >/tmp/quicz-h3srv.log 2>&1 &
+          sleep 1
+          (cd examples/interop/http3_client && go run main.go)
+          kill %1 2>/dev/null || true
+          # reverse: quicz h3 client -> go http3 server (GET /, /headers, POST /echo)
+          (cd examples/interop/http3_server && go run main.go >/tmp/go-h3srv.log 2>&1 &)
+          sleep 3
+          ./zig-out/bin/quicz-h3-external-client
 
   build-linux:
     name: Build + E2E (Linux x86_64, ReleaseFast)
