@@ -626,6 +626,22 @@ pub fn build(b: *std.Build) void {
     const run_stability_bench_cmd = b.addRunArtifact(exe_stability_bench);
     run_stability_bench.dependOn(&run_stability_bench_cmd.step);
 
+    const exe_scale_bench = b.addExecutable(.{
+        .name = "quicz-scale-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/scale_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "quicz", .module = quicz_mod },
+            },
+        }),
+    });
+    b.installArtifact(exe_scale_bench);
+    const run_scale_bench = b.step("run-scale-bench", "Connection-scale benchmark (N concurrent handshakes + echo, leak-checked)");
+    const run_scale_bench_cmd = b.addRunArtifact(exe_scale_bench);
+    run_scale_bench.dependOn(&run_scale_bench_cmd.step);
+
     // Pure-Zig TLS 1.3 with EndpointConnectionLifecycle ownership
     const exe_tls13_lifecycle_loopback = b.addExecutable(.{
         .name = "quicz-tls13-lifecycle-loopback",

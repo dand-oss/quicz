@@ -234,6 +234,10 @@ pub const Server = struct {
         /// IPv4 address to bind. Defaults to loopback (127.0.0.1); set to
         /// `.{0,0,0,0}` to listen on all interfaces (cross-host benchmarks).
         bind_addr: ?[4]u8 = null,
+        /// Maximum concurrent connections accepted by this server. The
+        /// endpoint pre-allocates routing and scratch state for this many
+        /// connections, so set it to your expected peak + headroom.
+        max_connections: usize = 4096,
     };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: Config) !Server {
@@ -241,9 +245,9 @@ pub const Server = struct {
         var address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = local_ip, .port = config.port } };
         const socket = try address.bind(io, .{ .mode = .dgram, .protocol = .udp });
         enlargeSocketReceiveBuffer(socket.handle);
-        const server_ep = try ServerEndpoint.initWithCapacity(allocator, 16, .{
-            .max_routes = 64,
-            .max_stateless_reset_tokens = 64,
+        const server_ep = try ServerEndpoint.initWithCapacity(allocator, config.max_connections, .{
+            .max_routes = config.max_connections,
+            .max_stateless_reset_tokens = config.max_connections,
         });
         return .{
             .allocator = allocator,
