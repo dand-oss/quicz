@@ -233,7 +233,6 @@ pub fn build(b: *std.Build) void {
     const run_congestion_bench_cmd = b.addRunArtifact(exe_congestion_bench);
     run_congestion_bench.dependOn(&run_congestion_bench_cmd.step);
 
-    if (target.result.os.tag == .macos) {
         const exe_quic_bench = b.addExecutable(.{
             .name = "quicz-quic-bench",
             .root_module = b.createModule(.{
@@ -322,7 +321,6 @@ pub fn build(b: *std.Build) void {
         bench_suite.dependOn(&run_quic_bench_datagram_cmd.step);
         bench_suite.dependOn(&run_quic_bench_profile_cmd.step);
         bench_suite.dependOn(&run_congestion_bench_cmd.step);
-    }
 
     // I/O runtime - async streaming echo (std.Io)
     const exe_io_echo = b.addExecutable(.{
