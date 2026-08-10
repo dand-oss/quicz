@@ -1962,7 +1962,6 @@ pub fn build(b: *std.Build) void {
     const run_h3_runtime_loopback = b.step("run-h3-runtime-loopback", "Run HTTP/3 + QPACK on the production std.Io runtime");
     const run_h3_runtime_loopback_cmd = b.addRunArtifact(exe_h3_runtime_loopback);
     run_h3_runtime_loopback.dependOn(&run_h3_runtime_loopback_cmd.step);
-    run_h3_runtime_loopback_cmd.step.dependOn(b.getInstallStep());
 
     // zig build run-tls13-lifecycle-loopback
     const run_tls13_lifecycle_loopback = b.step("run-tls13-lifecycle-loopback", "Run pure-Zig TLS 1.3 lifecycle loopback");
