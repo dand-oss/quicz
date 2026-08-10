@@ -21,6 +21,31 @@ jobs:
       - name: Format check
         run: zig fmt --check build.zig src examples
 
+  interop:
+    name: Cross-implementation interop (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o zig.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> $GITHUB_PATH
+      # Build the quicz interop binaries (client + runtime server) and the
+      # external tools (quic-go / quiche / s2n-quic servers and echo clients).
+      # Cargo builds of quiche/s2n take a few minutes; this job is separate so
+      # it does not slow the main build-linux job.
+      - name: Build quicz interop binaries
+        run: zig build -Doptimize=ReleaseFast
+      - name: Build external interop tools (Go + Cargo)
+        run: bash scripts/build_interop_tools.sh
+      # Forward matrix: quicz client vs external servers (handshake/transfer/verified).
+      # Reverse matrix: external clients vs quicz runtime server (echo).
+      - name: Interop matrix (forward + reverse)
+        run: |
+          bash examples/interop/run_external_interop.sh all
+          bash examples/interop/run_reverse_interop.sh all
+
   build-linux:
     name: Build + E2E (Linux x86_64, ReleaseFast)
     runs-on: ubuntu-latest
