@@ -376,10 +376,10 @@ test "HTTP/3 request encodeHeaders" {
     var buf: [256]u8 = undefined;
     const len = try req.encodeHeaders(&buf);
     try std.testing.expect(len > 0);
-    // QPACK prefix: RIC=0, DB=0, then :method GET (static index 8)
+    // QPACK prefix: RIC=0, DB=0, then :method GET (RFC 7541 static index 1)
     try std.testing.expectEqual(@as(u8, 0x00), buf[0]); // RIC
     try std.testing.expectEqual(@as(u8, 0x00), buf[1]); // DB
-    try std.testing.expectEqual(@as(u8, 0xc8), buf[2]); // :method GET
+    try std.testing.expectEqual(@as(u8, 0xc1), buf[2]); // :method GET
 }
 
 /// Decode an HTTP/3 request from a byte buffer containing HEADERS + optional DATA frames.
