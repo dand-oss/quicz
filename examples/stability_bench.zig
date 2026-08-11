@@ -138,6 +138,8 @@ pub fn main(init: std.process.Init) !void {
     try group.await(io);
 
     server.stop();
+    const m = server.metricsSnapshot();
+    std.debug.print("stability bench: metrics conns={d} sent={d}B recv={d}B loss={d} rt={d} srtt={d}us cwnd={d}B\n", .{ m.active_connections, m.stream_bytes_sent, m.stream_bytes_received, m.packets_lost, m.packets_retransmitted, m.smoothed_rtt_us, m.congestion_window });
     server.deinit();
     server_deinited = true;
 

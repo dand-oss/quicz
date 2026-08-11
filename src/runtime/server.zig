@@ -297,6 +297,55 @@ pub const Server = struct {
         self.notifyDrive(self.io);
     }
 
+    /// Aggregate metrics across all active connections (for a monitoring
+    /// endpoint pooled over the lifetime of the server). Reads are lock-serialized
+    /// with the drive task's conns traversal; per-connection stats are best-effort
+    /// snapshots that may straddle an in-flight update.
+    pub const Metrics = struct {
+        active_connections: usize,
+        stream_bytes_sent: u64,
+        stream_bytes_received: u64,
+        total_bytes_in_flight: usize,
+        smoothed_rtt_us: u64,
+        rttvar_us: u64,
+        congestion_window: usize,
+        packets_lost: u64,
+        packets_retransmitted: u64,
+    };
+
+    /// Return an aggregate metrics snapshot across all live connections.
+    pub fn metricsSnapshot(self: *Server) Metrics {
+        var m: Metrics = .{
+            .active_connections = 0,
+            .stream_bytes_sent = 0,
+            .stream_bytes_received = 0,
+            .total_bytes_in_flight = 0,
+            .smoothed_rtt_us = 0,
+            .rttvar_us = 0,
+            .congestion_window = 0,
+            .packets_lost = 0,
+            .packets_retransmitted = 0,
+        };
+        while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
+        var it = self.conns.valueIterator();
+        while (it.next()) |csp| {
+            const st = csp.*;
+            if (st.conn.isClosingOrClosed()) continue;
+            const cs = st.conn.connectionStats();
+            m.active_connections += 1;
+            m.stream_bytes_sent += cs.stream_bytes_sent;
+            m.stream_bytes_received += cs.stream_bytes_received;
+            m.total_bytes_in_flight += cs.total_bytes_in_flight;
+            m.smoothed_rtt_us += cs.smoothed_rtt_us;
+            m.rttvar_us += cs.rttvar_us;
+            m.congestion_window += cs.congestion_window;
+            m.packets_lost += cs.packets_lost;
+            m.packets_retransmitted += cs.packets_retransmitted;
+        }
+        self.mutex.unlock();
+        return m;
+    }
+
     /// Start the server (if not already started) and spawn the serve task,
     /// which accepts connections and runs one handler task per connection
     /// (std.Build.WebServer serve pattern). The runtime releases each
