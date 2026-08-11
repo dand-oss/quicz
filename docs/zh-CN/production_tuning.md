@@ -75,6 +75,7 @@ NewReno (RFC 9002) 是默认算法。更简单但在高带宽、高延迟路径�
 - **SO_RCVBUF 提升到 4 MB**（server + client socket），避免客户端突发在 drive 排空前溢出内核接收缓冲；丢包恢复仍兜底余下丢弃。
 - **空闲超时**：`max_idle_timeout_ms`（runtime 默认 30s）关闭停止发送的连接；按 keep-alive 需求调整。
 - **并发模型**：每个 `Server` 一个 drive task 串行处理所有连接（单线程事件循环，与 s2n-quic / quiche / quic-zig 相同）。单连接内多流并发已被利用（多流吞吐超过单流）。要跨核扩展多连接聚合吞吐，需在独立 socket/端口跑多个 `Server` 实例（当前用不同端口或负载均衡）。
+- **出站包大小上限（`send_mtu`，默认 1350）**：runtime 把出站 QUIC 包限制在标准 MTU，同时接收缓冲/池保留 8192 字节。发送 jumbo 数据报（到接收上限）会在持续传输时推高 RTT 采样，触发拥塞/pacer 正反馈，最终连接停滞到 idle 超时（在每连接 256 流 / 64MB 复现）。loopback 压测想要大包可改 `runtime/client.zig` / `runtime/server.zig` 的 `send_mtu`（4096 是安全折中，loopback 吞吐约 6 倍；jumbo 包在真实网络会 IP 分片，生产保持 1350）。
 - **绑定地址**：`Server.Config.bind_addr` 默认 `127.0.0.1`；设 `.{0,0,0,0}` 接受远程客户端。
 - **Linux x86_64 证书**：用 RSA 证书（Zig 0.16 `std.crypto` 在 x86_64 有 P-256/P-384/Ed25519 签名验证代码生成 bug）；aarch64 与 macOS 用 ECDSA 正常。
 

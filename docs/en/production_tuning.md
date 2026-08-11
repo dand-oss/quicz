@@ -101,6 +101,16 @@ I/O, routing, and stream delivery automatically. A few deployment notes:
   already exploited (multi-stream throughput exceeds single-stream). To scale
   aggregate multi-connection throughput across cores, run multiple `Server`
   instances on distinct ports or behind a load balancer.
+- **Outbound packet size cap** (`send_mtu`, default 1350): the runtime caps
+  outbound QUIC packets at standard MTU while keeping an 8192-byte receive
+  allowance for the datagram pool / recv buffer. Sending jumbo datagrams (up
+  to the receive allowance) inflates RTT samples on sustained transfers and
+  drives a congestion/pacer feedback loop that stalls the connection until
+  idle timeout (reproduced at 256 streams / 64 MB per connection). Loopback
+  benchmarks that want larger packets can raise `send_mtu` in
+  `runtime/client.zig` / `runtime/server.zig` (4096 is a safe middle ground,
+  ~6x the MTU throughput on loopback; jumbo packets are IP-fragmented on
+  real networks, so keep 1350 for production).
 - **Bind address**: `Server.Config.bind_addr` defaults to `127.0.0.1`; set
   `.{0,0,0,0}` to accept remote clients.
 - **Certificates on Linux x86_64**: use an RSA certificate (Zig 0.16 `std.crypto`
