@@ -3,6 +3,7 @@
 //! Usage: zig build run-quic-bench-simple
 
 const std = @import("std");
+const builtin = @import("builtin");
 const quicz = @import("quicz");
 
 const MachTimebaseInfo = extern struct { numer: u32, denom: u32 };
@@ -13,12 +14,18 @@ var tb_init: bool = false;
 var t0: u64 = 0;
 
 fn nanoTime() u64 {
-    if (!tb_init) {
-        _ = mach_timebase_info(&tb);
-        t0 = std.c.mach_absolute_time();
-        tb_init = true;
+    if (comptime builtin.os.tag == .macos) {
+        if (!tb_init) {
+            _ = mach_timebase_info(&tb);
+            t0 = std.c.mach_absolute_time();
+            tb_init = true;
+        }
+        return (std.c.mach_absolute_time() - t0) * tb.numer / tb.denom;
+    } else {
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+        return @intCast(@as(i128, ts.sec) * 1_000_000_000 + ts.nsec);
     }
-    return (std.c.mach_absolute_time() - t0) * tb.numer / tb.denom;
 }
 
 pub fn main() !void {

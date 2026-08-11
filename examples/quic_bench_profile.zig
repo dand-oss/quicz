@@ -2,6 +2,7 @@
 //! Measures time in each phase to identify the throughput bottleneck.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const quicz = @import("quicz");
 
 const max_datagram_size: usize = 8900;
@@ -16,12 +17,18 @@ var _tb: MachTimebaseInfo = undefined;
 var _tb_init: bool = false;
 var _t0: u64 = 0;
 fn nanoTime() u64 {
-    if (!_tb_init) {
-        _ = mach_timebase_info(&_tb);
-        _t0 = std.c.mach_absolute_time();
-        _tb_init = true;
+    if (comptime builtin.os.tag == .macos) {
+        if (!_tb_init) {
+            _ = mach_timebase_info(&_tb);
+            _t0 = std.c.mach_absolute_time();
+            _tb_init = true;
+        }
+        return (std.c.mach_absolute_time() - _t0) * _tb.numer / _tb.denom;
+    } else {
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+        return @intCast(@as(i128, ts.sec) * 1_000_000_000 + ts.nsec);
     }
-    return (std.c.mach_absolute_time() - _t0) * _tb.numer / _tb.denom;
 }
 
 const ServerContext = struct {
