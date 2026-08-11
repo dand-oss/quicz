@@ -72,6 +72,8 @@ pub const H3ServeOptions = struct { qpack_max_table_capacity: u64 = 4096, qpack_
 pub fn serveH3(self: *Server, options: H3ServeOptions, handler: h3_server.RequestHandler) !void
 pub fn deinit(self: *Server) void              // stop + cancel/await drive_group, free resources
 pub const HandlerFn = *const fn (ServerConnection) std.Io.Cancelable!void
+pub const Metrics = struct { active_connections, stream_bytes_sent/received, total_bytes_in_flight, smoothed_rtt_us, rttvar_us, congestion_window, packets_lost, packets_retransmitted }
+pub fn metricsSnapshot(self: *Server) Metrics    // aggregate stats across live connections (monitoring)
 pub drive_group: std.Io.Group                   // field; await it to block until shutdown
 ```
 

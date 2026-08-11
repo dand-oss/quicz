@@ -65,11 +65,11 @@ connections must not migrate between backends without connection migration).
 
 ## 5. Monitoring
 
-- `Connection.connectionStats()` aggregates per-connection metrics: stream
-  bytes sent/received, in-flight bytes, smoothed RTT/RTTVAR, congestion window,
-  cumulative packet loss / retransmissions, and largest acknowledged packet.
-  Expose these per connection (e.g. a metrics endpoint that walks the server's
-  connections) and alert on loss rate or RTT spikes.
+- `Server.metricsSnapshot()` aggregates per-connection stats across all live
+  connections in one call: stream bytes sent/received, in-flight bytes, smoothed
+  RTT/RTTVAR, congestion window, and cumulative packet loss / retransmissions
+  (`Connection.connectionStats()` gives the same shape per connection). Expose
+  it from a metrics endpoint and alert on loss rate or RTT spikes.
 - The runtime logs connection accept/close and drive errors via `std.log`
   (`quicz_runtime` scope). `error.UnknownConnectionId` on a closing connection
   is benign retransmission to a reclaimed connection, not a fault.

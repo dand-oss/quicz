@@ -44,7 +44,7 @@ try server.serveH3(.{}, handleRequest);
 
 ## 5. 监控
 
-- `Connection.connectionStats()` 聚合每连接指标：流字节收发、in-flight、平滑 RTT/RTTVAR、拥塞窗口、累计丢包/重传、最大已确认包。按连接暴露这些指标（例如遍历 server 连接的 metrics 端点），对丢包率或 RTT 尖峰告警。
+- `Server.metricsSnapshot()` 一次调用聚合所有活动连接指标：流字节收发、in-flight、平滑 RTT/RTTVAR、拥塞窗口、累计丢包/重传（`Connection.connectionStats()` 提供每连接同构数据）。从 metrics 端点暴露它，对丢包率或 RTT 尖峰告警。
 - runtime 通过 `std.log`（`quicz_runtime` 作用域）记录连接 accept/close 与 drive 错误。关闭连接上的 `error.UnknownConnectionId` 是对已回收连接的重传，属良性，不是故障。
 
 ## 6. 已知限制
