@@ -56,6 +56,11 @@ run_case() {
         FAILURES=$((FAILURES + 1))
     fi
     kill -9 "$server_pid" 2>/dev/null
+    # The server command runs under `eval` (env-prefixed), so $! is the
+    # wrapper shell, not the server; killing it orphans the server, which
+    # then holds the UDP port and breaks the next case/step (AddrInUse).
+    # Sweep any leftover interop server before the next case.
+    pkill -9 -f "interop-server 127.0.0.1" 2>/dev/null
     wait "$server_pid" 2>/dev/null
     sleep 1
 }
