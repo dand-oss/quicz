@@ -65,6 +65,8 @@ pub fn serve(self: *Server, handler: HandlerFn) !void   // start + spawn 每连�
 pub const H3ServeOptions = struct { qpack_max_table_capacity: u64 = 4096, qpack_blocked_streams: u64 = 8 };
 pub fn serveH3(self: *Server, options: H3ServeOptions, handler: h3_server.RequestHandler) !void
 pub fn deinit(self: *Server) void              // stop + cancel/await drive_group，释放资源
+pub const Metrics = struct { active_connections, stream_bytes_sent/received, total_bytes_in_flight, smoothed_rtt_us, rttvar_us, congestion_window, packets_lost, packets_retransmitted }
+pub fn metricsSnapshot(self: *Server) Metrics    // 聚合活动连接指标（监控）
 pub const HandlerFn = *const fn (ServerConnection) std.Io.Cancelable!void
 pub drive_group: std.Io.Group                   // 字段；await 它阻塞直到关闭
 ```
