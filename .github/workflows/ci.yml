@@ -96,6 +96,15 @@ jobs:
           output=$(zig build run-multi-client-bench -Doptimize=ReleaseFast 2>&1)
           echo "$output"
           echo "$output" | grep -q "ok=8/8" || exit 1
+      # Stability guard: sustained multi-stream transfer must complete without
+      # errors or leaks (regression guard for the 256-stream stall). Linux is
+      # slow under small packets, so 60 s exercises the steady-state echo path
+      # without reaching the 256-stream boundary; fails on any stream error.
+      - name: Stability (sustained transfer)
+        run: |
+          output=$(zig build run-stability-bench -Doptimize=ReleaseFast -- 60000 2>&1)
+          echo "$output" | tail -5
+          echo "$output" | grep -q "ok=true" || exit 1
       # Fuzz regression guard: 20k iterations of the standalone fuzz harness
       # (QPACK / WebTransport / H3 / transport-parameter state machines). Fails
       # on any crash or leak. 20k keeps the CI step under a minute; deep fuzzing
