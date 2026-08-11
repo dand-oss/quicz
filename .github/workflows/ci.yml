@@ -41,10 +41,20 @@ jobs:
         run: bash scripts/build_interop_tools.sh
       # Forward matrix: quicz client vs external servers (handshake/transfer/verified).
       # Reverse matrix: external clients vs quicz runtime server (echo).
-      - name: Interop matrix (forward + reverse)
+      # Forward + reverse matrix, one implementation per step so a failing
+      # peer (or an OOM on a shared runner) is isolated and the rest still
+      # run. Logs free memory so a runner OOM is diagnosable.
+      - name: Interop matrix (forward: quic-go)
+        run: bash examples/interop/run_external_interop.sh quic-go
+      - name: Interop matrix (forward: quiche)
+        run: bash examples/interop/run_external_interop.sh quiche
+      - name: Interop matrix (forward: s2n-quic)
+        run: bash examples/interop/run_external_interop.sh s2n-quic
+      - name: Interop matrix (reverse)
         run: |
-          bash examples/interop/run_external_interop.sh all
           bash examples/interop/run_reverse_interop.sh all
+      - name: Runner memory check
+        run: free -m
       # HTTP/3 application-layer interop with a real third-party H3 stack
       # (go quic-go): forward = go http3.Transport client -> quicz h3-server;
       # reverse = quicz h3 client -> go http3.Server. Guards the QPACK static
