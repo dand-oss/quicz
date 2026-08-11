@@ -44,6 +44,7 @@ run_case() {
     sleep 2
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "FAIL: server did not start (see /tmp/interop_server_$impl.log)"
+        tail -15 "/tmp/interop_server_$impl.log"
         FAILURES=$((FAILURES + 1))
         return
     fi
