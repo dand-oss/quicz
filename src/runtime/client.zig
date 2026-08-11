@@ -17,7 +17,19 @@ const quic_packet = quicz.packet;
 
 const log = std.log.scoped(.quicz_runtime);
 
+/// Receive-buffer / datagram-pool size (UDP payload allowance).
 const max_datagram_size: usize = 8192;
+/// Outbound QUIC packet size cap (standard MTU). Sending jumbo datagrams
+/// (up to the receive allowance) inflates RTT samples and triggers
+/// congestion on loopback, so packets are capped at the MTU while the
+/// receive path keeps the larger allowance.
+/// Outbound QUIC packet size cap (standard MTU). Sending jumbo datagrams
+/// (up to the receive allowance) inflates RTT samples and triggers a
+/// congestion / pacer feedback loop on loopback after sustained transfer
+/// (see goal.md 256-stream bug), so packets are capped at the MTU while
+/// the receive path keeps the larger allowance. Loopback benchmarks that
+/// want jumbo packets can raise this (4096 is a safe middle ground).
+const send_mtu: usize = 1350;
 
 const queued_datagram_pool_size = 16;
 
@@ -240,7 +252,7 @@ pub const Client = struct {
                 .initial_max_stream_data = 10_485_760,
                 .initial_max_streams_bidi = 128,
                 .initial_max_streams_uni = 128,
-                .max_datagram_size = max_datagram_size,
+                .max_datagram_size = send_mtu,
                 .chosen_version = config.version,
                 .available_versions = available_versions,
             },
@@ -276,6 +288,8 @@ pub const Client = struct {
     fn enlargeSocketReceiveBuffer(handle: std.Io.net.Socket.Handle) void {
         const size: u32 = 4 * 1024 * 1024;
         std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, std.mem.asBytes(&size)) catch {};
+        const snd: u32 = 8 * 1024 * 1024;
+        std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, std.mem.asBytes(&snd)) catch {};
     }
 
     /// Gracefully close the connection with an APPLICATION_CLOSE; the drive
