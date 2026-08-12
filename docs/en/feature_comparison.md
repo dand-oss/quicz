@@ -25,7 +25,6 @@ Updated: 2026-08-11. Sources: project READMEs, source code inspection, RFC compl
 | Fuzz targets | — | ✅(OSS-Fuzz) | ✅ | ✅ | ✅ | — |
 | NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
 | CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
-| BBR | — | ✅ | ✅ | ✅ | ❌ | quicz 未实现 BBR（NewReno/CUBIC） |
 | HyStart++ | draft | ❌ | ❌ | ✅ | ✅ | 慢启动 RTT 监测提前退出 |
 | PTO jitter | 9002 | ❌ | ❌ | ✅ | ✅ | 防止超时同步化 |
 | Fast retransmission | 9002 | ✅ | ✅ | ✅ | ✅ | — |
@@ -56,7 +55,7 @@ Updated: 2026-08-11. Sources: project READMEs, source code inspection, RFC compl
 | Cipher suites (5 items) | 5/5 | 5/5 | 5/5 | 5/5 |
 | Application layer (6 items) | 6/6 | 3/6 | 0/6 | 6/6 |
 | Platform (3 items) | 2/3 | 0/3 | 1/3 | 1/3 |
-| **Total (41 items)** | **38/41** | **28/41** | **27/41** | **41/41** |
+| **Total (40 items)** | **37/40** | **27/40** | **26/40** | **38/40** |
 
 ### Gap analysis
 
