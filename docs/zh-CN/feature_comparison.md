@@ -26,7 +26,7 @@
 | Fuzz 目标 | — | ✅(OSS-Fuzz) | ✅ | ✅ | ✅ | — |
 | NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
 | CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
-| BBR | — | ✅ | ✅ | ✅ | ✅ | — |
+| BBR | — | ✅ | ✅ | ✅ | ❌ | quicz 未实现 BBR（NewReno/CUBIC） |
 | HyStart++ | draft | ❌ | ❌ | ✅ | ✅ | 慢启动 RTT 监测提前退出 |
 | PTO jitter | 9002 | ❌ | ❌ | ✅ | ✅ | 防止超时同步化 |
 | 快速重传 | 9002 | ✅ | ✅ | ✅ | ✅ | — |

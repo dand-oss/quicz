@@ -8,7 +8,7 @@
 
 quicz 目前聚焦 QUIC transport core：连接状态、包保护、CRYPTO/STREAM frame、
 transport parameters、ACK/loss/PTO、拥塞控制、连接 ID、path validation、Retry、
-stateless reset 和 endpoint lifecycle。TLS 1.3 由纯 Zig 实现（src/tls/tls13.zig，8227 行，213 测试），支持 ECDSA P-256、X25519、X25519Kyber768（后量子）、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖。同时保留 C-ABI TLS adapter 用于 OpenSSL 互通测试。
+stateless reset 和 endpoint lifecycle。TLS 1.3 由纯 Zig 实现（src/tls/tls13.zig，9524 行，222 测试），支持 ECDSA P-256、X25519、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖。同时保留 C-ABI TLS adapter 用于 OpenSSL 互通测试。
 
 当前文档中的“核心协议流程”指 transport 内部状态流转，不代表某个上层应用业务。
 HTTP/3 完整连接管理（SETTINGS 全参数、GOAWAY、stream 状态机）、QPACK 静态+动态表（encoder/decoder instructions、header block 动态引用）、WebTransport 完整会话管理（uni/bidi 帧、CLOSE capsule、datagram）、HTTP Datagrams (RFC 9297)、流重置部分交付均已实现。功能覆盖 36/37，与 quic-go 持平。互通已验证双向矩阵 7/7 全绿：正向 quicz client -> quic-go/quiche/s2n-quic server，反向 quic-go/quinn/quiche/s2n-quic client -> quicz runtime server。生产级高层 API 见 src/quic/api.zig（Endpoint/Connection/Stream 三层）。
@@ -117,7 +117,7 @@ installed-key 包收发和 key phase 状态。它接收已经安装好的密钥�
 
 ### TLS integration boundary
 
-TLS 集成边界支持两条路径：(1) 纯 Zig TLS 1.3 实现（src/tls/tls13.zig，8227 行，213 测试），支持 ECDSA P-256、X25519、X25519Kyber768、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖；(2) 遗留 C-ABI TlsBackend/CryptoBackend adapter 用于 OpenSSL 互通测试。
+TLS 集成边界支持两条路径：(1) 纯 Zig TLS 1.3 实现（src/tls/tls13.zig，9524 行，222 测试），支持 ECDSA P-256、X25519、AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305、ALPN、SNI 和证书链验证，无 C 依赖；(2) 遗留 C-ABI TlsBackend/CryptoBackend adapter 用于 OpenSSL 互通测试。
 构建脚本使用 Zig 0.16 推荐的 `addTranslateC` + `@import("c")` 路径，不手写 C ABI 的
 `extern fn`/`extern struct`。
 

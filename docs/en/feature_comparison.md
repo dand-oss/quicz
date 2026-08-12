@@ -1,6 +1,6 @@
 ## Feature comparison with other QUIC implementations
 
-Updated: 2026-07-28. Sources: project READMEs, source code inspection, RFC compliance tracking.
+Updated: 2026-08-11. Sources: project READMEs, source code inspection, RFC compliance tracking.
 
 | Feature | RFC | quic-go | quiche | s2n-quic | quicz | Gap |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ Updated: 2026-07-28. Sources: project READMEs, source code inspection, RFC compl
 | Fuzz targets | — | ✅(OSS-Fuzz) | ✅ | ✅ | ✅ | — |
 | NewReno | 9002 | ✅ | ✅ | ❌ | ✅ | s2n-quic 仅 CUBIC+BBR |
 | CUBIC | 9438 | ✅ | ✅ | ✅ | ✅ | — |
-| BBR | — | ✅ | ✅ | ✅ | ✅ | — |
+| BBR | — | ✅ | ✅ | ✅ | ❌ | quicz 未实现 BBR（NewReno/CUBIC） |
 | HyStart++ | draft | ❌ | ❌ | ✅ | ✅ | 慢启动 RTT 监测提前退出 |
 | PTO jitter | 9002 | ❌ | ❌ | ✅ | ✅ | 防止超时同步化 |
 | Fast retransmission | 9002 | ✅ | ✅ | ✅ | ✅ | — |
@@ -35,7 +35,7 @@ Updated: 2026-07-28. Sources: project READMEs, source code inspection, RFC compl
 | AES-256-GCM | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | ChaCha20-Poly1305 | 9001 | ✅ | ✅ | ✅ | ✅ | — |
 | X25519 ECDH | 8446 | ✅ | ✅ | ✅ | ✅ | — |
-| X25519Kyber768 (PQ) | draft | ✅ | ✅ | ✅ | ✅ | — |
+| X25519Kyber768 (PQ) | draft | ✅ | ✅ | ✅ | ⚠️ (standalone KEM, not in TLS handshake) | quicz 未把 PQ KEX 接入 TLS 1.3 握手 |
 | HTTP/3 | 9114 | ✅ | ✅ | ❌ | ✅ | 完整连接管理、Settings、GOAWAY、stream 状态机 |
 | QPACK static table | 9204 | ✅ | ✅ | ❌ | ✅ | — |
 | QPACK dynamic table | 9204 | ✅ | ✅ | ❌ | ✅ | 动态表 + encoder/decoder instructions + header block |

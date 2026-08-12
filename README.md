@@ -9,7 +9,7 @@ English | [简体中文](README_zh-CN.md)
 
 A QUIC / HTTP/3 implementation in pure Zig.
 
-> **Current state:** Transport + application layer production-ready (36/37 features, 1820 tests,
+> **Current state:** Transport + application layer production-ready (36 features, 1883 tests,
 > three-implementation interop verified). Full HTTP/3, QPACK, WebTransport, and HTTP Datagrams.
 > Public APIs may still evolve.
 
@@ -18,7 +18,7 @@ A QUIC / HTTP/3 implementation in pure Zig.
 ## Features
 
 - **QUIC v1 & v2** (RFC 9000 / RFC 9369) — handshake, streams, flow control, connection migration, path validation, Retry, stateless reset, key update, version negotiation, DATAGRAM, multipath, ECN, PMTUD, GSO/GRO
-- **TLS 1.3** (RFC 8446 / RFC 9001) — pure Zig, no C dependencies. ECDSA P-256, X25519, X25519Kyber768 (post-quantum), AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, 0-RTT, session resumption
+- **TLS 1.3** (RFC 8446 / RFC 9001) — pure Zig, no C dependencies. ECDSA P-256, X25519, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, 0-RTT, session resumption
 - **Loss Detection & Congestion Control** (RFC 9002 / RFC 9438) — NewReno, CUBIC, packet pacing
    - **HTTP/3** (RFC 9114) — full connection management, SETTINGS, GOAWAY, stream state machine, QPACK static + dynamic table, production async runtime drivers
 - **WebTransport** (draft-ietf-webtrans-http3) — full session management, uni/bidi framing, CLOSE capsule, datagrams
@@ -139,18 +139,18 @@ Benchmark results (Apple M-series, macOS loopback, ReleaseFast):
 
 | Metric | Result |
 |---|---|
-| Stream Upload (threaded) | **~1.94 GB/s** |
-| Echo Latency (1 KB RTT) | **P50=19μs, P99=55μs** |
-| Multi-Stream (4x) | **~800 MB/s** |
-| Loss Recovery (1% loss) | **~117 MB/s** |
-| Loss Recovery (5% loss) | **~67 MB/s** |
+| Stream Upload (real handshake) | **~430-510 MB/s** |
+| Echo Latency (1 KB RTT) | **P50=20μs, P99=93μs** |
+| Multi-Stream (4x) | **~300-560 MB/s** |
+| Loss Recovery (1% loss) | **~450 MB/s** (loopback) |
+| Loss Recovery (5% loss) | **~300 MB/s** (loopback) |
 
 Comparison with other QUIC implementations:
 
 | Implementation | Language | Throughput | Latency P50 |
 |---|---|---|---|
 | msquic | C | 1.5-2.5 GB/s (Linux XDP) | ~5-15μs |
-| **quicz** | **Zig** | **~1.94 GB/s (macOS)** | **~19μs** |
+| **quicz** | **Zig** | **~0.5 GB/s (macOS)** | **~20μs** |
 | s2n-quic | Rust | ~800 MB/s (Linux GSO) | ~20-40μs |
 | quic-go | Go | 400-600 MB/s (Linux GSO) | ~50-100μs |
 | quiche | Rust | 300-500 MB/s | ~30-80μs |
@@ -165,7 +165,7 @@ Requires **Zig 0.16.0**.
 
 ```bash
 zig build                                    # build library
-zig build test --summary all                 # 1867 unit tests
+zig build test --summary all                 # 1883 unit tests
 zig build run-tls13-udp-loopback             # TLS 1.3 UDP loopback
 zig build run-h3-loopback                    # HTTP/3 + QPACK dynamic over UDP
 zig build run-h3-runtime-loopback            # HTTP/3 + QPACK on the std.Io runtime
@@ -233,7 +233,7 @@ token forgery), each with code and test references.
 | `src/quic/tls13_server_endpoint.zig` | Server endpoint (multi-connection routing) |
 | `src/quic/udp_event_loop.zig` | UDP socket I/O (IPv4 + IPv6 dual-stack) |
 | `src/tls/tls13.zig` | Pure Zig TLS 1.3 (9.4K lines, 222 tests) |
-| `src/tls/pq_kex.zig` | X25519Kyber768 post-quantum key exchange |
+| `src/tls/pq_kex.zig` | X25519Kyber768 hybrid KEM primitives (standalone; not yet wired into the TLS 1.3 handshake) |
 | `src/tls/pem.zig` | PEM (RFC 7468) decoding + SEC1/PKCS#8 P-256 private key parsing |
 | `src/quic/protection.zig` | Packet protection (AES-GCM, ChaCha20-Poly1305) |
 | `src/quic/recovery.zig` | Loss detection and recovery (RFC 9002) |

@@ -7,7 +7,7 @@ completes or the connection closes).
 
 ## Top-level namespace (`src/lib.zig`)
 
-The top level exports ~98 names. They fall into three layers; most
+The top level exports ~94 names. They fall into three layers; most
 applications only touch the first.
 
 **1. Production entry points** — build HTTP/3 or QUIC apps:

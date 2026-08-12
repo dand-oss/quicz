@@ -234,7 +234,7 @@ P3 re-entry rule satisfied: P0/P1/P2 stable.
 
 ### P5 task matrix — production readiness
 
-P5 re-entry rule satisfied: P0-P4 complete, 1583 tests pass.
+P5 re-entry rule satisfied: P0-P4 complete, 1883 tests pass.
 
 | Phase | Task | Scope | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -243,7 +243,7 @@ P5 re-entry rule satisfied: P0-P4 complete, 1583 tests pass.
 | P5-C | Interop-Runner compat | Server+client binaries compile (Zig 0.16 adapted); Dockerfile + run_endpoint.sh ready | Docker build + interop-runner handshake/transfer test | Done (handshake+transfer pass, client memory leak pending) |
 | P5-D | 0-RTT full flow | Session ticket store, PSK handshake, 0-RTT data send, replay protection | Client resumes session with 0-RTT data; replay rejected | Done |
 | P5-E | Multipath integration | MultipathManager integrated into Connection; multi-path data distribution | Two-path connection: data flows on both paths; failover works | Done |
-| P5-F | Endpoint API migration | Migrate 571 lifecycle variants to options-struct unified interface | API count reduced by >50%; 1583+ tests pass | Done |
+| P5-F | Endpoint API migration | Migrate 571 lifecycle variants to options-struct unified interface | API count reduced by >50%; 1883+ tests pass | Done |
 | P5-G | Production validation | Stress test, long-running, memory leak detection, real network interop | 10K concurrent connections; 1hr soak; zero leaks; quic-go interop | Done (stress+leak+soak+local interop pass, real network deployment pending) |
 
 ### P5 execution queue
@@ -252,22 +252,22 @@ P5 re-entry rule satisfied: P0-P4 complete, 1583 tests pass.
 | --- | --- | --- | --- |
 | 1 | P5-A UDP I/O event loop | Done | Foundation for all production features |
 | 2 | P5-B HTTP/3 request/response | Done | Full H3 stack over QUIC |
-| 3 | P5-C Interop-Runner compat | Active | Standard interop test suite |
+| 3 | P5-C Interop-Runner compat | Done | Standard interop test suite |
 | 4 | P5-D 0-RTT full flow | Done | Session resumption |
 | 5 | P5-E Multipath integration | Done | Multi-path data distribution |
 | 6 | P5-F Endpoint API migration | Done | API simplification |
-| 7 | P5-G Production validation | Active | Stress/soak/leak/interop |
+| 7 | P5-G Production validation | Done | Stress/soak/leak/interop |
 
 
 ### P6 task matrix — advanced features and ecosystem
 
-P6 re-entry rule: P0-P5 complete, 1611 tests pass.
+P6 re-entry rule: P0-P5 complete, 1883 tests pass.
 
 | Phase | Task | Scope | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
 | P6-A | HTTP/3 full stack | Real request/response over QUIC streams; GOAWAY graceful close; SETTINGS exchange; stream lifecycle | H3 client GET → server 200 + body over protected QUIC; GOAWAY clean shutdown | Done |
 | P6-B | QUIC v2 / RFC 9368 | Version negotiation, v2 salt/labels, v2 Initial/Handshake/1-RTT full flow | v2 handshake + transfer pass; version negotiation fallback works | Done |
-| P6-C | Advanced congestion control | BBR algorithm; CUBIC production hardening; algorithm switch API | BBR and CUBIC selectable at connection start; both pass loss/recovery tests | Done |
+| P6-C | Advanced congestion control | CUBIC production hardening; algorithm switch API | NewReno and CUBIC selectable at connection start; both pass loss/recovery tests | Done |
 | P6-D | Interop-Runner full coverage | retry, multiplexing, chacha20, keyupdate, v2 testcases | All standard interop testcases pass in Docker | Done |
 | P6-E | QUIC Datagram extension | RFC 9221 DATAGRAM frames; unreliable data API | Datagram send/receive over QUIC; loss does not block streams | Done |
 | P6-F | Performance optimization | GSO/GRO batch UDP; zero-copy send; connection pool | Batch send/receive test; pool reuse test | Done |
@@ -280,7 +280,7 @@ P6 re-entry rule: P0-P5 complete, 1611 tests pass.
 | --- | --- | --- | --- |
 | 1 | P6-A HTTP/3 full stack | Done | Real H3 request/response over QUIC |
 | 2 | P6-B QUIC v2 / RFC 9368 | Done | Version 2 support |
-| 3 | P6-C Advanced congestion control | Done | BBR + CUBIC production |
+| 3 | P6-C Advanced congestion control | Done | NewReno + CUBIC production |
 | 4 | P6-D Interop-Runner full coverage | Done | All testcases |
 | 5 | P6-E QUIC Datagram extension | Done | RFC 9221 |
 | 6 | P6-F Performance optimization | Done | GSO/GRO/pool |

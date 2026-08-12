@@ -13,7 +13,7 @@ in pure Zig with a pure Zig TLS 1.3 implementation. The project covers:
 - **QUIC transport core**: connection state, packet protection, frames,
   transport parameters, ACK/loss/PTO, congestion control (NewReno + CUBIC),
   connection IDs, path validation, Retry, stateless reset, endpoint lifecycle.
-- **Pure Zig TLS 1.3** (src/tls/tls13.zig, 8227 lines, 213 tests): handshake state machine, key schedule,
+- **Pure Zig TLS 1.3** (src/tls/tls13.zig, 9524 lines, 222 tests): handshake state machine, key schedule,
   certificate verification, ALPN, QUIC transport parameters extension.
 - **HTTP/3** (src/h3/): frame codec (RFC 9114), QPACK static + dynamic table
   (RFC 9204), full connection management (SETTINGS, GOAWAY, stream state machine),
@@ -162,7 +162,7 @@ keys came from a mock backend or a C TLS backend.
 
 ### TLS Integration Boundary
 
-The TLS boundary supports two paths: (1) the pure Zig TLS 1.3 implementation in `src/tls/tls13.zig` (8227 lines, 213 tests) with ECDSA P-256, X25519, X25519Kyber768, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, ALPN, SNI, and certificate chain verification — no C dependencies; (2) the legacy C-ABI `TlsBackend`/`CryptoBackend` adapter for OpenSSL interop testing. The build uses Zig 0.16's recommended
+The TLS boundary supports two paths: (1) the pure Zig TLS 1.3 implementation in `src/tls/tls13.zig` (8227 lines, 213 tests) with ECDSA P-256, X25519, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, ALPN, SNI, and certificate chain verification — no C dependencies; (2) the legacy C-ABI `TlsBackend`/`CryptoBackend` adapter for OpenSSL interop testing. The build uses Zig 0.16's recommended
 `addTranslateC` + `@import("c")` path, rather than handwritten C ABI
 `extern fn` or `extern struct` declarations.
 
