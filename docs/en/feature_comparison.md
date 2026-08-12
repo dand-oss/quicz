@@ -63,7 +63,7 @@ Updated: 2026-08-11. Sources: project READMEs, source code inspection, RFC compl
 **Mandatory gaps (all three have) — ALL CLOSED:**
 
 1. ~~AES-256-GCM~~ — DONE (675e7ca)
-2. ~~X25519Kyber768~~ — DONE (675e7ca)
+2. X25519Kyber768 — standalone KEM primitives (pq_kex.zig); not yet wired into the TLS 1.3 handshake
 
 **Recommended (2/3 have):**
 
@@ -72,9 +72,9 @@ Updated: 2026-08-11. Sources: project READMEs, source code inspection, RFC compl
 
 **Optional (1/3 or fewer):**
 
-5. HTTP Datagrams (RFC 9297) — quic-go only
-6. Complete WebTransport session — quic-go only
-7. Stream reset partial delivery — quic-go only (draft)
+5. HTTP Datagrams (RFC 9297) — quic-go + quicz
+6. Complete WebTransport session — quic-go + quicz
+7. Stream reset partial delivery — quic-go + quicz (draft)
 8. FIPS 140-3 — quic-go only
 9. XDP zero-copy I/O — s2n-quic only
 

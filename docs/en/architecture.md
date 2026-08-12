@@ -162,7 +162,7 @@ keys came from a mock backend or a C TLS backend.
 
 ### TLS Integration Boundary
 
-The TLS boundary supports two paths: (1) the pure Zig TLS 1.3 implementation in `src/tls/tls13.zig` (8227 lines, 213 tests) with ECDSA P-256, X25519, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, ALPN, SNI, and certificate chain verification — no C dependencies; (2) the legacy C-ABI `TlsBackend`/`CryptoBackend` adapter for OpenSSL interop testing. The build uses Zig 0.16's recommended
+The TLS boundary supports two paths: (1) the pure Zig TLS 1.3 implementation in `src/tls/tls13.zig` (9524 lines, 222 tests) with ECDSA P-256, X25519, AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, ALPN, SNI, and certificate chain verification — no C dependencies; (2) the legacy C-ABI `TlsBackend`/`CryptoBackend` adapter for OpenSSL interop testing. The build uses Zig 0.16's recommended
 `addTranslateC` + `@import("c")` path, rather than handwritten C ABI
 `extern fn` or `extern struct` declarations.
 
