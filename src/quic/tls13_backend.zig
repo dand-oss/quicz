@@ -142,6 +142,25 @@ pub const Tls13Backend = struct {
         try self.hs.setServerPskIdentity(identity);
     }
 
+    /// Set the non-secret identity this client offers in its PSK
+    /// pre_shared_key extension.
+    ///
+    /// For external-PSK handshakes the identity is an opaque byte string
+    /// chosen by the application (it never needs to be a real session
+    /// ticket). The client must have been initialized with a PSK
+    /// (`initClientWithPsk`); the identity rides in the same slot a
+    /// resumption ticket would and — exactly like a ticket — never marks
+    /// the offer early-data-capable on its own. Offering becomes a public
+    /// API instead of callers mutating handshake fields directly.
+    pub fn setClientPskIdentity(self: *Tls13Backend, identity: []const u8) tls13.HandshakeError!void {
+        if (identity.len == 0 or identity.len > self.hs.session_ticket.len) {
+            return error.DecodeError;
+        }
+        if (!self.hs.has_psk) return error.UnexpectedMessage;
+        @memcpy(self.hs.session_ticket[0..identity.len], identity);
+        self.hs.session_ticket_len = identity.len;
+    }
+
     /// Bind the configured server PSK to a stored ticket-age policy.
     pub fn setServerPskTicketAgePolicy(
         self: *Tls13Backend,
@@ -531,6 +550,32 @@ test "Tls13Backend setServerPskIdentity configures underlying TLS handshake" {
     );
 
     try std.testing.expectError(error.DecodeError, backend.setServerPskIdentity(&[_]u8{}));
+}
+
+test "Tls13Backend setClientPskIdentity offers an external-PSK identity" {
+    var backend = Tls13Backend.initClientWithPsk(.{
+        .alpn = &.{},
+    }, [_]u8{0xab} ** tls13.secret_len);
+    const identity = "zmosh-ssh-bootstrap-v1";
+    try backend.setClientPskIdentity(identity);
+    try std.testing.expect(backend.hs.has_psk);
+    try std.testing.expectEqual(identity.len, backend.hs.session_ticket_len);
+    try std.testing.expectEqualSlices(
+        u8,
+        identity,
+        backend.hs.session_ticket[0..backend.hs.session_ticket_len],
+    );
+    // The identity alone never enables an early-data offer.
+    try std.testing.expect(!backend.hs.session_ticket_allows_early_data);
+
+    // Empty identities are rejected, and a plain non-PSK client cannot
+    // offer one.
+    try std.testing.expectError(error.DecodeError, backend.setClientPskIdentity(&[_]u8{}));
+    var plain = Tls13Backend.initClient(.{});
+    try std.testing.expectError(
+        error.UnexpectedMessage,
+        plain.setClientPskIdentity(identity),
+    );
 }
 
 test "Tls13Backend writeKeylog waits for ClientHello random" {
