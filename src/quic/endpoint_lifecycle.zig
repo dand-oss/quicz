@@ -1266,6 +1266,105 @@ pub const EndpointConnectionLifecycle = struct {
     }
 
     /// Route a datagram and verify it routes to the expected connection.
+    /// Address-neutral routing: native IPv6 paths route identically.
+    pub fn routeDatagramAddress(
+        self: *const EndpointConnectionLifecycle,
+        path: endpoint.UdpTuple,
+        datagram: []const u8,
+    ) endpoint.RouteError!endpoint.RouteResult {
+        return self.router.routeDatagramAddress(path, datagram);
+    }
+
+    /// Route one datagram and verify it routes to the expected connection
+    /// (address-neutral form).
+    pub fn routeAndVerifyDatagramAddress(
+        self: *const EndpointConnectionLifecycle,
+        connection_id: u64,
+        path: endpoint.UdpTuple,
+        datagram: []const u8,
+    ) (endpoint.RouteError || error{InvalidPacket})!endpoint.RouteResult {
+        const route = try self.router.routeDatagramAddress(path, datagram);
+        if (route.connection_id != connection_id) return error.InvalidPacket;
+        return route;
+    }
+
+    /// Route and process one protected Initial datagram (address-neutral).
+    pub fn processRoutedProtectedInitialDatagramAddress(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        path: endpoint.UdpTuple,
+        now_nanos: i64,
+        original_destination_connection_id: []const u8,
+        datagram: []const u8,
+    ) EndpointProtectedInitialError!endpoint.RouteResult {
+        const route = try self.router.routeDatagramAddress(path, datagram);
+        if (route.connection_id != connection_id) return error.InvalidPacket;
+
+        const info = protection.peekProtectedLongPacketInfo(datagram) catch return error.InvalidPacket;
+        if (info.packet_type != .initial) return error.InvalidPacket;
+        const initial_secrets = protection.deriveInitialSecrets(
+            info.version,
+            original_destination_connection_id,
+        ) catch return error.InvalidPacket;
+        const keys = switch (connection.side) {
+            .client => initial_secrets.server,
+            .server => initial_secrets.client,
+        };
+        try self.processProtectedLongDatagramInSpace(
+            connection_id,
+            connection,
+            .initial,
+            now_nanos,
+            keys,
+            datagram,
+        );
+        return route;
+    }
+
+    /// Route and process one installed-key Handshake datagram
+    /// (address-neutral).
+    pub fn processRoutedProtectedHandshakeDatagramWithInstalledKeysAddress(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        path: endpoint.UdpTuple,
+        now_nanos: i64,
+        datagram: []const u8,
+    ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        const route = try self.router.routeDatagramAddress(path, datagram);
+        if (route.connection_id != connection_id) return error.InvalidPacket;
+        try self.processProtectedHandshakeDatagramWithInstalledKeys(
+            connection_id,
+            connection,
+            now_nanos,
+            datagram,
+        );
+        return route;
+    }
+
+    /// Route and process one installed-key 1-RTT datagram
+    /// (address-neutral).
+    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAddress(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        path: endpoint.UdpTuple,
+        now_nanos: i64,
+        datagram: []const u8,
+    ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        const route = try self.router.routeDatagramAddress(path, datagram);
+        if (route.connection_id != connection_id) return error.InvalidPacket;
+        try self.processProtectedShortDatagramWithInstalledKeys(
+            connection_id,
+            connection,
+            now_nanos,
+            route.destination_connection_id.asSlice().len,
+            datagram,
+        );
+        return route;
+    }
+
     pub fn routeAndVerifyDatagram(
         self: *const EndpointConnectionLifecycle,
         connection_id: u64,
