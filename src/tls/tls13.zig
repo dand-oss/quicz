@@ -3248,6 +3248,26 @@ pub const Tls13Handshake = struct {
         }
     }
 
+    /// Zeroize all retained secret material: the TLS key schedule
+    /// secrets, the resumption and external PSKs, the 0-RTT early traffic
+    /// secret, and the ephemeral key-exchange private keys. Call before
+    /// dropping a handshake; does not free anything.
+    pub fn secureWipe(self: *Tls13Handshake) void {
+        const ks = &self.key_schedule;
+        std.crypto.secureZero(u8, &ks.early_secret);
+        std.crypto.secureZero(u8, &ks.handshake_secret);
+        std.crypto.secureZero(u8, &ks.master_secret);
+        std.crypto.secureZero(u8, &ks.client_handshake_traffic_secret);
+        std.crypto.secureZero(u8, &ks.server_handshake_traffic_secret);
+        std.crypto.secureZero(u8, &ks.client_app_traffic_secret);
+        std.crypto.secureZero(u8, &ks.server_app_traffic_secret);
+        if (self.resumption_psk) |*psk| std.crypto.secureZero(u8, psk);
+        if (self.server_psk) |*psk| std.crypto.secureZero(u8, psk);
+        std.crypto.secureZero(u8, &self.server_early_traffic_secret);
+        std.crypto.secureZero(u8, &self.x25519_secret);
+        std.crypto.secureZero(u8, &self.p256_secret);
+    }
+
     pub fn isComplete(self: *const Tls13Handshake) bool {
         return self.state == .connected;
     }

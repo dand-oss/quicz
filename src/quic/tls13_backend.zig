@@ -170,6 +170,12 @@ pub const Tls13Backend = struct {
         try self.hs.setServerPskTicketAgePolicy(ticket_age_add, max_age_ms);
     }
 
+    /// Zeroize all TLS secret material held by the underlying handshake
+    /// (key schedule, PSKs, early traffic secret, ephemeral private keys).
+    pub fn secureWipe(self: *Tls13Backend) void {
+        self.hs.secureWipe();
+    }
+
     /// Return a `CryptoBackend` value whose callbacks drive this backend.
     /// The value is only valid while `self` is stable.
     pub fn cryptoBackend(self: *Tls13Backend) CryptoBackend {
@@ -1210,4 +1216,19 @@ test "Tls13Backend server does not cache ServerHello for Retry replay" {
 
     server.retryReceived();
     try testing.expect((try server_cb.pull(server_cb.context, .initial, &scratch)) == null);
+}
+
+test "Tls13Backend secureWipe zeroizes TLS secret material" {
+    const psk = [_]u8{0xab} ** tls13.secret_len;
+    var backend = Tls13Backend.initServerWithPsk(.{
+        .alpn = &.{},
+    }, psk);
+    // The external PSK seeds the early secret; both are nonzero.
+    try std.testing.expect(!std.mem.allEqual(u8, &backend.hs.key_schedule.early_secret, 0));
+    try std.testing.expect(!std.mem.allEqual(u8, &backend.hs.server_psk.?, 0));
+
+    backend.secureWipe();
+    try std.testing.expect(std.mem.allEqual(u8, &backend.hs.key_schedule.early_secret, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &backend.hs.server_psk.?, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &backend.hs.x25519_secret, 0));
 }
