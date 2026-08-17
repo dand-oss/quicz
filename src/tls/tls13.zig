@@ -302,6 +302,18 @@ pub const TlsConfig = struct {
     skip_cert_verify: bool = true,
     /// Offer TLS_CHACHA20_POLY1305_SHA256 (client) or prefer it (server).
     prefer_chacha20: bool = false,
+    /// Explicitly disable all session-resumption machinery: the client
+    /// rejects any NewSessionTicket (storing neither ticket nor derived
+    /// PSK), never offers early data, and the server never emits
+    /// NewSessionTicket. External-PSK handshakes
+    /// (`initClientWithPsk`/`initServerWithPsk`) are unaffected: an
+    /// external PSK is provisioned out-of-band, not resumed.
+    ///
+    /// The server side of this TLS implementation never emits
+    /// NewSessionTicket today; this flag turns that incidental property
+    /// into an enforced, tested invariant for embedders that must prove
+    /// no resumption state can appear.
+    disable_session_resumption: bool = false,
     /// Optional wall-clock seconds since epoch for certificate validity-period
     /// checks. When null, validity is not checked.
     now_sec: ?i64 = null,
@@ -806,6 +818,58 @@ test "Tls13Handshake clientProcessNewSessionTicket derives and stores PSK" {
     };
     try hs.clientProcessNewSessionTicket(&nst_msg);
     try std.testing.expect(hs.resumption_psk != null);
+}
+
+test "disable_session_resumption rejects tickets and never offers early data" {
+    const alpn = [_][]const u8{"hq-interop"};
+    const tp = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
+
+    // A flagged, connected client rejects a well-formed NewSessionTicket
+    // and stores no resumption state.
+    var hs = Tls13Handshake.initClient(.{
+        .alpn = &alpn,
+        .server_name = "example.com",
+        .disable_session_resumption = true,
+    }, &tp);
+    const shared_secret = [_]u8{0x01} ** 32;
+    hs.key_schedule.deriveHandshakeSecrets(&shared_secret, hs.transcript.current());
+    hs.key_schedule.deriveAppSecrets(hs.transcript.current());
+    hs.state = .connected;
+
+    const nst_msg = [_]u8{
+        0x04, 0x00, 0x00, 0x13,
+        0x00, 0x00, 0x0e, 0x10,
+        0x00, 0x00, 0x00, 0x01,
+        0x02, 0xaa, 0xbb, 0x00,
+        0x04, 0xcc, 0xdd, 0xee,
+        0xff, 0x00, 0x00,
+    };
+    try std.testing.expectError(
+        error.UnexpectedMessage,
+        hs.clientProcessNewSessionTicket(&nst_msg),
+    );
+    try std.testing.expect(hs.resumption_psk == null);
+
+    // A flagged external-PSK client still offers its PSK identity but
+    // never the early_data extension, even when the identity slot was
+    // (erroneously) marked early-data-capable.
+    var psk_hs = Tls13Handshake.initClientWithPsk(.{
+        .alpn = &alpn,
+        .server_name = "example.com",
+        .disable_session_resumption = true,
+    }, &tp, [_]u8{0x5a} ** secret_len);
+    psk_hs.session_ticket_len = 4;
+    @memcpy(psk_hs.session_ticket[0..4], &[_]u8{ 0xcc, 0xdd, 0xee, 0xff });
+    psk_hs.session_ticket_allows_early_data = true;
+
+    const action = try psk_hs.step();
+    const hello = action.send_data.data;
+    try std.testing.expect(psk_hs.client_offered_psk);
+    _ = try clientHelloExtension(hello, @intFromEnum(ExtType.pre_shared_key));
+    try std.testing.expectError(
+        error.TestUnexpectedResult,
+        clientHelloExtension(hello, @intFromEnum(ExtType.early_data)),
+    );
 }
 
 test "Tls13Handshake clientProcessNewSessionTicket requires application secrets" {
@@ -3197,6 +3261,9 @@ pub const Tls13Handshake = struct {
         if (self.is_server) return error.UnexpectedMessage;
         if (self.state != .connected) return error.UnexpectedMessage;
         if (!self.key_schedule.app_secret_derived) return error.UnexpectedMessage;
+        // Explicit resumption disable: reject the ticket outright and
+        // leave every resumption field untouched.
+        if (self.config.disable_session_resumption) return error.UnexpectedMessage;
         const nst = try parseNewSessionTicket(msg);
         if (nst.ticket.len > self.session_ticket.len) return error.DecodeError;
         if (nst.ticket_lifetime == 0) {
@@ -3387,7 +3454,7 @@ pub const Tls13Handshake = struct {
 
         // early_data (RFC 8446 §4.2.10) -- empty extension signals 0-RTT
         // intent. Must precede pre_shared_key.
-        const offer_early_data = self.has_psk and self.session_ticket_len > 0 and self.session_ticket_allows_early_data;
+        const offer_early_data = self.has_psk and self.session_ticket_len > 0 and self.session_ticket_allows_early_data and !self.config.disable_session_resumption;
         if (offer_early_data) {
             if (pos + 4 > buf.len) return error.DecodeError;
             pos = writeExtHeader(buf, pos, @intFromEnum(ExtType.early_data), 0);
