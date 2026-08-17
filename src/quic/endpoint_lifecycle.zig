@@ -1462,7 +1462,7 @@ pub const EndpointConnectionLifecycle = struct {
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
         const initial_accept = (try endpoint.peekInitialAcceptDatagram(
-            path,
+            path.toUdp(),
             datagram,
             supported_versions,
         )) orelse return error.InvalidPacket;
