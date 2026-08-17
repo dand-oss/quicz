@@ -64705,3 +64705,166 @@ test "0-RTT end-to-end early data STREAM reaches server before handshake" {
     try std.testing.expectEqual(@as(?usize, 10), n);
     try std.testing.expectEqualStrings("early-data", buf[0..n.?]);
 }
+
+const connection_state = @import("connection_state.zig");
+const PendingStreamFrame = connection_state.PendingStreamFrame;
+
+fn ackedStreamPacket(
+    stream_id: u64,
+    offset: u64,
+    data: []const u8,
+    fin: bool,
+    sent_time: i64,
+) connection_state.SentPacket {
+    return .{
+        .packet_number = 0,
+        .sent_time_nanos = sent_time,
+        .bytes = 0,
+        .stream_frame = .{
+            .stream_id = stream_id,
+            .offset = offset,
+            .fin = fin,
+            .data = @constCast(data),
+        },
+    };
+}
+
+test "streamSendProgress tracks in-order acks, duplicates, and retransmits" {
+    const alloc = std.testing.allocator;
+    var conn = try Connection.init(alloc, .client, .{});
+    defer conn.deinit();
+    try conn.applyPeerTransportParameters(.{ .initial_max_data = 4096, .initial_max_streams_bidi = 8, .initial_max_streams_uni = 8, .initial_max_stream_data_bidi_local = 4096, .initial_max_stream_data_bidi_remote = 4096, .initial_max_stream_data_uni = 4096 });
+
+    const sid = try conn.openStream();
+    // Three accepted 100-byte writes: accepted_offset = 300.
+    var chunk: [100]u8 = undefined;
+    @memset(&chunk, 'x');
+    _ = try conn.sendOnStream(sid, &chunk, false);
+    _ = try conn.sendOnStream(sid, &chunk, false);
+    _ = try conn.sendOnStream(sid, &chunk, false);
+
+    const p0 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 300), p0.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), p0.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 300), p0.outstandingBytes());
+    try std.testing.expect(p0.last_ack_progress_nanos == null);
+
+    // In-order acknowledgments advance the prefix one range at a time.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 0, chunk[0..], false, 10), 10);
+    const p1 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p1.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 200), p1.outstandingBytes());
+    try std.testing.expectEqual(@as(?i64, 10), p1.last_ack_progress_nanos);
+
+    // A retransmitted copy of an already-acked range changes nothing:
+    // logical offsets cannot inflate backlog or reset progress time.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 0, chunk[0..], false, 25), 30);
+    const p2 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p2.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(?i64, 10), p2.last_ack_progress_nanos);
+
+    // Acknowledging the rest completes the prefix.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 100, chunk[0..], false, 40), 40);
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 200, chunk[0..], false, 50), 50);
+    const p3 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 300), p3.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 0), p3.outstandingBytes());
+    try std.testing.expectEqual(@as(?i64, 50), p3.last_ack_progress_nanos);
+    // Nothing outstanding: no age, even with a clock far past the last
+    // progress.
+    try std.testing.expect(p3.outstandingAgeNanos(90) == null);
+    // Mid-flight, the age is measured from the last prefix advance: a
+    // fresh accepted write stays outstanding with an age anchored to the
+    // previous progress time, then clears when acknowledged.
+    _ = try conn.sendOnStream(sid, &chunk, false);
+    const p4 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p4.outstandingBytes());
+    try std.testing.expectEqual(@as(i64, 40), p4.outstandingAgeNanos(90).?);
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 300, chunk[0..], false, 95), 95);
+    const p5 = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 0), p5.outstandingBytes());
+    try std.testing.expectEqual(@as(?i64, 95), p5.last_ack_progress_nanos);
+
+    // Unknown streams report null.
+    try std.testing.expect(conn.streamSendProgress(999_999) == null);
+}
+
+test "streamSendProgress absorbs out-of-order and partial acknowledgments" {
+    const alloc = std.testing.allocator;
+    var conn = try Connection.init(alloc, .client, .{});
+    defer conn.deinit();
+    try conn.applyPeerTransportParameters(.{ .initial_max_data = 4096, .initial_max_streams_bidi = 8, .initial_max_streams_uni = 8, .initial_max_stream_data_bidi_local = 4096, .initial_max_stream_data_bidi_remote = 4096, .initial_max_stream_data_uni = 4096 });
+
+    const sid = try conn.openStream();
+    var chunk: [100]u8 = undefined;
+    @memset(&chunk, 'y');
+    var i: usize = 0;
+    while (i < 3) : (i += 1) _ = try conn.sendOnStream(sid, &chunk, false);
+
+    // The last range arrives first: parked as a gap, prefix unmoved.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 200, chunk[0..], false, 10), 10);
+    var p = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 0), p.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 300), p.outstandingBytes());
+
+    // A partial ack of the first range advances the prefix to 50 only.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 0, chunk[0..50], false, 20), 20);
+    p = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 50), p.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 250), p.outstandingBytes());
+
+    // Completing the prefix up to the parked gap absorbs it in the same
+    // step: 50..150 extends the prefix to 150, and 150..200 makes the
+    // parked 200..300 gap adjacent, completing all 300 bytes at once.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 50, chunk[0..], false, 30), 30);
+    p = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 150), p.contiguous_acked_offset);
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 150, chunk[0..50], false, 35), 35);
+    p = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 300), p.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
+    try std.testing.expectEqual(@as(?i64, 35), p.last_ack_progress_nanos);
+
+    // A late duplicate of the parked range changes nothing.
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(sid, 200, chunk[0..], false, 40), 40);
+    p = conn.streamSendProgress(sid).?;
+    try std.testing.expectEqual(@as(u64, 300), p.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(?i64, 35), p.last_ack_progress_nanos);
+}
+
+test "streamSendProgress settles on reset and FIN completion" {
+    const alloc = std.testing.allocator;
+    var conn = try Connection.init(alloc, .client, .{});
+    defer conn.deinit();
+    try conn.applyPeerTransportParameters(.{ .initial_max_data = 4096, .initial_max_streams_bidi = 8, .initial_max_streams_uni = 8, .initial_max_stream_data_bidi_local = 4096, .initial_max_stream_data_bidi_remote = 4096, .initial_max_stream_data_uni = 4096 });
+
+    // Reset: the send side completes at the accepted offset regardless of
+    // which byte ranges were still unacknowledged.
+    const rsid = try conn.openStream();
+    var chunk: [64]u8 = undefined;
+    @memset(&chunk, 'r');
+    _ = try conn.sendOnStream(rsid, &chunk, false);
+    try conn.resetStream(rsid, 4242);
+    const reset_packet = connection_state.SentPacket{
+        .packet_number = 0,
+        .sent_time_nanos = 10,
+        .bytes = 0,
+        .reset_stream_frame = .{ .stream_id = rsid, .application_error_code = 4242, .final_size = 64 },
+    };
+    conn_mod.markSentPacketAckedOnStreams(&conn, reset_packet, 12);
+    const rp = conn.streamSendProgress(rsid).?;
+    try std.testing.expectEqual(@as(u64, 64), rp.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 0), rp.outstandingBytes());
+
+    // FIN: once every queued and in-flight byte is acknowledged and the
+    // FIN is acknowledged, refresh settles the prefix at the accepted
+    // offset.
+    const fsid = try conn.openStream();
+    @memset(&chunk, 'f');
+    _ = try conn.sendOnStream(fsid, &chunk, true);
+    conn_mod.markSentPacketAckedOnStreams(&conn, ackedStreamPacket(fsid, 0, chunk[0..], true, 20), 20);
+    conn_mod.refreshSendDataAckedStates(&conn, 20);
+    const fp = conn.streamSendProgress(fsid).?;
+    try std.testing.expectEqual(@as(u64, 64), fp.contiguous_acked_offset);
+    try std.testing.expectEqual(@as(u64, 0), fp.outstandingBytes());
+}
