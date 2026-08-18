@@ -86,6 +86,26 @@ fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
     return buf[0..n];
 }
 
+/// Candidate system CA bundle paths, checked in order; the first file that
+/// yields at least one certificate wins.
+const system_ca_bundle_paths = [_][]const u8{
+    "/etc/ssl/cert.pem",                  // macOS, Debian/Ubuntu
+    "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu
+    "/etc/pki/tls/certs/ca-bundle.crt",   // RHEL/Fedora
+    "/etc/ssl/ca-bundle.pem",             // SUSE / others
+};
+
+fn loadSystemCaBundle(allocator: std.mem.Allocator, io: std.Io) !std.crypto.Certificate.Bundle {
+    const now = std.Io.Clock.real.now(io);
+    for (system_ca_bundle_paths) |path| {
+        var bundle: std.crypto.Certificate.Bundle = .empty;
+        bundle.addCertsFromFilePathAbsolute(allocator, io, now, path) catch continue;
+        if (bundle.bytes.items.len > 0) return bundle;
+        bundle.deinit(allocator);
+    }
+    return error.SystemCaBundleNotFound;
+}
+
 /// Lowercase a header name so `-H 'Content-Type: ...'` behaves like curl
 /// (HTTP field names must be lowercase; RFC 9110 §5.1).
 fn lowercaseName(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
@@ -319,6 +339,12 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         const now = std.Io.Clock.real.now(io);
         try bundle.addCertsFromFilePathAbsolute(allocator, io, now, pem);
         maybe_bundle = bundle;
+    } else if (!insecure) {
+        // Verify against the system CA bundle by default; `-k` opts out.
+        maybe_bundle = loadSystemCaBundle(allocator, io) catch |err| blk: {
+            std.debug.print("h3: system CA bundle unavailable ({s}); certificate verification disabled\n", .{@errorName(err)});
+            break :blk null;
+        };
     }
     defer {
         if (maybe_bundle) |*b| b.deinit(allocator);

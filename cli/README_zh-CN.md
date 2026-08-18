@@ -47,7 +47,7 @@ quicz bench 127.0.0.1 4433 --size 1048576
 每次必须返回 `HTTP/3 200` 且正文非空。直接命令效果相同：
 
 ```bash
-./zig-out/bin/quicz h3 https://cloudflare-quic.com/ -k --timeout-ms 25000
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/ --timeout-ms 25000
 # HTTP/3 200
 # <完整响应正文>
 ```
@@ -58,6 +58,21 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
 
 - `src/h3/client.zig` - "H3Client skips GREASE frames before response HEADERS"
 - `src/h3/server.zig` - "H3Server skips GREASE frames before request HEADERS"
+
+## 证书校验
+
+`h3` 默认使用系统 CA 包校验服务器证书。用 `-k` 跳过校验，或用
+`--ca /绝对路径.pem` 信任自定义 CA：
+
+```bash
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/          # 默认用系统 CA 校验
+./zig-out/bin/quicz h3 https://host/api -k                   # 跳过校验
+./zig-out/bin/quicz h3 https://host/api --ca /abs/ca.pem     # 信任指定 CA
+```
+
+系统 CA 从 `/etc/ssl/cert.pem`（macOS、Debian/Ubuntu）、
+`/etc/ssl/certs/ca-certificates.crt` 或 `/etc/pki/tls/certs/ca-bundle.crt` 加载。
+找不到系统 CA 时禁用校验并打印警告。
 
 ## 边界
 

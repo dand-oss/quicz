@@ -20,7 +20,7 @@ check_live() {
   local status_file body_file
   status_file=$(mktemp)
   body_file=$(mktemp)
-  if ! ./zig-out/bin/quicz h3 "$url" -k --timeout-ms 25000 2>"$status_file" >"$body_file"; then
+  if ! ./zig-out/bin/quicz h3 "$url" --timeout-ms 25000 2>"$status_file" >"$body_file"; then
     echo "FAIL: $name request failed: $(tail -1 "$status_file")" >&2
     rm -f "$status_file" "$body_file"
     return 1

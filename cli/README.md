@@ -51,7 +51,7 @@ each must return `HTTP/3 200` with a non-empty body. Direct commands produce
 the same result:
 
 ```bash
-./zig-out/bin/quicz h3 https://cloudflare-quic.com/ -k --timeout-ms 25000
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/ --timeout-ms 25000
 # HTTP/3 200
 # <full response body>
 ```
@@ -63,6 +63,22 @@ tests cover both directions:
 
 - `src/h3/client.zig` - "H3Client skips GREASE frames before response HEADERS"
 - `src/h3/server.zig` - "H3Server skips GREASE frames before request HEADERS"
+
+## Certificate verification
+
+`h3` verifies the server certificate against the system CA bundle by default.
+Use `-k` to skip verification, or `--ca /abs/path.pem` to trust a custom CA:
+
+```bash
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/          # verify against system CAs
+./zig-out/bin/quicz h3 https://host/api -k                   # skip verification
+./zig-out/bin/quicz h3 https://host/api --ca /abs/ca.pem     # trust a specific CA
+```
+
+The system bundle is loaded from `/etc/ssl/cert.pem` (macOS, Debian/Ubuntu),
+`/etc/ssl/certs/ca-certificates.crt`, or `/etc/pki/tls/certs/ca-bundle.crt`.
+If no system bundle is found, verification is disabled and a warning is
+printed.
 
 ## Limits
 

@@ -9,6 +9,7 @@ CLI_DIR := cli
 
 URL ?= https://cloudflare-quic.com/
 TIMEOUT_MS ?= 25000
+INSECURE ?=
 DIR ?= .
 PORT ?= 4433
 FUZZ_LIMIT ?= 20000
@@ -22,8 +23,8 @@ quicz: # Build the quicz CLI
 	@echo "built: $(QUICZ)"
 
 .PHONY: quicz-h3
-quicz-h3: quicz # Fetch a URL over HTTP/3 (URL=..., default cloudflare-quic.com)
-	./$(QUICZ) h3 $(URL) -k --timeout-ms $(TIMEOUT_MS)
+quicz-h3: quicz # Fetch a URL over HTTP/3 (URL=..., default cloudflare-quic.com; INSECURE=-k to skip cert verify)
+	./$(QUICZ) h3 $(URL) $(INSECURE) --timeout-ms $(TIMEOUT_MS)
 
 .PHONY: quicz-serve
 quicz-serve: quicz # Serve DIR over HTTP/3 (DIR=., PORT=4433)
