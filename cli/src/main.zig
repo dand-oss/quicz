@@ -14,6 +14,26 @@ const std = @import("std");
 const test_certs = @import("test_certs");
 const quicz = @import("quicz");
 
+pub const std_options: std.Options = .{
+    .log_level = .info,
+    .logFn = cliLog,
+};
+
+/// The CLI reports its own status and metrics via `std.debug.print`; swallow
+/// the library's internal runtime logs so a successful request stays clean
+/// even when the peer retransmits a packet the client cannot yet decrypt.
+fn cliLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = message_level;
+    _ = scope;
+    _ = format;
+    _ = args;
+}
+
 const Server = quicz.runtime.server.Server;
 const ServerConnection = quicz.runtime.server.ServerConnection;
 const Client = quicz.runtime.client.Client;
