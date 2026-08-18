@@ -1217,6 +1217,17 @@ pub const EndpointConnectionLifecycle = struct {
     /// Replaces processAcceptedProtectedInitialWithCryptoBackendOrCloseAndDrainDatagrams.
     /// Unified Initial with OrClose and poll.
     /// Replaces processAcceptedProtectedInitialWithCryptoBackendOrCloseAndPollDatagram.
+    pub fn updateRoutePathFromValidatedDatagramAndResetSpinBitAddress(
+        self: *EndpointConnectionLifecycle,
+        destination_connection_id: []const u8,
+        new_path: endpoint.UdpTuple,
+        connection: *Connection,
+    ) endpoint.RouteError!endpoint.RouteResult {
+        const updated = try self.router.updateRoutePathFromValidatedDatagramAddress(destination_connection_id, new_path);
+        connection.resetSpinBitForPath();
+        return updated;
+    }
+
     pub fn updateRoutePathFromValidatedDatagramAndResetSpinBit(
         self: *EndpointConnectionLifecycle,
         destination_connection_id: []const u8,
@@ -1361,6 +1372,10 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // Record the arrival path so fail-closed PATH_RESPONSE
+        // validation can check candidate-path bindings.
+        connection.setReceivePathHint(path);
+        defer connection.setReceivePathHint(null);
         const route = try self.router.routeDatagramAddress(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithInstalledKeys(
@@ -9978,7 +9993,7 @@ pub const EndpointConnectionLifecycle = struct {
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
-        const outstanding_before = connection.outstandingPathChallengeCount();
+        const outstanding_before = connection.outstandingPathChallengeCountForPath(path.toUdp());
         try self.processProtectedShortDatagram(
             connection_id,
             connection,
@@ -9988,11 +10003,11 @@ pub const EndpointConnectionLifecycle = struct {
             datagram,
         );
 
-        const outstanding_after = connection.outstandingPathChallengeCount();
+        const outstanding_after = connection.outstandingPathChallengeCountForPath(path.toUdp());
         const updated_route: ?endpoint.RouteResult = if (route.path_changed and outstanding_after < outstanding_before)
-            try self.updateRoutePathFromValidatedDatagramAndResetSpinBit(
+            try self.updateRoutePathFromValidatedDatagramAndResetSpinBitAddress(
                 route.destination_connection_id.asSlice(),
-                path,
+                path.toUdp(),
                 connection,
             )
         else
@@ -10024,7 +10039,7 @@ pub const EndpointConnectionLifecycle = struct {
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
-        const outstanding_before = connection.outstandingPathChallengeCount();
+        const outstanding_before = connection.outstandingPathChallengeCountForPath(path.toUdp());
         try self.processProtectedShortDatagramOrClose(
             connection_id,
             connection,
@@ -10034,11 +10049,11 @@ pub const EndpointConnectionLifecycle = struct {
             datagram,
         );
 
-        const outstanding_after = connection.outstandingPathChallengeCount();
+        const outstanding_after = connection.outstandingPathChallengeCountForPath(path.toUdp());
         const updated_route: ?endpoint.RouteResult = if (route.path_changed and outstanding_after < outstanding_before)
-            try self.updateRoutePathFromValidatedDatagramAndResetSpinBit(
+            try self.updateRoutePathFromValidatedDatagramAndResetSpinBitAddress(
                 route.destination_connection_id.asSlice(),
-                path,
+                path.toUdp(),
                 connection,
             )
         else
@@ -11956,6 +11971,10 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // Record the arrival path (widened) for fail-closed
+        // PATH_RESPONSE validation.
+        connection.setReceivePathHint(path.toUdp());
+        defer connection.setReceivePathHint(null);
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithInstalledKeys(
@@ -11986,12 +12005,43 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
-        connection.setReceivePathHint(path.toUdp());
+        // Pure delegate: the address-neutral implementation below is the
+        // single source of truth for the arrival-path hint and the
+        // route commit; this wrapper must not set the hint itself.
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+            connection_id,
+            connection,
+            path.toUdp(),
+            now_nanos,
+            datagram,
+        );
+    }
+
+    /// Address-neutral canonical form of
+    /// `processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrClose()`.
+    ///
+    /// This is the single implementation: it records the arrival path for
+    /// fail-closed PATH_RESPONSE validation, processes the datagram, and
+    /// commits a route update only when the packet routes to
+    /// `connection_id`, authentication/frame processing succeeds, the
+    /// routed tuple differs from the stored route, and the connection
+    /// consumes at least one PATH_CHALLENGE bound to exactly this
+    /// candidate path. Legacy unbound challenges never authorize the
+    /// commit.
+    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        path: endpoint.UdpTuple,
+        now_nanos: i64,
+        datagram: []const u8,
+    ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
+        connection.setReceivePathHint(path);
         defer connection.setReceivePathHint(null);
-        const route = try self.routeDatagram(path, datagram);
+        const route = try self.routeDatagramAddress(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
-        const outstanding_before = connection.outstandingPathChallengeCount();
+        const outstanding_before = connection.outstandingPathChallengeCountForPath(path);
         try self.processProtectedShortDatagramWithInstalledKeysOrClose(
             connection_id,
             connection,
@@ -12000,9 +12050,9 @@ pub const EndpointConnectionLifecycle = struct {
             datagram,
         );
 
-        const outstanding_after = connection.outstandingPathChallengeCount();
+        const outstanding_after = connection.outstandingPathChallengeCountForPath(path);
         const updated_route: ?endpoint.RouteResult = if (route.path_changed and outstanding_after < outstanding_before)
-            try self.updateRoutePathFromValidatedDatagramAndResetSpinBit(
+            try self.updateRoutePathFromValidatedDatagramAndResetSpinBitAddress(
                 route.destination_connection_id.asSlice(),
                 path,
                 connection,

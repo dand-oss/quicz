@@ -31863,7 +31863,7 @@ test "EndpointConnectionLifecycle updates route path after protected PATH_RESPON
     try std.testing.expect((try lifecycle.routeDatagram(new_path, migrated_ping)).path_changed);
 
     const challenge_data = [_]u8{ 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb };
-    try server.sendPathChallenge(challenge_data);
+    try server.sendPathChallengeForPath(challenge_data, new_path.toUdp());
     const challenge = (try server.pollProtectedShortDatagram(3, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
@@ -31996,7 +31996,7 @@ test "EndpointConnectionLifecycle installed-key path update commits after PATH_R
 
     // PATH_CHALLENGE/RESPONSE 交换后，outstanding 1->0 触发 route commit。
     const challenge_data = [_]u8{ 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb };
-    try server.sendPathChallenge(challenge_data);
+    try server.sendPathChallengeForPath(challenge_data, new_path.toUdp());
     const challenge = (try server.pollProtectedShortDatagramWithInstalledKeys(3 * ms, &client_dcid)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge);
     try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
@@ -65094,4 +65094,269 @@ test "path validation: duplicate and mismatched responses never validate" {
     try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
     const route = try lifecycle.routeDatagram(candidate_path, valid_dg);
     try std.testing.expectEqual(@as(u64, 91), route.connection_id);
+}
+
+test "fail-closed: bound challenge with null hint is never consumed" {
+    var conn = try Connection.init(std.testing.allocator, .server, .{});
+    defer conn.deinit();
+    try conn.validatePeerAddress();
+    try conn.installOneRttTrafficSecrets(.{
+        .local = [_]u8{0x11} ** 32,
+        .peer = [_]u8{0x22} ** 32,
+    });
+
+    var v6: [16]u8 = @splat(0);
+    v6[15] = 0x09;
+    const candidate = endpoint.UdpTuple{
+        .local = endpoint.UdpAddress.init6(v6, 4433),
+        .remote = endpoint.UdpAddress.init6Scoped(v6, 51000, 2),
+    };
+    const data = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+    try conn.sendPathChallengeForPath(data, candidate);
+    const server_scid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const packetized = (try conn.pollProtectedShortDatagram(1, &server_scid, protection.deriveForCipher([_]u8{0x11} ** 32, .v1, .aes_128_gcm))) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(packetized);
+    try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
+    try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCountForPath(candidate));
+
+    // No arrival hint recorded: driven directly on the connection with no
+    // feed. The bound challenge must NOT be consumed (fail-closed).
+    conn.setReceivePathHint(null);
+    try conn.processDecodedFramesForTest(&[_]u8{0} ** 0 ++ &[_]u8{});
+    var frame_buf: [64]u8 = undefined;
+    var w = buffer.fixedWriter(&frame_buf);
+    try frame.encodeFrame(w.writer(), .{ .path_response = .{ .data = data } });
+    try conn.processDecodedFramesForTest(w.getWritten());
+    try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCountForPath(candidate));
+    try std.testing.expectEqual(@as(usize, 1), conn.outstandingPathChallengeCount());
+}
+
+test "fail-closed: wrong-path and candidate-path responses via the neutral entry" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+    const client_keys = protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+    const wrong = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 3 }, 50_002),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(92, &server_dcid, old_path, .{});
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = server_send_secret,
+        .peer = client_send_secret,
+    });
+
+    const data = [_]u8{ 0x21, 0x43, 0x65, 0x87, 0x78, 0x56, 0x34, 0x12 };
+    try server.sendPathChallengeForPath(data, candidate.toUdp());
+    const packetized = (try server.pollProtectedShortDatagram(1, &server_dcid, protection.deriveForCipher(server_send_secret, .v1, .aes_128_gcm))) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(packetized);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCountForPath(candidate.toUdp()));
+
+    var fb: [64]u8 = undefined;
+    var fw = buffer.fixedWriter(&fb);
+    try frame.encodeFrame(fw.writer(), .{ .path_response = .{ .data = data } });
+    const payload = try std.testing.allocator.dupe(u8, fw.getWritten());
+    defer std.testing.allocator.free(payload);
+
+    const make = struct {
+        fn make(alloc: std.mem.Allocator, pn: u64, bytes: []const u8, keys: protection.Aes128PacketProtectionKeys) ![]u8 {
+            return protection.protectShortPacketAes128(alloc, .{
+                .dcid = &server_dcid,
+                .spin_bit = false,
+                .key_phase = false,
+                .packet_number = pn,
+            }, try packet.encodePacketNumberForHeader(pn, null), keys, bytes);
+        }
+    }.make;
+
+    // WRONG PATH via the canonical neutral entry: ignored, still outstanding.
+    const wrong_dg = try make(std.testing.allocator, 1, payload, client_keys);
+    defer std.testing.allocator.free(wrong_dg);
+    const wrong_res = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        92,
+        &server,
+        wrong.toUdp(),
+        2,
+        wrong_dg,
+    );
+    try std.testing.expect(wrong_res.updated_route == null);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCountForPath(candidate.toUdp()));
+
+    // CANDIDATE PATH: consumed once, committed exactly once.
+    const good_dg = try make(std.testing.allocator, 2, payload, client_keys);
+    defer std.testing.allocator.free(good_dg);
+    const good_res = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        92,
+        &server,
+        candidate.toUdp(),
+        3,
+        good_dg,
+    );
+    _ = good_res.updated_route orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCountForPath(candidate.toUdp()));
+
+    // EXACT-DATAGRAM REPLAY (same packet number): dedup, no second commit.
+    const replay = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        92,
+        &server,
+        candidate.toUdp(),
+        4,
+        good_dg,
+    );
+    try std.testing.expect(replay.updated_route == null);
+    const committed = try lifecycle.routeDatagram(candidate, good_dg);
+    try std.testing.expectEqual(@as(u64, 92), committed.connection_id);
+    try std.testing.expect(!committed.path_changed);
+}
+
+test "fail-closed: fresh stale and wrong-data responses never commit" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const client_keys = protection.deriveForCipher([_]u8{0x22} ** 32, .v1, .aes_128_gcm);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(93, &server_dcid, old_path, .{});
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = [_]u8{0x11} ** 32,
+        .peer = [_]u8{0x22} ** 32,
+    });
+
+    const make = struct {
+        fn make(alloc: std.mem.Allocator, pn: u64, bytes: []const u8, keys: protection.Aes128PacketProtectionKeys) ![]u8 {
+            return protection.protectShortPacketAes128(alloc, .{
+                .dcid = &server_dcid,
+                .spin_bit = false,
+                .key_phase = false,
+                .packet_number = pn,
+            }, try packet.encodePacketNumberForHeader(pn, null), keys, bytes);
+        }
+    }.make;
+
+    // STALE: no challenge exists at all.
+    var fb: [64]u8 = undefined;
+    var fw = buffer.fixedWriter(&fb);
+    try frame.encodeFrame(fw.writer(), .{ .path_response = .{ .data = [_]u8{1} ** 8 } });
+    const stale_dg = try make(std.testing.allocator, 1, fw.getWritten(), client_keys);
+    defer std.testing.allocator.free(stale_dg);
+    try std.testing.expectError(error.InvalidPacket, lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        93,
+        &server,
+        candidate.toUdp(),
+        1,
+        stale_dg,
+    ));
+
+    // WRONG DATA with a live bound challenge: frame-level rejection.
+    // The OrClose entry queues a close on frame errors, so this case
+    // uses a FRESH pair (the frozen isolation rule).
+    var lifecycle2 = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle2.deinit();
+    try lifecycle2.registerConnectionId(95, &server_dcid, old_path, .{});
+    var server2 = try Connection.init(std.testing.allocator, .server, .{});
+    defer server2.deinit();
+    try server2.validatePeerAddress();
+    try server2.installOneRttTrafficSecrets(.{
+        .local = [_]u8{0x11} ** 32,
+        .peer = [_]u8{0x22} ** 32,
+    });
+    const data = [_]u8{ 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
+    try server2.sendPathChallengeForPath(data, candidate.toUdp());
+    const packetized2 = (try server2.pollProtectedShortDatagram(2, &server_dcid, protection.deriveForCipher([_]u8{0x11} ** 32, .v1, .aes_128_gcm))) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(packetized2);
+    var fb2: [64]u8 = undefined;
+    var fw2 = buffer.fixedWriter(&fb2);
+    try frame.encodeFrame(fw2.writer(), .{ .path_response = .{ .data = [_]u8{9} ** 8 } });
+    const wrong_dg = try make(std.testing.allocator, 3, fw2.getWritten(), client_keys);
+    defer std.testing.allocator.free(wrong_dg);
+    try std.testing.expectError(error.InvalidPacket, lifecycle2.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        95,
+        &server2,
+        candidate.toUdp(),
+        3,
+        wrong_dg,
+    ));
+    const still = try lifecycle2.routeDatagram(old_path, stale_dg);
+    try std.testing.expectEqual(@as(u64, 95), still.connection_id);
+}
+
+test "legacy unbound challenge never authorizes route mutation" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const client_keys = protection.deriveForCipher([_]u8{0x22} ** 32, .v1, .aes_128_gcm);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(94, &server_dcid, old_path, .{});
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = [_]u8{0x11} ** 32,
+        .peer = [_]u8{0x22} ** 32,
+    });
+
+    const data = [_]u8{ 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48 };
+    try server.sendPathChallenge(data); // legacy unbound
+    const packetized = (try server.pollProtectedShortDatagram(1, &server_dcid, protection.deriveForCipher([_]u8{0x11} ** 32, .v1, .aes_128_gcm))) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(packetized);
+
+    var fb: [64]u8 = undefined;
+    var fw = buffer.fixedWriter(&fb);
+    try frame.encodeFrame(fw.writer(), .{ .path_response = .{ .data = data } });
+    const dg = try protection.protectShortPacketAes128(std.testing.allocator, .{
+        .dcid = &server_dcid,
+        .spin_bit = false,
+        .key_phase = false,
+        .packet_number = 1,
+    }, try packet.encodePacketNumberForHeader(1, null), client_keys, fw.getWritten());
+    defer std.testing.allocator.free(dg);
+
+    const res = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddress(
+        94,
+        &server,
+        candidate.toUdp(),
+        1,
+        dg,
+    );
+    // Frame-level consume may happen, but no route mutation is authorized.
+    try std.testing.expect(res.updated_route == null);
+    const route = try lifecycle.routeDatagram(old_path, dg);
+    try std.testing.expectEqual(@as(u64, 94), route.connection_id);
+    try std.testing.expect(!route.path_changed);
 }
