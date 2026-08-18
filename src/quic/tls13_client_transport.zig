@@ -72,7 +72,19 @@ pub const Tls13ClientTransport = struct {
         };
     }
 
+    /// Idempotent test hook: zeroize the TLS backend secrets and the
+    /// retained Initial keys without releasing anything.
+    pub fn wipeSecrets(self: *Tls13ClientTransport) void {
+        self.backend.secureWipe();
+        protection.secureWipeProtectionKeys(&self.server_initial_keys);
+    }
+
+    /// Release the owned QUIC connection state, wiping the TLS backend's
+    /// secret material and this transport's retained Initial packet
+    /// keys first.
     pub fn deinit(self: *Tls13ClientTransport) void {
+        self.backend.secureWipe();
+        protection.secureWipeProtectionKeys(&self.server_initial_keys);
         self.connection.deinit();
     }
 
@@ -658,4 +670,20 @@ test "Tls13ClientTransport closes with protected application output and deadline
     const serviced = (try transport.serviceDueDeadline(close_deadline)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .close_timeout);
     try std.testing.expectEqual(transport_types.ConnectionState.closed, transport.connection.connectionState());
+}
+
+test "Tls13ClientTransport deinit wipes backend and Initial keys" {
+    const alloc = std.testing.allocator;
+    const dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const scid = [_]u8{ 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28 };
+    var transport = try Tls13ClientTransport.init(alloc, .{
+        .initial_max_data = 8192,
+        .initial_max_stream_data = 2048,
+        .initial_max_streams_bidi = 8,
+        .max_datagram_size = 8192,
+    }, .{ .alpn = &.{} }, dcid, scid);
+    try std.testing.expect(!std.mem.allEqual(u8, &transport.server_initial_keys.key, 0));
+    transport.deinit();
+    try std.testing.expect(std.mem.allEqual(u8, &transport.server_initial_keys.key, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &transport.server_initial_keys.secret, 0));
 }

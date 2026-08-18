@@ -518,10 +518,21 @@ pub const AddressValidationPolicy = struct {
         return policy;
     }
 
-    /// Release endpoint token-policy storage.
+    /// Zeroize the active and retained token secrets. Idempotent.
+    pub fn wipeSecrets(self: *AddressValidationPolicy) void {
+        std.crypto.secureZero(u8, &self.current_secret);
+        for (self.previous_secrets.items) |*secret| {
+            std.crypto.secureZero(u8, secret);
+        }
+    }
+
+    /// Release endpoint token-policy storage, wiping all token secrets
+    /// first.
     pub fn deinit(self: *AddressValidationPolicy) void {
+        self.wipeSecrets();
         self.replay_filter.deinit();
         self.previous_secrets.deinit(self.allocator);
+        self.previous_secrets = .empty;
     }
 
     /// Return the number of retained previous token secrets.
@@ -3273,4 +3284,16 @@ test "EndpointRouter rejects stateless reset token reuse across connection IDs" 
     );
     try std.testing.expectError(error.UnknownConnectionId, router.routeConnectionId(&cid1, path));
     try std.testing.expectEqual(@as(usize, 2), router.statelessResetTokenCount());
+}
+
+test "AddressValidationPolicy deinit wipes token secrets" {
+    const alloc = std.testing.allocator;
+    const current: address_validation_token.Secret = [_]u8{0xe1} ** address_validation_token.secret_len;
+    var policy = AddressValidationPolicy.init(alloc, current, .{ .max_previous_secrets = 2 });
+    try policy.rotateSecret([_]u8{0xe2} ** address_validation_token.secret_len);
+    try std.testing.expect(!std.mem.allEqual(u8, &policy.current_secret, 0));
+    policy.deinit();
+    // Assert zeroization after wiping but before any reuse; deinit has
+    // released list storage, and wipeSecrets is what zeroed these bytes.
+    try std.testing.expect(std.mem.allEqual(u8, &policy.current_secret, 0));
 }
