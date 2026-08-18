@@ -1,25 +1,40 @@
-//! Single-slot pending-Retry state for a one-client gateway.
+//! Single-slot pending-Retry state for a one-client gateway
+//! (bounded-candidate contract).
 //!
-//! The first client Initial must not allocate connection-sized or
-//! unbounded per-client state: no Connection, TLS backend, stream
-//! buffers, or route record. This type holds exactly one fixed-size,
-//! ten-second pending-Retry slot (each gateway serves one expected
-//! client) plus bounded Retry metadata, and classifies Initials:
+//! The first client Initial allocates no connection-sized or unbounded
+//! per-client state: no Connection, TLS backend, stream buffers, or route
+//! record. This type holds exactly one fixed-size, ten-second pending-Retry
+//! slot (each gateway serves one expected client) plus bounded Retry
+//! metadata, and classifies Initials:
+//!
 //!   - a complete Initial datagram must be at least 1200 bytes;
-//!   - a tokenless Initial opens (or reissues) the slot: the same Retry
-//!     is reissued for matching retransmissions without extending the
-//!     absolute ten-second expiry;
-//!   - the slot matches on the full UDP path, QUIC version, original
-//!     DCID, and client SCID — never byte-identical datagrams;
-//!   - unrelated Initials are dropped while the slot is occupied;
-//!   - a token-bearing Initial is validated WITHOUT consuming replay
-//!     state; the caller authenticates the protected follow-up Initial
-//!     and allocates transactionally, then commits, which consumes the
-//!     token and clears the slot; failures leave the slot reusable or
-//!     naturally expired.
+//!   - the slot is only ever filled by `open()` for one tokenless Initial;
+//!   - a tokenless Initial reissues the stored Retry only when the slot is
+//!     occupied and unexpired and the full tuple matches — UDP path, QUIC
+//!     version, original DCID, and client SCID (never byte-identical
+//!     datagrams) — without extending the absolute ten-second expiry;
+//!   - anything else while occupied (different tuple, or a token-bearing
+//!     Initial) is either unrelated-dropped or token-rejected as below;
+//!   - a token-bearing follow-up is accepted only when the slot is occupied
+//!     and unexpired, its path and version match, its destination CID is
+//!     the issued Retry SCID, its source CID is the stored client SCID,
+//!     and its token bytes equal the exact stored token. The token is then
+//!     validated WITHOUT consuming replay state; the caller authenticates
+//!     the protected follow-up Initial against one bounded unpublished
+//!     candidate and allocates transactionally, then `commit()` publishes,
+//!     consumes replay state for exactly the stored token, and clears the
+//!     slot. Failures leave the slot reusable or naturally expired.
 //!
-//! Nothing here allocates: every buffer is fixed-size and the stored
-//! Retry datagram is the exact bytes to reissue.
+//! QUIC Initial protection derives from the public destination CID, so the
+//! meaningful boundary this type enforces is the token-gated exchange —
+//! not client authentication.
+//!
+//! Allocation profile: the slot itself is one fixed-size struct. `open()`
+//! encodes the Retry directly into the fixed datagram buffer and computes
+//! the RFC 9001 integrity tag, which internally makes one bounded
+//! temporary allocation (header + token + 1 bytes) inside
+//! `protection.retryIntegrityTag`. `classify()` and `commit()` never
+//! allocate.
 
 const std = @import("std");
 const endpoint = @import("endpoint.zig");
@@ -33,13 +48,16 @@ pub const SlotError = error{
     InitialTooShort,
     /// Not a long-header Initial packet.
     NotAnInitial,
-    /// A different Initial arrived while the slot is occupied.
+    /// A different Initial arrived while the slot is occupied (tokenless
+    /// tuple mismatch), or a token-bearing Initial arrived with no live
+    /// stored exchange.
     UnrelatedInitial,
-    /// The slot's Retry expired; the caller treats the next tokenless
-    /// Initial as fresh.
+    /// The stored Retry expired (or the slot is empty for a tokenless
+    /// Initial); the caller treats the next tokenless Initial as fresh.
     RetryExpired,
-    /// Token validation failed (bad kind, wrong binding, bad lifetime,
-    /// or wrong path).
+    /// The token-bearing follow-up failed the exact stored-exchange match
+    /// (Retry SCID, client SCID, token bytes) or address-validation
+    /// policy rejected the token for this path.
     TokenInvalid,
 };
 
@@ -52,15 +70,14 @@ pub const Decision = union(enum) {
     /// Issue (first seen) or reissue (matching retransmission) the stored
     /// Retry datagram on the observed path.
     send_retry: []const u8,
-    /// Token validated without consuming replay state: authenticate the
-    /// protected follow-up Initial and allocate, then `commit()`.
+    /// The exact stored exchange matched and the token validated without
+    /// consuming replay state: authenticate the protected follow-up
+    /// Initial against one bounded unpublished candidate, then
+    /// `commit()` to publish and consume.
     validated: struct {
         retry_scid: [max_retry_scid_len]u8,
         retry_scid_len: usize,
     },
-    /// Drop silently: unrelated Initial while occupied, or tokenless
-    /// Initial that is not address-validation material.
-    drop,
 };
 
 pub const PendingRetrySlot = struct {
@@ -84,28 +101,14 @@ pub const PendingRetrySlot = struct {
     /// 16-byte integrity tag, comfortably below the 1200-byte floor.
     pub const max_retry_datagram_len = 512;
 
-    /// Allocation-counters for the gate's zero-delta assertions. This
-    /// type itself never allocates; the counters track how many
-    /// classifications reached each stage so tests can compare against
-    /// the pre-Initial baseline.
-    pub const Counters = struct {
-        initial_classified: usize = 0,
-        too_short: usize = 0,
-        retries_issued: usize = 0,
-        retries_reissued: usize = 0,
-        unrelated_dropped: usize = 0,
-        tokens_validated: usize = 0,
-        tokens_rejected: usize = 0,
-        expired: usize = 0,
-    };
-
-    pub var counters = Counters{};
-
     /// Build the slot's Retry datagram for one tokenless Initial.
     ///
     /// `token` is the address-validation token the caller issued for the
     /// observed path (the slot stores the encoded bytes; it never sees
-    /// secrets). `retry_scid` is the server's chosen new SCID.
+    /// secrets). `retry_scid` is the server's chosen new SCID. The Retry
+    /// is encoded directly into this slot's fixed buffer; the integrity
+    /// tag makes one bounded internal temporary allocation (see the file
+    /// comment).
     pub fn open(
         self: *PendingRetrySlot,
         alloc: std.mem.Allocator,
@@ -121,12 +124,11 @@ pub const PendingRetrySlot = struct {
         if (original_dcid.len > endpoint.max_connection_id_len or
             client_scid.len > endpoint.max_connection_id_len or
             retry_scid.len > max_retry_scid_len or
-            token.len > max_retry_token_len) return error.UnrelatedInitial;
+            token.len > max_retry_token_len or
+            token.len == 0) return error.UnrelatedInitial;
 
-        var builder: std.Io.Writer.Allocating = .init(alloc);
-        defer builder.deinit();
-        var w = &builder.writer;
-        packet.encodeRetryPacket(w, .{
+        var w: std.Io.Writer = .fixed(self.retry_datagram[0..]);
+        packet.encodeRetryPacket(&w, .{
             .version = version,
             .dcid = client_scid,
             .scid = retry_scid,
@@ -134,17 +136,13 @@ pub const PendingRetrySlot = struct {
             .integrity_tag = .{0} ** 16,
         }) catch return error.NotAnInitial;
         try w.flush();
-
-        const retry = alloc.dupe(u8, w.buffered()) catch return error.NotAnInitial;
-        defer alloc.free(retry);
-        const body_len = retry.len - 16;
+        const body_len = w.buffered().len - 16;
         const tag = protection.retryIntegrityTag(
             alloc,
             original_dcid,
-            retry[0..body_len],
+            w.buffered()[0..body_len],
         ) catch return error.NotAnInitial;
-        var tagged = retry;
-        @memcpy(tagged[body_len..][0..16], &tag);
+        @memcpy(self.retry_datagram[body_len..][0..16], &tag);
 
         self.* = .{
             .expires_nanos = now_nanos + lifetime_nanos,
@@ -155,18 +153,16 @@ pub const PendingRetrySlot = struct {
             .client_scid_len = client_scid.len,
             .retry_scid_len = retry_scid.len,
             .retry_token_len = token.len,
-            .retry_datagram_len = tagged.len,
+            .retry_datagram_len = w.buffered().len,
         };
         @memcpy(self.original_dcid[0..original_dcid.len], original_dcid);
         @memcpy(self.client_scid[0..client_scid.len], client_scid);
         @memcpy(self.retry_scid[0..retry_scid.len], retry_scid);
         @memcpy(self.retry_token[0..token.len], token);
-        @memcpy(self.retry_datagram[0..tagged.len], tagged);
-        counters.retries_issued += 1;
         return self.retry_datagram[0..self.retry_datagram_len];
     }
 
-    fn sameClient(
+    fn tupleMatches(
         self: *const PendingRetrySlot,
         path: endpoint.UdpTuple,
         version: packet.Version,
@@ -188,11 +184,15 @@ pub const PendingRetrySlot = struct {
 
     /// Classify one received Initial datagram.
     ///
-    /// `policy` validates token-bearing Initials without consuming
-    /// replay state (the caller consumes it in `commit()` only after the
-    /// connection is allocated). Returns the bytes to send for Retry
-    /// decisions; the slice aliases this slot and stays valid until the
-    /// next classification.
+    /// Tokenless Initials reissue the stored Retry only for the exact
+    /// stored tuple. Token-bearing follow-ups (`followup_dcid` is the
+    /// datagram's destination CID, which must be the issued Retry SCID)
+    /// are accepted only when the whole stored exchange matches — path,
+    /// version, Retry SCID, client SCID, and the exact stored token
+    /// bytes — and the token then validates against `policy` WITHOUT
+    /// consuming replay state (the caller consumes it in `commit()` only
+    /// after the bounded candidate is authenticated). The returned slice
+    /// aliases this slot and stays valid until the next classification.
     pub fn classify(
         self: *PendingRetrySlot,
         policy: *const endpoint.AddressValidationPolicy,
@@ -201,70 +201,72 @@ pub const PendingRetrySlot = struct {
         version: packet.Version,
         original_dcid: []const u8,
         client_scid: []const u8,
+        followup_dcid: []const u8,
         token: []const u8,
         datagram_len: usize,
         is_initial: bool,
     ) SlotError!Decision {
-        counters.initial_classified += 1;
-        if (datagram_len < 1200) {
-            counters.too_short += 1;
-            return error.InitialTooShort;
-        }
+        if (datagram_len < 1200) return error.InitialTooShort;
         if (!is_initial) return error.NotAnInitial;
 
         if (token.len == 0) {
-            if (self.expired(now_nanos)) {
-                if (self.occupied) counters.expired += 1;
-                return error.RetryExpired;
-            }
-            if (self.sameClient(path, version, original_dcid, client_scid)) {
-                counters.retries_reissued += 1;
+            if (self.expired(now_nanos)) return error.RetryExpired;
+            if (self.tupleMatches(path, version, original_dcid, client_scid)) {
                 return .{ .send_retry = self.retry_datagram[0..self.retry_datagram_len] };
             }
-            counters.unrelated_dropped += 1;
             return error.UnrelatedInitial;
         }
 
-        // Token-bearing Initial: validate WITHOUT consuming replay state.
+        // Token-bearing follow-up: the stored exchange must be live and
+        // match exactly — Retry SCID (as the follow-up's destination
+        // CID), client SCID, and the exact stored token bytes.
+        if (self.expired(now_nanos)) return error.UnrelatedInitial;
+        if (self.version != version or !self.path.eql(path)) return error.TokenInvalid;
+        if (self.retry_scid_len != followup_dcid.len or
+            !std.mem.eql(u8, self.retry_scid[0..self.retry_scid_len], followup_dcid)) return error.TokenInvalid;
+        if (self.client_scid_len != client_scid.len or
+            !std.mem.eql(u8, self.client_scid[0..self.client_scid_len], client_scid)) return error.TokenInvalid;
+        if (self.retry_token_len != token.len or
+            !std.mem.eql(u8, self.retry_token[0..self.retry_token_len], token)) return error.TokenInvalid;
+
         _ = policy.validateTokenForPathWithoutReplayForVersion(
             .retry,
             version,
             now_nanos,
             path,
             token,
-        ) catch {
-            counters.tokens_rejected += 1;
-            return error.TokenInvalid;
-        };
-        counters.tokens_validated += 1;
+        ) catch return error.TokenInvalid;
         return .{ .validated = .{
             .retry_scid = self.retry_scid,
             .retry_scid_len = self.retry_scid_len,
         } };
     }
 
-    /// Consume the token (replay state) and clear the slot after the
-    /// caller has authenticated the follow-up Initial and allocated the
-    /// connection. Idempotent per token bytes.
+    /// Publish the candidate: consume replay state for exactly the stored
+    /// token and clear the slot. `token` must equal the stored token
+    /// bytes; any other token (even one that would validate) is refused
+    /// and the slot stays intact.
     pub fn commit(
         self: *PendingRetrySlot,
         policy: *endpoint.AddressValidationPolicy,
         now_nanos: i64,
         token: []const u8,
     ) address_validation_token.Error!void {
-        if (!self.occupied) return;
+        if (!self.occupied) return error.InvalidToken;
+        if (self.retry_token_len != token.len or
+            !std.mem.eql(u8, self.retry_token[0..self.retry_token_len], token)) return error.InvalidToken;
         _ = try policy.validateTokenForPathForVersion(
             .retry,
             self.version,
             now_nanos,
             self.path,
-            token,
+            self.retry_token[0..self.retry_token_len],
         );
         self.occupied = false;
     }
 };
 
-test "PendingRetrySlot: reissue, expiry, unrelated drop, and validation" {
+test "PendingRetrySlot: reissue, expiry, unrelated drop, exact follow-up" {
     const alloc = std.testing.allocator;
     const secret: address_validation_token.Secret = [_]u8{0x5a} ** address_validation_token.secret_len;
     const nonce: address_validation_token.Nonce = [_]u8{0x31} ** address_validation_token.nonce_len;
@@ -281,7 +283,6 @@ test "PendingRetrySlot: reissue, expiry, unrelated drop, and validation" {
     const scid = [_]u8{ 0x21, 0x22, 0x23, 0x24 };
     const rscid = [_]u8{ 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
 
-    // Token issued by the caller for this path (slot never sees secrets).
     const token = try policy.issueTokenForPath(
         alloc,
         .retry,
@@ -292,7 +293,18 @@ test "PendingRetrySlot: reissue, expiry, unrelated drop, and validation" {
     );
     defer alloc.free(token);
 
+    // An empty slot refuses tokenless Initials (fresh, not reissue) and
+    // refuses token-bearing Initials (no stored exchange).
     var slot = PendingRetrySlot{};
+    try std.testing.expectError(
+        error.RetryExpired,
+        slot.classify(&policy, 1_000, path, .v1, &odcid, &scid, &rscid, &.{}, 1200, true),
+    );
+    try std.testing.expectError(
+        error.UnrelatedInitial,
+        slot.classify(&policy, 1_000, path, .v1, &odcid, &scid, &rscid, token, 1200, true),
+    );
+
     const retry = try slot.open(
         alloc,
         1_000,
@@ -304,55 +316,90 @@ test "PendingRetrySlot: reissue, expiry, unrelated drop, and validation" {
         &rscid,
         token,
     );
-    try std.testing.expect(retry.len >= 1200 - 688 or retry.len > 0);
+    try std.testing.expect(retry.len > 0);
+    try std.testing.expect(retry.len <= PendingRetrySlot.max_retry_datagram_len);
 
     // Matching retransmission reissues the SAME bytes without extending
     // the absolute expiry.
     const first_expiry = slot.expires_nanos;
-    const reissued = try slot.classify(&policy, 5_000, path, .v1, &odcid, &scid, &.{}, 1200, true);
+    const reissued = try slot.classify(&policy, 5_000, path, .v1, &odcid, &scid, &rscid, &.{}, 1200, true);
     switch (reissued) {
         .send_retry => |bytes| try std.testing.expectEqualSlices(u8, retry, bytes),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(first_expiry, slot.expires_nanos);
 
-    // Unrelated Initial while occupied is dropped.
+    // Unrelated tokenless Initial while occupied is dropped.
     const other_scid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     try std.testing.expectError(
         error.UnrelatedInitial,
-        slot.classify(&policy, 5_000, path, .v1, &odcid, &other_scid, &.{}, 1200, true),
+        slot.classify(&policy, 5_000, path, .v1, &odcid, &other_scid, &rscid, &.{}, 1200, true),
     );
 
     // Short datagrams are rejected outright.
     try std.testing.expectError(
         error.InitialTooShort,
-        slot.classify(&policy, 5_000, path, .v1, &odcid, &scid, &.{}, 1199, true),
+        slot.classify(&policy, 5_000, path, .v1, &odcid, &scid, &rscid, &.{}, 1199, true),
     );
 
-    // Validation does not consume replay state: repeated classification
-    // succeeds, and commit() then consumes and clears.
+    // Token-bearing follow-ups must match the exact stored exchange:
+    // wrong Retry SCID, wrong client SCID, and different-but-valid token
+    // bytes are all refused before policy validation.
+    const other_rscid = [_]u8{ 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58 };
+    try std.testing.expectError(
+        error.TokenInvalid,
+        slot.classify(&policy, 6_000, path, .v1, &odcid, &scid, &other_rscid, token, 1200, true),
+    );
+    try std.testing.expectError(
+        error.TokenInvalid,
+        slot.classify(&policy, 6_000, path, .v1, &odcid, &other_scid, &rscid, token, 1200, true),
+    );
+    var mutated = alloc.dupe(u8, token) catch return error.TestUnexpectedResult;
+    defer alloc.free(mutated);
+    mutated[0] ^= 0xff;
+    try std.testing.expectError(
+        error.TokenInvalid,
+        slot.classify(&policy, 6_000, path, .v1, &odcid, &scid, &rscid, mutated, 1200, true),
+    );
+
+    // The exact follow-up validates without consuming replay state.
     for (0..2) |_| {
-        const decision = try slot.classify(&policy, 6_000, path, .v1, &odcid, &scid, token, 1200, true);
+        const decision = try slot.classify(&policy, 6_000, path, .v1, &odcid, &scid, &rscid, token, 1200, true);
         switch (decision) {
             .validated => |v| try std.testing.expectEqual(rscid.len, v.retry_scid_len),
             else => return error.TestUnexpectedResult,
         }
     }
     try std.testing.expectEqual(@as(usize, 0), policy.replayFilterEntryCount());
+
+    // commit() refuses a different valid token and leaves the slot.
+    const other_token = try policy.issueTokenForPath(
+        alloc,
+        .retry,
+        6_000,
+        10_000_000_000,
+        path,
+        nonce,
+    );
+    defer alloc.free(other_token);
+    try std.testing.expectError(
+        address_validation_token.Error.InvalidToken,
+        slot.commit(&policy, 6_000, other_token),
+    );
+    try std.testing.expect(slot.occupied);
+    try std.testing.expectEqual(@as(usize, 0), policy.replayFilterEntryCount());
+
+    // commit() consumes exactly the stored token and clears the slot.
     try slot.commit(&policy, 6_000, token);
     try std.testing.expectEqual(@as(usize, 1), policy.replayFilterEntryCount());
     try std.testing.expect(!slot.occupied);
 
     // After expiry the slot treats the next tokenless Initial as fresh.
-    const fresh = try slot.open(alloc, 20_000_000_000_000, 10_000_000_000, path, .v1, &odcid, &scid, &rscid, token);
-    _ = fresh;
+    _ = try slot.open(alloc, 20_000_000_000_000, 10_000_000_000, path, .v1, &odcid, &scid, &rscid, token);
     try std.testing.expectError(
         error.RetryExpired,
-        slot.classify(&policy, 20_000_000_000_000 + 11_000_000_000, path, .v1, &odcid, &scid, &.{}, 1200, true),
+        slot.classify(&policy, 20_000_000_000_000 + 11_000_000_000, path, .v1, &odcid, &scid, &rscid, &.{}, 1200, true),
     );
-
-    // Zero allocation of connection-sized state by construction: the slot
-    // is one fixed-size struct and never takes an allocator at classify()
 }
 
 test "PendingRetrySlot: wrong-path token is rejected" {
@@ -388,12 +435,14 @@ test "PendingRetrySlot: wrong-path token is rejected" {
 
     var slot = PendingRetrySlot{};
     _ = try slot.open(alloc, 1_000, 10_000_000_000, path, .v1, &odcid, &scid, &rscid, token);
+    // Wrong path on the token-bearing follow-up (even with every other
+    // field exact): refused.
     try std.testing.expectError(
         error.TokenInvalid,
-        slot.classify(&policy, 2_000, other_path, .v1, &odcid, &scid, token, 1200, true),
+        slot.classify(&policy, 2_000, other_path, .v1, &odcid, &scid, &rscid, token, 1200, true),
     );
     // The slot remains usable for the original client.
-    const reissued = try slot.classify(&policy, 2_000, path, .v1, &odcid, &scid, &.{}, 1200, true);
+    const reissued = try slot.classify(&policy, 2_000, path, .v1, &odcid, &scid, &rscid, &.{}, 1200, true);
     switch (reissued) {
         .send_retry => {},
         else => return error.TestUnexpectedResult,
