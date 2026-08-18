@@ -517,26 +517,7 @@ const SendStreamState = struct {
     data_acked: bool = false,
     reset_sent: bool = false,
     reset_acked: bool = false,
-    /// Contiguous acknowledged byte prefix (send-side, logical offsets).
-    acked_offset: u64 = 0,
-    /// Out-of-order acknowledged ranges not yet absorbed into the prefix.
-    acked_gaps: [max_stream_ack_gaps]AckedGap = @splat(.{}),
-    acked_gap_count: usize = 0,
-    /// Clock value of the last contiguous-prefix advance, or null.
-    last_ack_progress_nanos: ?i64 = null,
 };
-
-/// One acknowledged range that arrived out of order, tracked until the
-/// contiguous prefix absorbs it.
-const AckedGap = struct {
-    offset: u64 = 0,
-    len: u64 = 0,
-};
-
-/// Fixed cap on out-of-order acknowledged ranges per stream. Beyond it the
-/// nearest tracked gap is coalesced conservatively (outstanding bytes may
-/// over-count briefly, never under-count).
-const max_stream_ack_gaps = 8;
 
 fn sendStreamClosed(stream_state: *const SendStreamState) bool {
     return stream_state.fin_sent or stream_state.reset_sent;
@@ -550,108 +531,17 @@ fn publicSendStreamState(stream_state: *const SendStreamState) StreamSendState {
     return .ready;
 }
 
-/// Public ACK-accounting hook: apply one newly acknowledged packet to its
-/// streams' send-side progress (contiguous prefix, gap tracking, reset
-/// completion). Called by ACK processing; embedders driving packet
-/// acknowledgment manually (deterministic harnesses) call it directly.
-pub fn markSentPacketAckedOnStreams(conn: *Connection, sent_packet: SentPacket, now_nanos: i64) void {
+fn markSentPacketAckedOnStreams(conn: *Connection, sent_packet: SentPacket) void {
     if (sent_packet.stream_frame) |pending| {
         if (pending.fin) {
             if (conn.findSendStream(pending.stream_id)) |stream_state| {
                 stream_state.fin_acked = true;
             }
         }
-        if (pending.data.len > 0) {
-            noteStreamRangeAcked(conn, pending.stream_id, pending.offset, pending.data.len, now_nanos);
-        }
     }
     if (sent_packet.reset_stream_frame) |reset| {
         if (conn.findSendStream(reset.stream_id)) |stream_state| {
             stream_state.reset_acked = true;
-            // A reset subsumes all unacked data: the send side is finished
-            // no matter which byte ranges were still in flight.
-            stream_state.acked_offset = stream_state.next_offset;
-            stream_state.acked_gap_count = 0;
-            stream_state.last_ack_progress_nanos = now_nanos;
-        }
-    }
-}
-
-/// Record one acknowledged stream-data range and advance the contiguous
-/// acknowledged prefix, absorbing tracked out-of-order gaps. Retransmitted
-/// copies re-report old ranges; logical-offset accounting keeps them from
-/// affecting the result.
-fn noteStreamRangeAcked(self: *Connection, stream_id: u64, offset: u64, len: u64, now_nanos: i64) void {
-    const stream_state = self.findSendStream(stream_id) orelse return;
-    if (offset <= stream_state.acked_offset and offset + len > stream_state.acked_offset) {
-        stream_state.acked_offset = offset + len;
-        stream_state.last_ack_progress_nanos = now_nanos;
-        absorbAckedGaps(stream_state, now_nanos);
-    } else if (offset > stream_state.acked_offset) {
-        // Merge the range into the tracked out-of-order set.
-        var start = offset;
-        var end = offset + len;
-        var write: usize = 0;
-        var read: usize = 0;
-        while (read < stream_state.acked_gap_count) : (read += 1) {
-            const gap = stream_state.acked_gaps[read];
-            if (start <= gap.offset + gap.len and gap.offset <= end) {
-                start = @min(start, gap.offset);
-                end = @max(end, gap.offset + gap.len);
-            } else {
-                stream_state.acked_gaps[write] = gap;
-                write += 1;
-            }
-        }
-        if (write < max_stream_ack_gaps) {
-            stream_state.acked_gaps[write] = .{ .offset = start, .len = end - start };
-            stream_state.acked_gap_count = write + 1;
-        } else {
-            // Gap table full: coalesce into the nearest tracked gap so the
-            // prefix can still converge.
-            var nearest: usize = 0;
-            var nearest_distance: u64 = std.math.maxInt(u64);
-            var gi: usize = 0;
-            while (gi < stream_state.acked_gap_count) : (gi += 1) {
-                const gap = stream_state.acked_gaps[gi];
-                const distance = if (gap.offset >= start) gap.offset - start else start -| (gap.offset + gap.len);
-                if (distance < nearest_distance) {
-                    nearest_distance = distance;
-                    nearest = gi;
-                }
-            }
-            const gap = &stream_state.acked_gaps[nearest];
-            const merged_end = @max(gap.offset + gap.len, end);
-            gap.offset = @min(gap.offset, start);
-            gap.len = merged_end - gap.offset;
-        }
-        // The merged range may now touch the prefix.
-        if (start <= stream_state.acked_offset) {
-            stream_state.acked_offset = @max(stream_state.acked_offset, end);
-            stream_state.last_ack_progress_nanos = now_nanos;
-            absorbAckedGaps(stream_state, now_nanos);
-        }
-    }
-}
-
-/// Absorb tracked gaps that became adjacent to the contiguous prefix.
-fn absorbAckedGaps(stream_state: *SendStreamState, now_nanos: i64) void {
-    var progressed = true;
-    while (progressed) {
-        progressed = false;
-        var gi: usize = 0;
-        while (gi < stream_state.acked_gap_count) : (gi += 1) {
-            const gap = stream_state.acked_gaps[gi];
-            if (gap.offset <= stream_state.acked_offset and gap.offset + gap.len > stream_state.acked_offset) {
-                stream_state.acked_offset = gap.offset + gap.len;
-                stream_state.last_ack_progress_nanos = now_nanos;
-                var k = gi;
-                while (k + 1 < stream_state.acked_gap_count) : (k += 1) {
-                    stream_state.acked_gaps[k] = stream_state.acked_gaps[k + 1];
-                }
-                stream_state.acked_gap_count -= 1;
-                progressed = true;
-            }
         }
     }
 }
@@ -672,20 +562,11 @@ fn streamHasOutstandingSendData(conn: *const Connection, stream_id: u64) bool {
     return false;
 }
 
-/// Public completion hook: flip fully-acknowledged streams to data_acked
-/// and settle their send progress at the accepted offset.
-pub fn refreshSendDataAckedStates(conn: *Connection, now_nanos: i64) void {
+fn refreshSendDataAckedStates(conn: *Connection) void {
     for (conn.send_streams.items) |*stream_state| {
         if (!stream_state.fin_acked or stream_state.reset_sent) continue;
         stream_state.data_acked = !streamHasQueuedSendData(conn, stream_state.stream_id) and
             !streamHasOutstandingSendData(conn, stream_state.stream_id);
-        if (stream_state.data_acked and stream_state.acked_offset < stream_state.next_offset) {
-            // Every queued and in-flight byte is acknowledged: the prefix
-            // reaches the accepted offset by definition.
-            stream_state.acked_offset = stream_state.next_offset;
-            stream_state.acked_gap_count = 0;
-            stream_state.last_ack_progress_nanos = now_nanos;
-        }
     }
 }
 
@@ -1240,39 +1121,33 @@ pub const Connection = struct {
     }
 
     /// Send-side progress snapshot for one stream, in logical byte offsets.
+    /// Send-side backlog snapshot for one stream, in logical byte offsets.
     pub const StreamSendProgress = struct {
         stream_id: u64,
-        /// Bytes accepted from the application (queued, in flight, or acked).
+        /// Bytes accepted from the application (queued, in flight, or
+        /// acked).
         accepted_offset: u64,
-        /// Contiguous acknowledged prefix; out-of-order acknowledged ranges
-        /// are tracked until the prefix absorbs them.
-        contiguous_acked_offset: u64,
-        /// Clock value of the last contiguous-prefix advance, or null when
-        /// nothing has been acknowledged yet. A reset or fully-acked FIN
-        /// also counts as progress.
-        last_ack_progress_nanos: ?i64,
+        /// The minimum STREAM offset still present in the application send
+        /// queue or application sent packets; `accepted_offset` when the
+        /// stream has nothing queued or in flight. Every byte below this
+        /// offset is provably no longer awaiting settlement, so the value
+        /// can only under-report progress, never over-report it.
+        oldest_unsettled_offset: u64,
 
-        /// Accepted bytes not yet contiguously acknowledged: queued plus
-        /// in-flight plus out-of-order-acked. Computed from logical
-        /// offsets, so retransmitted copies never inflate it and a stale
-        /// age cannot survive acknowledgment of any copy.
+        /// Accepted bytes not yet settled: queued plus in flight. Derived
+        /// from logical offsets, so retransmitted copies (which reuse
+        /// offsets) never inflate it, and acknowledgment of any copy
+        /// settles the range.
         pub fn outstandingBytes(self: StreamSendProgress) u64 {
-            // Saturating: a manual hook caller acknowledging past the
-            // accepted offset must not underflow.
-            return self.accepted_offset -| self.contiguous_acked_offset;
-        }
-
-        /// Age of the oldest unacknowledged data, derived from the last
-        /// prefix advance. Null while nothing is outstanding.
-        pub fn outstandingAgeNanos(self: StreamSendProgress, now_nanos: i64) ?i64 {
-            if (self.accepted_offset == self.contiguous_acked_offset) return null;
-            const since = self.last_ack_progress_nanos orelse return null;
-            return now_nanos - since;
+            return self.accepted_offset -| self.oldest_unsettled_offset;
         }
     };
 
-    /// Return one stream's send-side progress, or null when the stream has
-    /// no send side on this connection.
+    /// Return one stream's send-side backlog, or null when the stream has
+    /// no send side on this connection. Read-only: never mutates recovery
+    /// queues. After `reset_sent` the payload backlog is zero (a reset
+    /// subsumes all unacked data); RESET acknowledgment remains separate
+    /// stream state.
     pub fn streamSendProgress(self: *const Connection, stream_id: u64) ?StreamSendProgress {
         var found: ?*const SendStreamState = null;
         for (self.send_streams.items) |*stream_state| {
@@ -1282,11 +1157,27 @@ pub const Connection = struct {
             }
         }
         const stream_state = found orelse return null;
+        if (stream_state.reset_sent) {
+            return .{
+                .stream_id = stream_id,
+                .accepted_offset = stream_state.next_offset,
+                .oldest_unsettled_offset = stream_state.next_offset,
+            };
+        }
+        var oldest: ?u64 = null;
+        for (self.send_queue.items) |pending| {
+            if (pending.stream_id != stream_id) continue;
+            oldest = @min(oldest orelse pending.offset, pending.offset);
+        }
+        for (self.sent_packets.items) |sent| {
+            const pending = sent.stream_frame orelse continue;
+            if (pending.stream_id != stream_id) continue;
+            oldest = @min(oldest orelse pending.offset, pending.offset);
+        }
         return .{
             .stream_id = stream_id,
             .accepted_offset = stream_state.next_offset,
-            .contiguous_acked_offset = stream_state.acked_offset,
-            .last_ack_progress_nanos = stream_state.last_ack_progress_nanos,
+            .oldest_unsettled_offset = oldest orelse stream_state.next_offset,
         };
     }
 
@@ -8991,7 +8882,7 @@ pub const Connection = struct {
                 .ect0 => newly_acked_ect0 += 1,
                 .ect1 => newly_acked_ect1 += 1,
             }
-            markSentPacketAckedOnStreams(self, removed, now_nanos);
+            markSentPacketAckedOnStreams(self, removed);
             removed.deinit(self.allocator);
         }
 
@@ -9028,7 +8919,7 @@ pub const Connection = struct {
             latest_rtt_sample,
             now_nanos,
         );
-        refreshSendDataAckedStates(self, now_nanos);
+        refreshSendDataAckedStates(self);
         var congestion_probe_needed = false;
         if (ecn_result.ce_congestion_event) {
             if (largest_acked_packet) |acked_packet| {
