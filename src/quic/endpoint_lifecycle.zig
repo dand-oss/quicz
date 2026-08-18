@@ -288,6 +288,32 @@ fn endpointEcnPathState(state: EcnValidationState) endpoint.EcnPathValidationSta
     };
 }
 
+/// One arrival-path hint scope for fail-closed PATH_RESPONSE validation:
+/// records the arrival path on init and clears it on deinit, so a bound
+/// challenge is consumed only when the arrival path was recorded AND equals
+/// the binding.
+///
+/// NEVER NEST. Exactly one guard per processing path — an inner guard
+/// would clear the hint to null instead of restoring an outer path.
+/// Delegating wrappers (IPv4 `.toUdp()` delegates, composed feed variants)
+/// never create guards; the receive root that owns processing does. The
+/// existing manual `setReceivePathHint` brackets are REPLACED by this
+/// guard, not wrapped by a second one. Route mutation stays solely in the
+/// UpdatePath implementations, which read the hint during frame processing
+/// exactly like every other receive root.
+const ReceivePathHintScope = struct {
+    connection: *Connection,
+
+    fn init(connection: *Connection, path: endpoint.UdpTuple) ReceivePathHintScope {
+        connection.setReceivePathHint(path);
+        return .{ .connection = connection };
+    }
+
+    fn deinit(self: ReceivePathHintScope) void {
+        self.connection.setReceivePathHint(null);
+    }
+};
+
 pub const EndpointConnectionLifecycle = struct {
     /// Destination-CID router owned by this endpoint lifecycle.
     router: endpoint.EndpointRouter,
@@ -1374,8 +1400,10 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         // Record the arrival path so fail-closed PATH_RESPONSE
         // validation can check candidate-path bindings.
-        connection.setReceivePathHint(path);
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path);
+        defer arrival_path.deinit();
         const route = try self.router.routeDatagramAddress(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithInstalledKeys(
@@ -1775,13 +1803,19 @@ pub const EndpointConnectionLifecycle = struct {
                         now_nanos,
                         datagram,
                     ),
-                    .application => try self.processProtectedShortDatagramWithInstalledKeysOrClose(
-                        connection_id,
-                        connection,
-                        now_nanos,
-                        route.destination_connection_id.asSlice().len,
-                        datagram,
-                    ),
+                    .application => {
+                        // Arrival-path hint scope, application space only:
+                        // Handshake and 0-RTT cannot decode PATH_RESPONSE.
+                        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+                        defer arrival_path.deinit();
+                        try self.processProtectedShortDatagramWithInstalledKeysOrClose(
+                            connection_id,
+                            connection,
+                            now_nanos,
+                            route.destination_connection_id.asSlice().len,
+                            datagram,
+                        );
+                    },
                 }
                 break :routed .{ .routed = route };
             },
@@ -1822,8 +1856,10 @@ pub const EndpointConnectionLifecycle = struct {
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyPathUpdateResult {
-        connection.setReceivePathHint(path.toUdp());
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const action = try self.feedDatagram(
             options.out,
             path,
@@ -2024,13 +2060,19 @@ pub const EndpointConnectionLifecycle = struct {
                         now_nanos,
                         datagram,
                     ),
-                    .application => try self.processProtectedShortDatagramWithInstalledKeysOrClose(
-                        view.connection_id,
-                        view.connection,
-                        now_nanos,
-                        route.destination_connection_id.asSlice().len,
-                        datagram,
-                    ),
+                    .application => {
+                        // Arrival-path hint scope, application space only:
+                        // Handshake and 0-RTT cannot decode PATH_RESPONSE.
+                        const arrival_path = ReceivePathHintScope.init(view.connection, path.toUdp());
+                        defer arrival_path.deinit();
+                        try self.processProtectedShortDatagramWithInstalledKeysOrClose(
+                            view.connection_id,
+                            view.connection,
+                            now_nanos,
+                            route.destination_connection_id.asSlice().len,
+                            datagram,
+                        );
+                    },
                 }
                 break :routed .{ .routed = route };
             },
@@ -9957,6 +9999,10 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagram(
@@ -9988,8 +10034,10 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
-        connection.setReceivePathHint(path.toUdp());
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
@@ -10034,8 +10082,10 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
-        connection.setReceivePathHint(path.toUdp());
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
@@ -10079,6 +10129,10 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramOrClose(
@@ -10384,6 +10438,10 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.ShortPacketKeyUpdateKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithKeyUpdate(
@@ -10689,6 +10747,10 @@ pub const EndpointConnectionLifecycle = struct {
         key_phase_state: *protection.Aes128KeyPhaseState,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithKeyPhaseState(
@@ -11973,8 +12035,10 @@ pub const EndpointConnectionLifecycle = struct {
     ) EndpointProtectedDatagramError!endpoint.RouteResult {
         // Record the arrival path (widened) for fail-closed
         // PATH_RESPONSE validation.
-        connection.setReceivePathHint(path.toUdp());
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         try self.processProtectedShortDatagramWithInstalledKeys(
@@ -12036,8 +12100,10 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
-        connection.setReceivePathHint(path);
-        defer connection.setReceivePathHint(null);
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path);
+        defer arrival_path.deinit();
         const route = try self.routeDatagramAddress(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
@@ -12769,6 +12835,10 @@ pub const EndpointConnectionLifecycle = struct {
         datagram: []const u8,
         poll_options: EndpointPollInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointRoutedDatagramResult {
+        // One arrival-path hint scope for this processing path
+        // (exactly one guard; never nested).
+        const arrival_path = ReceivePathHintScope.init(connection, path.toUdp());
+        defer arrival_path.deinit();
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
         return .{

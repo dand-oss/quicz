@@ -1605,24 +1605,6 @@ pub const Connection = struct {
     }
 
     /// Return transmitted PATH_CHALLENGE frames awaiting a matching PATH_RESPONSE.
-    /// Test hook: decode and dispatch already-unprotected frame payload
-    /// bytes in the application space without any datagram wrapping, so
-    /// frame-level fail-closed behavior can be driven without an
-    /// endpoint feed (and therefore without an arrival-path hint).
-    pub fn processDecodedFramesForTest(self: *Connection, payload: []const u8) anyerror!void {
-        var offset: usize = 0;
-        while (offset < payload.len) {
-            var decoded = try frame.decodeFrameSlice(payload[offset..], self.allocator);
-            defer frame.deinitFrame(&decoded.frame, self.allocator);
-            switch (decoded.frame) {
-                .path_response => |value| try self.receivePathResponseFrame(value),
-                .path_challenge => |value| try self.receivePathChallengeFrame(value),
-                else => {},
-            }
-            offset += decoded.len;
-        }
-    }
-
     /// Number of outstanding PATH_CHALLENGEs bound to exactly this
     /// candidate UDP path. Legacy unbound challenges are not counted for
     /// any path and therefore never authorize path-specific commits.
