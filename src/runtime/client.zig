@@ -898,6 +898,10 @@ pub const Client = struct {
     fn processDatagram(self: *Client, data: []const u8) void {
         const result = self.client.receiveWithRoutePath(self.nowNanos(), &self.scratch, data) catch |err| {
             log.err("client: receive ({d} bytes): {}", .{ data.len, err });
+            if (data.len > 0) {
+                const head = data[0..@min(data.len, 48)];
+                log.err("client: datagram head: {x}", .{head});
+            }
             self.recordHandshakeError(err);
             return;
         };

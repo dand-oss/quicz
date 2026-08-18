@@ -387,12 +387,19 @@ pub const Tls13ClientTransport = struct {
             application_processed = true;
         }
         var outbound_handshake: ?[]u8 = null;
-        if (!self.handshake_finished_sent) {
+        if (!self.handshake_finished_sent and self.connection.hasHandshakeProtectionKeys()) {
             if (self.connection.peerInitialSourceConnectionId()) |peer_scid| {
-                outbound_handshake = try self.connection.pollProtectedHandshakeDatagramWithInstalledKeys(
+                // Emit the client Finished as a dedicated CRYPTO packet. The
+                // generic handshake poll may instead produce an ACK packet,
+                // which would drain the only outbound slot and leave the
+                // Finished unsent until the peer sends another datagram.
+                outbound_handshake = try self.connection.pollProtectedLongCryptoDatagramInSpace(
+                    .handshake,
                     now_nanos,
                     peer_scid,
                     &self.local_source_connection_id,
+                    &[_]u8{},
+                    self.connection.local_handshake_keys.?,
                 );
                 self.handshake_finished_sent = outbound_handshake != null;
             }
