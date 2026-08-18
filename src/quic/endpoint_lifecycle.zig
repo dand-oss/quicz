@@ -1887,7 +1887,12 @@ pub const EndpointConnectionLifecycle = struct {
                         datagram,
                     ),
                     .application => {
-                        const outstanding_before = connection.outstandingPathChallengeCount();
+                        // Path-specific commit rule: only a decrease in
+                        // the ARRIVAL path's own bound-challenge count
+                        // authorizes the route update. A total-count
+                        // comparison would let a legacy unbound challenge
+                        // (consumable from any path) authorize migration.
+                        const outstanding_before = connection.outstandingPathChallengeCountForPath(path.toUdp());
                         try self.processProtectedShortDatagramWithInstalledKeysOrClose(
                             connection_id,
                             connection,
@@ -1895,7 +1900,7 @@ pub const EndpointConnectionLifecycle = struct {
                             route.destination_connection_id.asSlice().len,
                             datagram,
                         );
-                        const outstanding_after = connection.outstandingPathChallengeCount();
+                        const outstanding_after = connection.outstandingPathChallengeCountForPath(path.toUdp());
                         const updated_route: ?endpoint.RouteResult = if (route.path_changed and outstanding_after < outstanding_before)
                             try self.updateRoutePathFromValidatedDatagramAndResetSpinBit(
                                 route.destination_connection_id.asSlice(),

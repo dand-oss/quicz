@@ -65447,6 +65447,94 @@ test "fail-closed: installed-key poll root and both feed roots record the arriva
     }
 }
 
+test "fail-closed: legacy unbound challenge consumed via feed never updates the route" {
+    // Regression for the total-count comparison: an unbound (legacy)
+    // challenge may be consumed from any arrival path, but it must not
+    // authorize the route update in
+    // feedDatagramWithInstalledKeysAndUpdatePathOrClose — only a
+    // decrease of the ARRIVAL path's own bound-challenge count may.
+    const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+    const client_dcid = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const challenge_data = [_]u8{ 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e };
+    const options = EndpointFeedInstalledKeyDatagramOptions{
+        .space = .application,
+        .out = &[_]u8{},
+        .unpredictable_prefix = &[_]u8{},
+        .supported_versions = &[_]packet.Version{.v1},
+        .path_challenge_data = challenge_data,
+    };
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const new_path = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_001),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(189, &server_dcid, old_path, .{});
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    var client = try Connection.init(std.testing.allocator, .client, .{});
+    defer client.deinit();
+    try server.validatePeerAddress();
+    try client.confirmHandshake();
+    try server.confirmHandshake();
+    try client.installOneRttTrafficSecrets(.{
+        .local = secrets.client.secret,
+        .peer = secrets.server.secret,
+    });
+    try server.installOneRttTrafficSecrets(.{
+        .local = secrets.server.secret,
+        .peer = secrets.client.secret,
+    });
+
+    // One LEGACY UNBOUND challenge on the server (no candidate path).
+    try server.sendPathChallenge(challenge_data);
+    const challenge_packet = (try lifecycle.pollProtectedShortDatagramWithInstalledKeys(
+        189,
+        &server,
+        1,
+        &client_dcid,
+    )) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(challenge_packet);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCountForPath(new_path.toUdp()));
+
+    // The client receives it and auto-queues the matching response.
+    try client.processProtectedShortDatagramWithInstalledKeys(2, client_dcid.len, challenge_packet);
+    const response = (try client.pollProtectedShortDatagramWithInstalledKeys(3, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(response);
+
+    // The response arrives from the CHANGED path: the route lookup sees
+    // path_changed, the unbound challenge IS consumed (legacy state,
+    // any path), but the route must NOT move.
+    const result = try lifecycle.feedDatagramWithInstalledKeysAndUpdatePathOrClose(
+        189,
+        &server,
+        new_path,
+        4,
+        response,
+        options,
+    );
+    const route = switch (result.feed) {
+        .routed => |r| r,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(route.path_changed);
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
+    try std.testing.expect(result.updated_route == null);
+    const still_old = try lifecycle.routeDatagram(old_path, response);
+    try std.testing.expect(!still_old.path_changed);
+    try std.testing.expect((try lifecycle.routeDatagram(new_path, response)).path_changed);
+}
+
 test "fail-closed: wrong-path and candidate-path responses via the neutral entry" {
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const server_send_secret = [_]u8{0x11} ** 32;
