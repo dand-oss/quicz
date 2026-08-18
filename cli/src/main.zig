@@ -1,0 +1,661 @@
+//! quicz CLI - daily QUIC / HTTP/3 development tool.
+//!
+//! Subcommands:
+//!   quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
+//!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
+//!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
+//!   quicz bench HOST PORT [--size BYTES]
+//!
+//! The H3 / echo / bench clients accept IPv4 literals, `localhost`, or
+//! resolvable host names. `--ca` requires an absolute PEM path.
+
+const std = @import("std");
+const test_certs = @import("test_certs");
+const quicz = @import("quicz");
+
+const Server = quicz.runtime.server.Server;
+const ServerConnection = quicz.runtime.server.ServerConnection;
+const Client = quicz.runtime.client.Client;
+const RuntimeH3Client = quicz.runtime.h3_client.H3Client;
+
+const alpn_h3 = [_][]const u8{"h3"};
+const alpn_hq = [_][]const u8{"hq-interop"};
+const max_file_size: usize = 32 * 1024 * 1024;
+
+/// Shared serve state. The H3 request handler is a plain function pointer, so
+/// the CLI keeps the process Io, allocator, root directory, and server in
+/// globals. Each connection driver owns its H3 state; the handler only borrows
+/// these for file I/O.
+var g_server: ?*Server = null;
+var g_io: std.Io = undefined;
+var g_allocator: std.mem.Allocator = undefined;
+var g_root_dir: std.Io.Dir = undefined;
+var g_metrics_buf: [512]u8 = undefined;
+
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
+
+    var args = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args.next();
+    const sub = args.next() orelse {
+        printUsage();
+        return;
+    };
+
+    if (std.mem.eql(u8, sub, "h3")) return cmdH3(allocator, io, &args);
+    if (std.mem.eql(u8, sub, "serve")) return cmdServe(allocator, io, &args);
+    if (std.mem.eql(u8, sub, "echo")) return cmdEcho(allocator, io, &args);
+    if (std.mem.eql(u8, sub, "bench")) return cmdBench(allocator, io, &args);
+    if (std.mem.eql(u8, sub, "help") or std.mem.eql(u8, sub, "--help") or std.mem.eql(u8, sub, "-h")) {
+        printUsage();
+        return;
+    }
+    std.debug.print("unknown subcommand: {s}\n\n", .{sub});
+    printUsage();
+}
+
+fn printUsage() void {
+    std.debug.print(
+        \\quicz - QUIC / HTTP/3 development tool
+        \\
+        \\Usage:
+        \\  quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+        \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
+        \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
+        \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM]
+        \\  quicz bench HOST PORT [--size BYTES]
+        \\
+    , .{});
+}
+
+fn nextArg(args: *std.process.Args.Iterator) ![]const u8 {
+    return args.next() orelse return error.MissingArgument;
+}
+
+fn parseIpv4(s: []const u8) ![4]u8 {
+    const addr = try std.Io.net.IpAddress.parseIp4(s, 0);
+    return addr.ip4.bytes;
+}
+
+fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
+    const file = try std.Io.Dir.openFile(.cwd(), io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, buf, 0);
+    return buf[0..n];
+}
+
+/// Resolve a host name to an IPv4 address. IPv4 literals and `localhost` are
+/// handled directly; anything else goes through the std.Io DNS lookup.
+fn resolveHost(io: std.Io, host: []const u8, port: u16) ![4]u8 {
+    if (std.mem.eql(u8, host, "localhost")) return .{ 127, 0, 0, 1 };
+    if (std.Io.net.IpAddress.parseIp4(host, port)) |addr| {
+        return addr.ip4.bytes;
+    } else |_| {}
+
+    const name = std.Io.net.HostName.init(host) catch return error.BadHostName;
+    var buf: [16]std.Io.net.HostName.LookupResult = undefined;
+    var queue: std.Io.Queue(std.Io.net.HostName.LookupResult) = .init(&buf);
+    try std.Io.net.HostName.lookup(name, io, &queue, .{ .port = port });
+    while (queue.getOneUncancelable(io)) |item| {
+        switch (item) {
+            .address => |addr| switch (addr) {
+                .ip4 => |ip4| return ip4.bytes,
+                else => {},
+            },
+            .canonical_name => {},
+        }
+    } else |_| {}
+    return error.NoIpv4Address;
+}
+
+fn loadCertKey(io: std.Io, cert_pem: ?[]const u8, key_pem: ?[]const u8) !struct { cert_der: []const u8, private_key: [32]u8 } {
+    var cert_pem_buf: [64 * 1024]u8 = undefined;
+    var cert_der_buf: [8192]u8 = undefined;
+    var key_pem_buf: [64 * 1024]u8 = undefined;
+    var key_der_buf: [512]u8 = undefined;
+
+    if (cert_pem != null or key_pem != null) {
+        if (cert_pem == null or key_pem == null) return error.CertAndKeyRequired;
+        const cert_pem_data = try readFile(io, cert_pem.?, &cert_pem_buf);
+        const cert_der = try quicz.tls_pem.decodeBlock(cert_pem_data, "CERTIFICATE", &cert_der_buf);
+        const key_pem_data = try readFile(io, key_pem.?, &key_pem_buf);
+        const private_key = try quicz.tls_pem.parsePrivateKeyP256(key_pem_data, &key_der_buf);
+        return .{ .cert_der = cert_der, .private_key = private_key };
+    }
+    return .{ .cert_der = &test_certs.cert_der, .private_key = test_certs.private_key };
+}
+
+// ---------------------------------------------------------------- h3 client
+
+const H3Target = struct {
+    host: []const u8,
+    port: u16,
+    path: []const u8,
+};
+
+fn parseH3Url(url: []const u8) !H3Target {
+    const prefix = "https://";
+    if (!std.mem.startsWith(u8, url, prefix)) return error.HttpsOnly;
+    const rest = url[prefix.len..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    const authority = rest[0..slash];
+    const path = if (slash < rest.len) rest[slash..] else "/";
+    if (std.mem.indexOfScalar(u8, authority, '[') != null) return error.Ipv6NotSupported;
+
+    const colon = std.mem.lastIndexOfScalar(u8, authority, ':');
+    const host = if (colon) |c| authority[0..c] else authority;
+    if (host.len == 0) return error.BadUrl;
+    const port: u16 = if (colon) |c| try std.fmt.parseInt(u16, authority[c + 1 ..], 10) else 443;
+    return .{ .host = host, .port = port, .path = path };
+}
+
+fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    const url = try nextArg(args);
+    var insecure = false;
+    var method: []const u8 = "GET";
+    var body: ?[]const u8 = null;
+    var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
+    defer headers.deinit(allocator);
+    var ca_pem: ?[]const u8 = null;
+
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "-k")) {
+            insecure = true;
+        } else if (std.mem.eql(u8, a, "-X")) {
+            method = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--data")) {
+            body = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "-H")) {
+            const hv = try nextArg(args);
+            const colon = std.mem.indexOfScalar(u8, hv, ':') orelse return error.InvalidHeader;
+            const name = std.mem.trim(u8, hv[0..colon], " \t");
+            const value = std.mem.trim(u8, hv[colon + 1 ..], " \t");
+            if (name.len == 0) return error.InvalidHeader;
+            try headers.append(allocator, .{ .name = name, .value = value });
+        } else if (std.mem.eql(u8, a, "--ca")) {
+            ca_pem = try nextArg(args);
+        } else {
+            std.debug.print("h3: unknown option: {s}\n", .{a});
+            return error.UnknownOption;
+        }
+    }
+
+    const parsed = try parseH3Url(url);
+    const ip = try resolveHost(io, parsed.host, parsed.port);
+
+    var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
+    if (ca_pem) |pem| {
+        if (!std.Io.Dir.path.isAbsolute(pem)) return error.CaPathMustBeAbsolute;
+        var bundle: std.crypto.Certificate.Bundle = .empty;
+        const now = std.Io.Clock.real.now(io);
+        try bundle.addCertsFromFilePathAbsolute(allocator, io, now, pem);
+        maybe_bundle = bundle;
+    }
+    defer {
+        if (maybe_bundle) |*b| b.deinit(allocator);
+    }
+
+    var client = try Client.init(allocator, io, .{
+        .server_host = ip,
+        .server_port = parsed.port,
+        .server_name = parsed.host,
+        .alpn = &alpn_h3,
+        .insecure_skip_verify = insecure or maybe_bundle == null,
+        .ca_bundle = if (maybe_bundle) |*b| b else null,
+    });
+    defer client.deinit();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    try client.connect();
+    const t1 = std.Io.Timestamp.now(io, .awake);
+
+    var h3cli = RuntimeH3Client.init(allocator, &client, 4096, 8);
+    defer h3cli.deinit();
+    try h3cli.run();
+
+    const request = quicz.h3_request.Request{
+        .method = method,
+        .path = parsed.path,
+        .scheme = "https",
+        .authority = parsed.host,
+        .extra_headers = headers.items,
+        .body = body,
+    };
+    const sid = try h3cli.sendRequest(request);
+    const response = try h3cli.receiveResponse(sid);
+
+    std.debug.print("HTTP/3 {d}\n", .{response.status});
+    if (response.body) |payload| {
+        try std.Io.File.stdout().writeStreamingAll(io, payload);
+        try std.Io.File.stdout().writeStreamingAll(io, "\n");
+    }
+
+    const stats = client.client.transport.connection.connectionStats();
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
+        connect_ms,
+        stats.smoothed_rtt_us,
+        stats.packets_lost,
+        stats.packets_retransmitted,
+        stats.stream_bytes_sent,
+        stats.stream_bytes_received,
+    });
+}
+
+// ---------------------------------------------------------------- h3 server
+
+fn sanitizeRelPath(path: []const u8) ![]const u8 {
+    if (path.len == 0 or path[0] != '/') return error.BadPath;
+    var it = std.mem.splitScalar(u8, path[1..], '/');
+    while (it.next()) |seg| {
+        if (std.mem.eql(u8, seg, "..")) return error.BadPath;
+    }
+    return path[1..];
+}
+
+fn contentTypeFor(path: []const u8) []const u8 {
+    const ext = std.fs.path.extension(path);
+    if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) return "text/html; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".css")) return "text/css; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".js")) return "application/javascript";
+    if (std.mem.eql(u8, ext, ".json")) return "application/json";
+    if (std.mem.eql(u8, ext, ".txt")) return "text/plain; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".md")) return "text/markdown";
+    if (std.mem.eql(u8, ext, ".wasm")) return "application/wasm";
+    if (std.mem.eql(u8, ext, ".png")) return "image/png";
+    if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) return "image/jpeg";
+    if (std.mem.eql(u8, ext, ".gif")) return "image/gif";
+    if (std.mem.eql(u8, ext, ".svg")) return "image/svg+xml";
+    if (std.mem.eql(u8, ext, ".ico")) return "image/x-icon";
+    if (std.mem.eql(u8, ext, ".pdf")) return "application/pdf";
+    if (std.mem.eql(u8, ext, ".mp4")) return "video/mp4";
+    if (std.mem.eql(u8, ext, ".webm")) return "video/webm";
+    if (std.mem.eql(u8, ext, ".mp3")) return "audio/mpeg";
+    if (std.mem.eql(u8, ext, ".zip")) return "application/zip";
+    return "application/octet-stream";
+}
+
+/// Response body that owns a heap buffer and releases it after the H3 server
+/// finishes pumping (or cancels) the stream.
+const OwnedBody = struct {
+    allocator: std.mem.Allocator,
+    data: []u8,
+    /// Extra response headers. The H3 response borrows this slice, so it must
+    /// outlive the handler return; owned here and freed with the body.
+    headers: []quicz.qpack.HeaderField,
+    offset: usize = 0,
+};
+
+fn ownedBodyNext(ctx: *anyopaque, buf: []u8) anyerror!?usize {
+    const state: *OwnedBody = @ptrCast(@alignCast(ctx));
+    if (state.offset >= state.data.len) return null;
+    const n = @min(state.data.len - state.offset, buf.len);
+    @memcpy(buf[0..n], state.data[state.offset .. state.offset + n]);
+    state.offset += n;
+    return n;
+}
+
+fn ownedBodyDeinit(ctx: *anyopaque) void {
+    const state: *OwnedBody = @ptrCast(@alignCast(ctx));
+    const allocator = state.allocator;
+    allocator.free(state.headers);
+    allocator.free(state.data);
+    allocator.destroy(state);
+}
+
+fn ownedResponse(status: u16, content_type: []const u8, data: []u8) quicz.h3_request.Response {
+    const allocator = g_allocator;
+    const state = allocator.create(OwnedBody) catch return .{ .status = 500, .body = "out of memory" };
+    const headers = allocator.alloc(quicz.qpack.HeaderField, 1) catch return .{ .status = 500, .body = "out of memory" };
+    headers[0] = .{ .name = "content-type", .value = content_type };
+    state.* = .{ .allocator = allocator, .data = data, .headers = headers };
+    return .{
+        .status = status,
+        .extra_headers = headers,
+        .body_stream = .{ .ctx = state, .next_fn = ownedBodyNext, .deinit_fn = ownedBodyDeinit },
+    };
+}
+
+fn readFileBody(rel: []const u8) ![]u8 {
+    const file = try g_root_dir.openFile(g_io, rel, .{});
+    defer file.close(g_io);
+    const len = try file.length(g_io);
+    if (len > max_file_size) return error.FileTooLarge;
+    const buf = try g_allocator.alloc(u8, @intCast(len));
+    errdefer g_allocator.free(buf);
+    const n = try file.readPositionalAll(g_io, buf, 0);
+    return buf[0..n];
+}
+
+fn concatPaths(allocator: std.mem.Allocator, a: []const u8, b: []const u8) ![]u8 {
+    const out = try allocator.alloc(u8, a.len + b.len);
+    @memcpy(out[0..a.len], a);
+    @memcpy(out[a.len..], b);
+    return out;
+}
+
+fn directoryListingResponse() quicz.h3_request.Response {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(g_allocator);
+    out.appendSlice(g_allocator, "<!doctype html><html><head><meta charset=\"utf-8\"><title>quicz serve</title></head><body><h1>quicz serve</h1><ul>") catch return .{ .status = 500, .body = "server error" };
+    var it = std.Io.Dir.iterate(g_root_dir);
+    while (true) {
+        const maybe_entry = it.next(g_io) catch return .{ .status = 500, .body = "server error" };
+        const entry = maybe_entry orelse break;
+        out.appendSlice(g_allocator, "<li><a href=\"/") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, entry.name) catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, "\">") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, entry.name) catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, if (entry.kind == .directory) "/</a></li>" else "</a></li>") catch return .{ .status = 500, .body = "server error" };
+    }
+    out.appendSlice(g_allocator, "</ul></body></html>") catch return .{ .status = 500, .body = "server error" };
+    const data = out.toOwnedSlice(g_allocator) catch return .{ .status = 500, .body = "server error" };
+    return ownedResponse(200, "text/html; charset=utf-8", data);
+}
+
+fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
+    if (!std.mem.eql(u8, req.method, "GET")) {
+        return .{ .status = 405, .extra_headers = &.{.{ .name = "allow", .value = "GET" }}, .body = "method not allowed" };
+    }
+
+    if (std.mem.eql(u8, req.path, "/metrics")) {
+        if (g_server) |srv| {
+            const m = srv.metricsSnapshot();
+            const body = std.fmt.bufPrint(&g_metrics_buf, "connections={d}\nsent={d}\nreceived={d}\nin_flight={d}\nsrtt_us={d}\nloss={d}\nretransmitted={d}\n", .{
+                m.active_connections,
+                m.stream_bytes_sent,
+                m.stream_bytes_received,
+                m.total_bytes_in_flight,
+                m.smoothed_rtt_us,
+                m.packets_lost,
+                m.packets_retransmitted,
+            }) catch "metrics error";
+            return .{ .status = 200, .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }}, .body = body };
+        }
+        return .{ .status = 503, .body = "server not ready" };
+    }
+
+    const rel = sanitizeRelPath(req.path) catch return .{ .status = 400, .body = "bad request" };
+    if (rel.len == 0) {
+        if (readFileBody("index.html")) |data| {
+            return ownedResponse(200, contentTypeFor("index.html"), data);
+        } else |e| switch (e) {
+            error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
+            else => return directoryListingResponse(),
+        }
+    }
+
+    if (readFileBody(rel)) |data| {
+        return ownedResponse(200, contentTypeFor(rel), data);
+    } else |e| switch (e) {
+        error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
+        else => {
+            // Maybe rel is a directory: serve its index.html.
+            const combined = concatPaths(g_allocator, rel, "/index.html") catch return .{ .status = 500, .body = "server error" };
+            defer g_allocator.free(combined);
+            if (readFileBody(combined)) |data| {
+                return ownedResponse(200, contentTypeFor(combined), data);
+            } else |e2| switch (e2) {
+                error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
+                else => return .{ .status = 404, .body = "not found" },
+            }
+        },
+    }
+}
+
+fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    var dir_path: []const u8 = ".";
+    var port: u16 = 4433;
+    var bind: ?[4]u8 = null;
+    var cert_pem: ?[]const u8 = null;
+    var key_pem: ?[]const u8 = null;
+
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "--dir")) {
+            dir_path = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--port")) {
+            port = try std.fmt.parseInt(u16, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--bind")) {
+            bind = try parseIpv4(try nextArg(args));
+        } else if (std.mem.eql(u8, a, "--cert")) {
+            cert_pem = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--key")) {
+            key_pem = try nextArg(args);
+        } else {
+            std.debug.print("serve: unknown option: {s}\n", .{a});
+            return error.UnknownOption;
+        }
+    }
+
+    g_allocator = allocator;
+    g_io = io;
+    g_root_dir = try std.Io.Dir.openDir(.cwd(), io, dir_path, .{ .iterate = true });
+
+    const identity = try loadCertKey(io, cert_pem, key_pem);
+
+    var server = try Server.init(allocator, io, .{
+        .port = port,
+        .alpn = &alpn_h3,
+        .cert_der = identity.cert_der,
+        .private_key = &identity.private_key,
+        .bind_addr = bind,
+    });
+    defer server.deinit();
+    g_server = &server;
+
+    try server.serveH3(.{}, serveHandler);
+    std.debug.print("quicz serve: https://127.0.0.1:{d}/ dir={s}\n", .{ port, dir_path });
+    server.drive_group.await(io) catch {};
+}
+
+// ---------------------------------------------------------------- echo
+
+fn echoHandler(conn: ServerConnection) std.Io.Cancelable!void {
+    var c = conn;
+    var buf: [65536]u8 = undefined;
+    while (true) {
+        var stream = c.acceptStream() catch return;
+        if (stream.isUni()) {
+            while (true) {
+                const n = stream.receive(&buf) catch break;
+                if (n == 0) break;
+            }
+            continue;
+        }
+        while (true) {
+            const n = stream.receive(&buf) catch break;
+            if (n == 0) break;
+            stream.send(buf[0..n], false) catch break;
+        }
+        stream.send(&.{}, true) catch {};
+    }
+}
+
+fn cmdEcho(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    var server_mode = false;
+    var client_mode = false;
+    var port: u16 = 4433;
+    var bind: ?[4]u8 = null;
+    var payload: []const u8 = "hello quicz cli";
+    var cert_pem: ?[]const u8 = null;
+    var key_pem: ?[]const u8 = null;
+    var ca_pem: ?[]const u8 = null;
+    var host: ?[]const u8 = null;
+    var client_port: ?u16 = null;
+
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "--server")) {
+            server_mode = true;
+        } else if (std.mem.eql(u8, a, "--client")) {
+            client_mode = true;
+        } else if (std.mem.eql(u8, a, "--port")) {
+            port = try std.fmt.parseInt(u16, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--bind")) {
+            bind = try parseIpv4(try nextArg(args));
+        } else if (std.mem.eql(u8, a, "--data")) {
+            payload = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--cert")) {
+            cert_pem = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--key")) {
+            key_pem = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--ca")) {
+            ca_pem = try nextArg(args);
+        } else if (host == null) {
+            host = a;
+        } else if (client_port == null) {
+            client_port = try std.fmt.parseInt(u16, a, 10);
+        } else {
+            return error.TooManyArgs;
+        }
+    }
+
+    if (server_mode == client_mode) return error.AmbiguousMode;
+    if (server_mode) {
+        return runEchoServer(allocator, io, port, bind, cert_pem, key_pem);
+    }
+    const hp = host orelse return error.MissingHost;
+    const cp = client_port orelse return error.MissingPort;
+    return runEchoClient(allocator, io, hp, cp, payload, ca_pem);
+}
+
+fn runEchoServer(allocator: std.mem.Allocator, io: std.Io, port: u16, bind: ?[4]u8, cert_pem: ?[]const u8, key_pem: ?[]const u8) !void {
+    const identity = try loadCertKey(io, cert_pem, key_pem);
+    var server = try Server.init(allocator, io, .{
+        .port = port,
+        .alpn = &alpn_hq,
+        .cert_der = identity.cert_der,
+        .private_key = &identity.private_key,
+        .bind_addr = bind,
+    });
+    defer server.deinit();
+    try server.serve(&echoHandler);
+    std.debug.print("quicz echo server on UDP port {d}\n", .{port});
+    server.drive_group.await(io) catch {};
+}
+
+fn runEchoClient(allocator: std.mem.Allocator, io: std.Io, host: []const u8, port: u16, payload: []const u8, ca_pem: ?[]const u8) !void {
+    const ip = try resolveHost(io, host, port);
+
+    var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
+    if (ca_pem) |pem| {
+        if (!std.Io.Dir.path.isAbsolute(pem)) return error.CaPathMustBeAbsolute;
+        var bundle: std.crypto.Certificate.Bundle = .empty;
+        const now = std.Io.Clock.real.now(io);
+        try bundle.addCertsFromFilePathAbsolute(allocator, io, now, pem);
+        maybe_bundle = bundle;
+    }
+    defer {
+        if (maybe_bundle) |*b| b.deinit(allocator);
+    }
+
+    var client = try Client.init(allocator, io, .{
+        .server_host = ip,
+        .server_port = port,
+        .server_name = host,
+        .alpn = &alpn_hq,
+        .insecure_skip_verify = maybe_bundle == null,
+        .ca_bundle = if (maybe_bundle) |*b| b else null,
+    });
+    defer client.deinit();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    try client.connect();
+    const t1 = std.Io.Timestamp.now(io, .awake);
+    const ok = try client.runEchoSession(payload);
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    if (ok) {
+        std.debug.print("echo OK connect={d} ms bytes={d}\n", .{ connect_ms, payload.len });
+    } else {
+        std.debug.print("echo MISMATCH connect={d} ms\n", .{connect_ms});
+        return error.EchoMismatch;
+    }
+}
+
+// ---------------------------------------------------------------- bench
+
+fn cmdBench(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    var host: ?[]const u8 = null;
+    var port: ?u16 = null;
+    var size: usize = 64 * 1024;
+
+    while (args.next()) |a| {
+        if (std.mem.eql(u8, a, "--size")) {
+            size = try std.fmt.parseInt(usize, try nextArg(args), 10);
+        } else if (host == null) {
+            host = a;
+        } else if (port == null) {
+            port = try std.fmt.parseInt(u16, a, 10);
+        } else {
+            return error.TooManyArgs;
+        }
+    }
+    const hp = host orelse return error.MissingHost;
+    const cp = port orelse return error.MissingPort;
+    if (size == 0 or size > 256 * 1024 * 1024) return error.BadSize;
+
+    const ip = try resolveHost(io, hp, cp);
+    var client = try Client.init(allocator, io, .{
+        .server_host = ip,
+        .server_port = cp,
+        .server_name = hp,
+        .alpn = &alpn_hq,
+        .insecure_skip_verify = true,
+    });
+    defer client.deinit();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    try client.connect();
+    const t1 = std.Io.Timestamp.now(io, .awake);
+
+    const payload = try allocator.alloc(u8, size);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    const sid = try client.send(payload, true);
+
+    var rbuf: [65536]u8 = undefined;
+    var received: usize = 0;
+    while (received < size) {
+        const n = try client.receive(sid, &rbuf);
+        if (n == 0) break;
+        received += n;
+    }
+    const t2 = std.Io.Timestamp.now(io, .awake);
+
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    const seconds = @as(f64, @floatFromInt(std.Io.Duration.toNanoseconds(t1.durationTo(t2)))) / 1e9;
+    const mbps = @as(f64, @floatFromInt(received)) * 8.0 / 1e6 / seconds;
+    std.debug.print("connect={d} ms size={d} B received={d} B time={d:.3} s rate={d:.1} Mbit/s\n", .{
+        connect_ms,
+        size,
+        received,
+        seconds,
+        mbps,
+    });
+    if (received != size) return error.BenchFailed;
+}
+
+test "parse h3 url" {
+    const t = try parseH3Url("https://example.com:8443/path?q=1");
+    try std.testing.expectEqualStrings("example.com", t.host);
+    try std.testing.expectEqual(@as(u16, 8443), t.port);
+    try std.testing.expectEqualStrings("/path?q=1", t.path);
+
+    const t2 = try parseH3Url("https://127.0.0.1/");
+    try std.testing.expectEqual(@as(u16, 443), t2.port);
+    try std.testing.expectEqualStrings("/", t2.path);
+
+    try std.testing.expectError(error.HttpsOnly, parseH3Url("http://x/"));
+}
+
+test "sanitize rel path rejects traversal" {
+    try std.testing.expectEqualStrings("a/b", try sanitizeRelPath("/a/b"));
+    try std.testing.expectError(error.BadPath, sanitizeRelPath("/a/../b"));
+    try std.testing.expectError(error.BadPath, sanitizeRelPath("a/b"));
+}
+
+test "parse ipv4" {
+    try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, try parseIpv4("127.0.0.1"));
+    try std.testing.expectError(error.InvalidCharacter, parseIpv4("not-an-ip"));
+}

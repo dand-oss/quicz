@@ -28,6 +28,14 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    // Shared loopback identity (DER cert + P-256 key) used by examples and
+    // downstream tools such as the CLI package.
+    _ = b.addModule("quicz-test-cert", .{
+        .root_source_file = b.path("examples/test_certs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Benchmark executables must measure production-like throughput, so force
     // ReleaseFast instead of inheriting the default (Debug) optimize. Without
     // this, `zig build bench-suite` reports misleadingly low numbers (~50 MB/s
