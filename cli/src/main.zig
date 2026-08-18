@@ -61,11 +61,11 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+        \\  quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
-        \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM]
-        \\  quicz bench HOST PORT [--size BYTES]
+        \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz bench HOST PORT [--size BYTES] [--timeout-ms MS]
         \\
     , .{});
 }
@@ -84,6 +84,60 @@ fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
     defer file.close(io);
     const n = try file.readPositionalAll(io, buf, 0);
     return buf[0..n];
+}
+
+/// Lowercase a header name so `-H 'Content-Type: ...'` behaves like curl
+/// (HTTP field names must be lowercase; RFC 9110 §5.1).
+fn lowercaseName(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    const out = try allocator.dupe(u8, name);
+    for (out) |*c| c.* = std.ascii.toLower(c.*);
+    return out;
+}
+
+/// Run a network session under a hard timeout. The session runs as one
+/// std.Io task; a watchdog task cancels the session if it has not completed
+/// in `timeout_ms`. Without this, a missing or stalled server makes the CLI
+/// block forever with no output.
+const TimedWork = struct {
+    done: std.atomic.Value(bool) = .init(false),
+    result: ?anyerror = null,
+};
+
+fn timedSession(io: std.Io, timed: *TimedWork, work: *const fn (io: std.Io, ctx: *anyopaque) anyerror!void, ctx: *anyopaque) void {
+    work(io, ctx) catch |e| {
+        timed.result = e;
+        timed.done.store(true, .release);
+        return;
+    };
+    timed.result = null;
+    timed.done.store(true, .release);
+}
+
+fn timedWatchdog(io: std.Io, session: *std.Io.Future(void), timed: *TimedWork, timeout_ms: u64) void {
+    const tick_ms: u64 = 100;
+    var waited: u64 = 0;
+    while (waited < timeout_ms) {
+        if (timed.done.load(.acquire)) return;
+        std.Io.sleep(io, std.Io.Duration.fromMilliseconds(tick_ms), .awake) catch return;
+        waited += tick_ms;
+    }
+    if (!timed.done.load(.acquire)) {
+        session.cancel(io);
+    }
+}
+
+fn mapTimedResult(r: anyerror) anyerror {
+    return if (r == error.Canceled) error.Timeout else r;
+}
+
+fn runWithTimeout(io: std.Io, timeout_ms: u64, work: *const fn (io: std.Io, ctx: *anyopaque) anyerror!void, ctx: *anyopaque) !void {
+    var timed: TimedWork = .{};
+    var session = io.async(timedSession, .{ io, &timed, work, ctx });
+    var watchdog = io.async(timedWatchdog, .{ io, &session, &timed, timeout_ms });
+    _ = watchdog.await(io);
+    _ = session.await(io);
+    if (timed.result) |r| return mapTimedResult(r);
+    return;
 }
 
 /// Resolve a host name to an IPv4 address. IPv4 literals and `localhost` are
@@ -151,13 +205,83 @@ fn parseH3Url(url: []const u8) !H3Target {
     return .{ .host = host, .port = port, .path = path };
 }
 
+const max_cli_response_body_size: usize = 256 * 1024 * 1024;
+
+const H3Job = struct {
+    allocator: std.mem.Allocator,
+    parsed: H3Target,
+    ip: [4]u8,
+    method: []const u8,
+    body: ?[]const u8,
+    headers: []const quicz.qpack.HeaderField,
+    insecure: bool,
+    ca_bundle: ?*const std.crypto.Certificate.Bundle,
+};
+
+fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
+    const job: *const H3Job = @ptrCast(@alignCast(ctx));
+
+    var client = try Client.init(job.allocator, io, .{
+        .server_host = job.ip,
+        .server_port = job.parsed.port,
+        .server_name = job.parsed.host,
+        .alpn = &alpn_h3,
+        .insecure_skip_verify = job.insecure or job.ca_bundle == null,
+        .ca_bundle = job.ca_bundle,
+    });
+    defer client.deinit();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    try client.connect();
+    const t1 = std.Io.Timestamp.now(io, .awake);
+
+    var h3cli = RuntimeH3Client.init(job.allocator, &client, 4096, 8);
+    defer h3cli.deinit();
+    try h3cli.run();
+    // A diagnostic client should fetch bodies larger than the library's 1 MiB
+    // default response cap.
+    h3cli.h3.max_response_body_size = max_cli_response_body_size;
+
+    const request = quicz.h3_request.Request{
+        .method = job.method,
+        .path = job.parsed.path,
+        .scheme = "https",
+        .authority = job.parsed.host,
+        .extra_headers = job.headers,
+        .body = job.body,
+    };
+    const sid = try h3cli.sendRequest(request);
+    const response = try h3cli.receiveResponse(sid);
+
+    std.debug.print("HTTP/3 {d}\n", .{response.status});
+    if (response.body) |payload| {
+        try std.Io.File.stdout().writeStreamingAll(io, payload);
+        try std.Io.File.stdout().writeStreamingAll(io, "\n");
+    }
+
+    const stats = client.client.transport.connection.connectionStats();
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
+        connect_ms,
+        stats.smoothed_rtt_us,
+        stats.packets_lost,
+        stats.packets_retransmitted,
+        stats.stream_bytes_sent,
+        stats.stream_bytes_received,
+    });
+}
+
 fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
     const url = try nextArg(args);
     var insecure = false;
     var method: []const u8 = "GET";
     var body: ?[]const u8 = null;
+    var timeout_ms: u64 = 10000;
     var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
     defer headers.deinit(allocator);
+    defer {
+        for (headers.items) |h| allocator.free(h.name);
+    }
     var ca_pem: ?[]const u8 = null;
 
     while (args.next()) |a| {
@@ -167,13 +291,16 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             method = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--data")) {
             body = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--timeout-ms")) {
+            timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-H")) {
             const hv = try nextArg(args);
             const colon = std.mem.indexOfScalar(u8, hv, ':') orelse return error.InvalidHeader;
             const name = std.mem.trim(u8, hv[0..colon], " \t");
             const value = std.mem.trim(u8, hv[colon + 1 ..], " \t");
             if (name.len == 0) return error.InvalidHeader;
-            try headers.append(allocator, .{ .name = name, .value = value });
+            const lower_name = try lowercaseName(allocator, name);
+            try headers.append(allocator, .{ .name = lower_name, .value = value });
         } else if (std.mem.eql(u8, a, "--ca")) {
             ca_pem = try nextArg(args);
         } else {
@@ -197,51 +324,17 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         if (maybe_bundle) |*b| b.deinit(allocator);
     }
 
-    var client = try Client.init(allocator, io, .{
-        .server_host = ip,
-        .server_port = parsed.port,
-        .server_name = parsed.host,
-        .alpn = &alpn_h3,
-        .insecure_skip_verify = insecure or maybe_bundle == null,
-        .ca_bundle = if (maybe_bundle) |*b| b else null,
-    });
-    defer client.deinit();
-
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    try client.connect();
-    const t1 = std.Io.Timestamp.now(io, .awake);
-
-    var h3cli = RuntimeH3Client.init(allocator, &client, 4096, 8);
-    defer h3cli.deinit();
-    try h3cli.run();
-
-    const request = quicz.h3_request.Request{
+    var job: H3Job = .{
+        .allocator = allocator,
+        .parsed = parsed,
+        .ip = ip,
         .method = method,
-        .path = parsed.path,
-        .scheme = "https",
-        .authority = parsed.host,
-        .extra_headers = headers.items,
         .body = body,
+        .headers = headers.items,
+        .insecure = insecure,
+        .ca_bundle = if (maybe_bundle) |*b| b else null,
     };
-    const sid = try h3cli.sendRequest(request);
-    const response = try h3cli.receiveResponse(sid);
-
-    std.debug.print("HTTP/3 {d}\n", .{response.status});
-    if (response.body) |payload| {
-        try std.Io.File.stdout().writeStreamingAll(io, payload);
-        try std.Io.File.stdout().writeStreamingAll(io, "\n");
-    }
-
-    const stats = client.client.transport.connection.connectionStats();
-    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-    std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
-        connect_ms,
-        stats.smoothed_rtt_us,
-        stats.packets_lost,
-        stats.packets_retransmitted,
-        stats.stream_bytes_sent,
-        stats.stream_bytes_received,
-    });
+    try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
 
 // ---------------------------------------------------------------- h3 server
@@ -484,6 +577,7 @@ fn cmdEcho(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Ite
     var ca_pem: ?[]const u8 = null;
     var host: ?[]const u8 = null;
     var client_port: ?u16 = null;
+    var timeout_ms: u64 = 10000;
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--server")) {
@@ -502,6 +596,8 @@ fn cmdEcho(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Ite
             key_pem = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--ca")) {
             ca_pem = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--timeout-ms")) {
+            timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (host == null) {
             host = a;
         } else if (client_port == null) {
@@ -517,7 +613,7 @@ fn cmdEcho(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Ite
     }
     const hp = host orelse return error.MissingHost;
     const cp = client_port orelse return error.MissingPort;
-    return runEchoClient(allocator, io, hp, cp, payload, ca_pem);
+    return runEchoClient(allocator, io, hp, cp, payload, ca_pem, timeout_ms);
 }
 
 fn runEchoServer(allocator: std.mem.Allocator, io: std.Io, port: u16, bind: ?[4]u8, cert_pem: ?[]const u8, key_pem: ?[]const u8) !void {
@@ -535,7 +631,41 @@ fn runEchoServer(allocator: std.mem.Allocator, io: std.Io, port: u16, bind: ?[4]
     server.drive_group.await(io) catch {};
 }
 
-fn runEchoClient(allocator: std.mem.Allocator, io: std.Io, host: []const u8, port: u16, payload: []const u8, ca_pem: ?[]const u8) !void {
+const EchoClientJob = struct {
+    allocator: std.mem.Allocator,
+    ip: [4]u8,
+    host: []const u8,
+    port: u16,
+    payload: []const u8,
+    ca_bundle: ?*const std.crypto.Certificate.Bundle,
+};
+
+fn echoClientJob(io: std.Io, ctx: *anyopaque) anyerror!void {
+    const job: *const EchoClientJob = @ptrCast(@alignCast(ctx));
+    var client = try Client.init(job.allocator, io, .{
+        .server_host = job.ip,
+        .server_port = job.port,
+        .server_name = job.host,
+        .alpn = &alpn_hq,
+        .insecure_skip_verify = job.ca_bundle == null,
+        .ca_bundle = job.ca_bundle,
+    });
+    defer client.deinit();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    try client.connect();
+    const t1 = std.Io.Timestamp.now(io, .awake);
+    const ok = try client.runEchoSession(job.payload);
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    if (ok) {
+        std.debug.print("echo OK connect={d} ms bytes={d}\n", .{ connect_ms, job.payload.len });
+    } else {
+        std.debug.print("echo MISMATCH connect={d} ms\n", .{connect_ms});
+        return error.EchoMismatch;
+    }
+}
+
+fn runEchoClient(allocator: std.mem.Allocator, io: std.Io, host: []const u8, port: u16, payload: []const u8, ca_pem: ?[]const u8, timeout_ms: u64) !void {
     const ip = try resolveHost(io, host, port);
 
     var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
@@ -550,39 +680,80 @@ fn runEchoClient(allocator: std.mem.Allocator, io: std.Io, host: []const u8, por
         if (maybe_bundle) |*b| b.deinit(allocator);
     }
 
-    var client = try Client.init(allocator, io, .{
-        .server_host = ip,
-        .server_port = port,
-        .server_name = host,
-        .alpn = &alpn_hq,
-        .insecure_skip_verify = maybe_bundle == null,
+    var job: EchoClientJob = .{
+        .allocator = allocator,
+        .ip = ip,
+        .host = host,
+        .port = port,
+        .payload = payload,
         .ca_bundle = if (maybe_bundle) |*b| b else null,
+    };
+    try runWithTimeout(io, timeout_ms, echoClientJob, &job);
+}
+
+// ---------------------------------------------------------------- bench
+
+const BenchJob = struct {
+    allocator: std.mem.Allocator,
+    ip: [4]u8,
+    host: []const u8,
+    port: u16,
+    size: usize,
+};
+
+fn benchJob(io: std.Io, ctx: *anyopaque) anyerror!void {
+    const job: *const BenchJob = @ptrCast(@alignCast(ctx));
+    var client = try Client.init(job.allocator, io, .{
+        .server_host = job.ip,
+        .server_port = job.port,
+        .server_name = job.host,
+        .alpn = &alpn_hq,
+        .insecure_skip_verify = true,
     });
     defer client.deinit();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
     try client.connect();
     const t1 = std.Io.Timestamp.now(io, .awake);
-    const ok = try client.runEchoSession(payload);
-    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-    if (ok) {
-        std.debug.print("echo OK connect={d} ms bytes={d}\n", .{ connect_ms, payload.len });
-    } else {
-        std.debug.print("echo MISMATCH connect={d} ms\n", .{connect_ms});
-        return error.EchoMismatch;
-    }
-}
 
-// ---------------------------------------------------------------- bench
+    const payload = try job.allocator.alloc(u8, job.size);
+    defer job.allocator.free(payload);
+    @memset(payload, 'x');
+    const sid = try client.send(payload, true);
+
+    var rbuf: [65536]u8 = undefined;
+    var received: usize = 0;
+    while (received < job.size) {
+        const n = try client.receive(sid, &rbuf);
+        if (n == 0) break;
+        received += n;
+    }
+    const t2 = std.Io.Timestamp.now(io, .awake);
+
+    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+    const seconds = @as(f64, @floatFromInt(std.Io.Duration.toNanoseconds(t1.durationTo(t2)))) / 1e9;
+    const mbps = @as(f64, @floatFromInt(received)) * 8.0 / 1e6 / seconds;
+    std.debug.print("connect={d} ms size={d} B received={d} B time={d:.3} s rate={d:.1} Mbit/s\n", .{
+        connect_ms,
+        job.size,
+        received,
+        seconds,
+        mbps,
+    });
+    if (received != job.size) return error.BenchFailed;
+}
 
 fn cmdBench(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
     var host: ?[]const u8 = null;
     var port: ?u16 = null;
     var size: usize = 64 * 1024;
+    var timeout_ms: u64 = 10000;
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--size")) {
             size = try std.fmt.parseInt(usize, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--timeout-ms")) {
+            timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (host == null) {
             host = a;
         } else if (port == null) {
@@ -596,44 +767,14 @@ fn cmdBench(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
     if (size == 0 or size > 256 * 1024 * 1024) return error.BadSize;
 
     const ip = try resolveHost(io, hp, cp);
-    var client = try Client.init(allocator, io, .{
-        .server_host = ip,
-        .server_port = cp,
-        .server_name = hp,
-        .alpn = &alpn_hq,
-        .insecure_skip_verify = true,
-    });
-    defer client.deinit();
-
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    try client.connect();
-    const t1 = std.Io.Timestamp.now(io, .awake);
-
-    const payload = try allocator.alloc(u8, size);
-    defer allocator.free(payload);
-    @memset(payload, 'x');
-    const sid = try client.send(payload, true);
-
-    var rbuf: [65536]u8 = undefined;
-    var received: usize = 0;
-    while (received < size) {
-        const n = try client.receive(sid, &rbuf);
-        if (n == 0) break;
-        received += n;
-    }
-    const t2 = std.Io.Timestamp.now(io, .awake);
-
-    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-    const seconds = @as(f64, @floatFromInt(std.Io.Duration.toNanoseconds(t1.durationTo(t2)))) / 1e9;
-    const mbps = @as(f64, @floatFromInt(received)) * 8.0 / 1e6 / seconds;
-    std.debug.print("connect={d} ms size={d} B received={d} B time={d:.3} s rate={d:.1} Mbit/s\n", .{
-        connect_ms,
-        size,
-        received,
-        seconds,
-        mbps,
-    });
-    if (received != size) return error.BenchFailed;
+    var job: BenchJob = .{
+        .allocator = allocator,
+        .ip = ip,
+        .host = hp,
+        .port = cp,
+        .size = size,
+    };
+    try runWithTimeout(io, timeout_ms, benchJob, &job);
 }
 
 test "parse h3 url" {
@@ -658,4 +799,10 @@ test "sanitize rel path rejects traversal" {
 test "parse ipv4" {
     try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, try parseIpv4("127.0.0.1"));
     try std.testing.expectError(error.InvalidCharacter, parseIpv4("not-an-ip"));
+}
+
+test "lowercase header name" {
+    const out = try lowercaseName(std.testing.allocator, "Content-Type");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("content-type", out);
 }

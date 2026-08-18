@@ -19,7 +19,7 @@ zig build test             # CLI 单元测试
 ```bash
 # H3 请求客户端：发 GET/POST，输出状态、响应体和连接指标
 quicz h3 https://127.0.0.1:4433/hello.txt -k
-quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}'
+quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
 
 # H3 静态文件服务：目录 + /metrics
 quicz serve --dir ./dist --port 4433
@@ -38,3 +38,4 @@ quicz bench 127.0.0.1 4433 --size 1048576
 - H3 客户端和服务端当前只支持 IPv4 / `localhost`；`--ca` 需要绝对路径 PEM。
 - `serve` 默认使用内置 loopback 测试证书；生产用 `--cert` / `--key`（P-256 PEM）。
 - `bench` 以 insecure 方式连接 `echo --server`，测的是传输路径而非证书链路。
+- 客户端子命令默认 10s 超时（`--timeout-ms`），连不上或服务端卡住会直接失败，不挂死。

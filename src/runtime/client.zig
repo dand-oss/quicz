@@ -191,6 +191,9 @@ pub const Client = struct {
     /// Drive-observed connection close; a blocked receive() cannot learn
     /// about the close from stream data or EOF, so it checks this flag.
     conn_closing_or_closed: bool = false,
+    /// Packet-processing error that failed the handshake, if any. Surfaces the
+    /// original error to `connect()` instead of a generic HandshakeFailed.
+    handshake_error: ?anyerror = null,
     /// When HTTP/3 is layered on this client, the drive task also polls
     /// server-initiated unidirectional streams (control / QPACK). Off by
     /// default so the plain echo path keeps polling only streams it opened.
@@ -359,7 +362,9 @@ pub const Client = struct {
         @atomicStore(bool, &self.connect_requested, true, .release);
         self.notifyDrive(self.io);
         self.handshake_sem.wait(self.io) catch return error.HandshakeFailed;
-        if (self.handshake_state.load(.acquire) != handshake_confirmed) return error.HandshakeFailed;
+        if (self.handshake_state.load(.acquire) != handshake_confirmed) {
+            return self.handshake_error orelse error.HandshakeFailed;
+        }
     }
 
     /// Send `data` on a new bidirectional stream; returns the stream id.
@@ -893,6 +898,7 @@ pub const Client = struct {
     fn processDatagram(self: *Client, data: []const u8) void {
         const result = self.client.receiveWithRoutePath(self.nowNanos(), &self.scratch, data) catch |err| {
             log.err("client: receive ({d} bytes): {}", .{ data.len, err });
+            self.recordHandshakeError(err);
             return;
         };
         if (result.outbound_initial) |o| {
@@ -905,6 +911,17 @@ pub const Client = struct {
         }
         self.deliverStreamData();
         self.drainOutgoing();
+    }
+
+    /// Fail a pending handshake with the packet-processing error that made it
+    /// unrecoverable. Without this, an invalid/undecryptable server response
+    /// is only logged and `connect()` keeps retrying until an external timeout.
+    fn recordHandshakeError(self: *Client, err: anyerror) void {
+        if (self.handshake_state.load(.acquire) != handshake_pending) return;
+        if (!self.handshake_started) return;
+        self.handshake_error = err;
+        self.handshake_state.store(handshake_failed, .release);
+        self.handshake_sem.post(self.io);
     }
 
     /// Push received bytes of every open stream into its queue and surface
