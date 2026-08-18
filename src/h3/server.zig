@@ -402,10 +402,26 @@ pub const H3Server = struct {
 
         if (rs.phase == .headers) {
             try rs.wire.appendSlice(self.allocator, data);
-            const frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
+            // Clients may send GREASE / unknown extension frames before the
+            // initial HEADERS frame (RFC 9114 §7.2.8, §9); quiche greases the
+            // request stream in production. Skip and scan for the first
+            // HEADERS frame.
+            var frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
                 error.IncompleteFrame => return .{ .result = .need_more, .consumed = data.len },
                 else => return e,
             };
+            while (h3_frame.isIgnorableHeaderPrefixFrame(frame.frame.frame_type)) {
+                if (frame.consumed == rs.wire.items.len) {
+                    rs.wire.clearRetainingCapacity();
+                } else {
+                    std.mem.copyForwards(u8, rs.wire.items[0 .. rs.wire.items.len - frame.consumed], rs.wire.items[frame.consumed..]);
+                    rs.wire.shrinkRetainingCapacity(rs.wire.items.len - frame.consumed);
+                }
+                frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
+                    error.IncompleteFrame => return .{ .result = .need_more, .consumed = data.len },
+                    else => return e,
+                };
+            }
             if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
                 return error.ExpectedHeadersFrame;
             }
@@ -1020,6 +1036,84 @@ test "H3Server streams request body across feeds and echoes it" {
     _ = try server.feedRequestData(0, req_buf[0..4], false);
     _ = try server.feedRequestData(0, req_buf[4..headers_len], false);
     _ = try server.feedRequestData(0, req_buf[headers_len..req_len], true);
+    try server.pumpResponses();
+
+    const decoded = try h3_request.decodeResponse(mock.response_data.items);
+    try std.testing.expectEqual(@as(u16, 200), decoded.response.status);
+    try std.testing.expectEqualStrings(req_body, decoded.response.body.?);
+}
+
+test "H3Server skips GREASE frames before request HEADERS" {
+    // POST /echo with a body, prefixed by two GREASE frames as quiche clients
+    // emit before the request HEADERS frame (RFC 9114 §7.2.8).
+    const req_body = "greased-request";
+    var req_buf: [4096]u8 = undefined;
+    const req = h3_request.Request{
+        .method = "POST",
+        .path = "/echo",
+        .authority = "example.com",
+        .body = req_body,
+    };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+
+    const grease_type: u64 = 31 * 100_000_000_000_000_000 + 33;
+    var grease_a: [128]u8 = undefined;
+    var ga = buffer.fixedWriter(&grease_a);
+    try h3_frame.encodeFrame(ga.writer(), .{ .frame_type = grease_type, .payload = "GREASE is the word" });
+    const grease_a_len = ga.getWritten().len;
+    var grease_b: [64]u8 = undefined;
+    var gb = buffer.fixedWriter(&grease_b);
+    try h3_frame.encodeFrame(gb.writer(), .{ .frame_type = grease_type + 0x1f, .payload = "" });
+    const grease_b_len = gb.getWritten().len;
+
+    var wire: [4096]u8 = undefined;
+    var pos: usize = 0;
+    @memcpy(wire[pos .. pos + grease_a_len], grease_a[0..grease_a_len]);
+    pos += grease_a_len;
+    @memcpy(wire[pos .. pos + grease_b_len], grease_b[0..grease_b_len]);
+    pos += grease_b_len;
+    @memcpy(wire[pos .. pos + req_len], req_buf[0..req_len]);
+    pos += req_len;
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid != 3) try self.response_data.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.response_data.deinit(std.testing.allocator);
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            return .{ .status = 200, .body = decoded_req.body orelse "NOBODY" };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    // Feed in two chunks so the skip loop buffers a partial GREASE frame.
+    const r1 = try server.feedRequestData(0, wire[0..1], false);
+    try std.testing.expect(r1.result == .need_more);
+    const r2 = try server.feedRequestData(0, wire[1..pos], true);
+    try std.testing.expect(r2.result == .processed);
     try server.pumpResponses();
 
     const decoded = try h3_request.decodeResponse(mock.response_data.items);

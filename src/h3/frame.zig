@@ -44,6 +44,33 @@ pub const Frame = struct {
     payload: []const u8,
 };
 
+/// Return whether `frame_type` is a reserved GREASE type (RFC 9114 §7.2.8):
+/// `0x1f * N + 0x21` for a non-negative integer N.
+pub fn isGreaseFrameType(frame_type: u64) bool {
+    if (frame_type < 0x21) return false;
+    return (frame_type - 0x21) % 0x1f == 0;
+}
+
+/// Return whether a frame may be skipped while scanning a request/response
+/// stream for its initial HEADERS frame. GREASE frames and unknown extension
+/// frame types carry no request/response semantics and must be ignored by
+/// receivers (RFC 9114 §7.2.8 and §9); known frame types are not skippable
+/// here, so e.g. DATA before HEADERS still fails as a protocol error.
+pub fn isIgnorableHeaderPrefixFrame(frame_type: u64) bool {
+    if (isGreaseFrameType(frame_type)) return true;
+    return switch (frame_type) {
+        @intFromEnum(FrameType.data),
+        @intFromEnum(FrameType.headers),
+        @intFromEnum(FrameType.cancel_push),
+        @intFromEnum(FrameType.settings),
+        @intFromEnum(FrameType.push_promise),
+        @intFromEnum(FrameType.goaway),
+        @intFromEnum(FrameType.max_push_id),
+        => false,
+        else => true,
+    };
+}
+
 /// Encode an HTTP/3 frame (type varint + length varint + payload).
 pub fn encodeFrame(writer: anytype, frame: Frame) !void {
     try encodeVarInt(writer, frame.frame_type);

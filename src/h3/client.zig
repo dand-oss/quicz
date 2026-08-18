@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const h3_frame = @import("frame.zig");
+const buffer = @import("../quic/buffer.zig");
 const h3_request = @import("request.zig");
 const h3_connection = @import("connection.zig");
 const qpack = @import("qpack.zig");
@@ -545,10 +546,26 @@ pub const H3Client = struct {
 
         if (rs.phase == .headers) {
             try rs.wire.appendSlice(self.allocator, data);
-            const frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
+            // Servers may send GREASE / unknown extension frames before the
+            // initial HEADERS frame (RFC 9114 §7.2.8, §9); Cloudflare's quiche
+            // greases the response stream in production. Skip and scan for the
+            // first HEADERS frame.
+            var frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
                 error.IncompleteFrame => return null,
                 else => return e,
             };
+            while (h3_frame.isIgnorableHeaderPrefixFrame(frame.frame.frame_type)) {
+                if (frame.consumed == rs.wire.items.len) {
+                    rs.wire.clearRetainingCapacity();
+                } else {
+                    std.mem.copyForwards(u8, rs.wire.items[0 .. rs.wire.items.len - frame.consumed], rs.wire.items[frame.consumed..]);
+                    rs.wire.shrinkRetainingCapacity(rs.wire.items.len - frame.consumed);
+                }
+                frame = h3_frame.decodeFrame(rs.wire.items) catch |e| switch (e) {
+                    error.IncompleteFrame => return null,
+                    else => return e,
+                };
+            }
             if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
                 return error.ExpectedHeadersFrame;
             }
@@ -961,6 +978,78 @@ test "H3Client aggregates a chunked response via feedResponseData" {
     const resp = (try client.feedResponseData(0, d2[0..d2_len], true)).?;
     try std.testing.expectEqual(@as(u16, 200), resp.status);
     try std.testing.expectEqualStrings("chunk-one-chunk-two", resp.body.?);
+    client.releaseResponse(0);
+}
+
+test "H3Client skips GREASE frames before response HEADERS" {
+    const response = h3_request.Response{ .status = 200 };
+    var headers_buf: [512]u8 = undefined;
+    const headers_len = try h3_request.encodeResponseHeaders(&headers_buf, response);
+    var data_buf: [64]u8 = undefined;
+    const data_len = try h3_request.encodeDataFrame(&data_buf, "greased-body");
+
+    // Reserved GREASE type (RFC 9114 §7.2.8); real quiche / Cloudflare servers
+    // emit one or more of these before the response HEADERS frame.
+    const grease_type: u64 = 31 * 100_000_000_000_000_000 + 33;
+    var grease_a: [128]u8 = undefined;
+    var ga = buffer.fixedWriter(&grease_a);
+    try h3_frame.encodeFrame(ga.writer(), .{ .frame_type = grease_type, .payload = "GREASE is the word" });
+    const grease_a_len = ga.getWritten().len;
+    var grease_b: [64]u8 = undefined;
+    var gb = buffer.fixedWriter(&grease_b);
+    try h3_frame.encodeFrame(gb.writer(), .{ .frame_type = grease_type + 0x1f, .payload = "" });
+    const grease_b_len = gb.getWritten().len;
+
+    const MockCtx = struct {
+        sent: std.ArrayList(u8) = .empty,
+        fn openBidi(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 0;
+        }
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            _ = fin;
+            if (sid != 3) try self.sent.appendSlice(std.testing.allocator, data);
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer mock.sent.deinit(std.testing.allocator);
+    var conn = H3Client.H3ClientConnection{
+        .openBidiStreamFn = MockCtx.openBidi,
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    var client = try H3Client.init(&conn, std.testing.allocator, 4096, 8);
+    defer client.deinit();
+
+    var wire: [2048]u8 = undefined;
+    var pos: usize = 0;
+    @memcpy(wire[pos .. pos + grease_a_len], grease_a[0..grease_a_len]);
+    pos += grease_a_len;
+    @memcpy(wire[pos .. pos + grease_b_len], grease_b[0..grease_b_len]);
+    pos += grease_b_len;
+    @memcpy(wire[pos .. pos + headers_len], headers_buf[0..headers_len]);
+    pos += headers_len;
+    @memcpy(wire[pos .. pos + data_len], data_buf[0..data_len]);
+    pos += data_len;
+
+    // Feed in two chunks so the skip loop buffers a partial GREASE frame.
+    try std.testing.expect((try client.feedResponseData(0, wire[0..1], false)) == null);
+    const resp = (try client.feedResponseData(0, wire[1..pos], true)).?;
+    try std.testing.expectEqual(@as(u16, 200), resp.status);
+    try std.testing.expectEqualStrings("greased-body", resp.body.?);
     client.releaseResponse(0);
 }
 
