@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-i] [-L] [-o FILE] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz h3 <url> [-k] [-i] [-L] [-s] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
 //!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -61,7 +61,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-i] [-L] [-o FILE] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz h3 <url> [-k] [-i] [-L] [-s] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -238,6 +238,8 @@ const H3Job = struct {
     output_path: ?[]const u8,
     include_headers: bool,
     follow_redirects: bool,
+    max_redirects: usize,
+    silent: bool,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -261,6 +263,7 @@ fn resolveLocation(allocator: std.mem.Allocator, current_url: []const u8, locati
     const loc = std.mem.trim(u8, location, " \t");
     if (loc.len == 0) return error.BadRedirectLocation;
     if (std.mem.startsWith(u8, loc, "https://")) return allocator.dupe(u8, loc);
+    if (std.mem.indexOf(u8, loc, "://") != null) return error.NonHttpsRedirect;
     const base = try parseH3Url(current_url);
     if (std.mem.startsWith(u8, loc, "/")) {
         return resolvedTarget(allocator, base, "", loc);
@@ -286,7 +289,7 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     var current_url = job.url;
     var current_url_owned = false;
     defer if (current_url_owned) job.allocator.free(current_url);
-    var redirects_left: usize = 10;
+    var redirects_left: usize = job.max_redirects;
 
     while (true) {
         const parsed = try parseH3Url(current_url);
@@ -357,16 +360,18 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
                 try std.Io.File.stdout().writeStreamingAll(io, "\n");
             }
 
-            const stats = client.client.transport.connection.connectionStats();
-            const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-            std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
-                connect_ms,
-                stats.smoothed_rtt_us,
-                stats.packets_lost,
-                stats.packets_retransmitted,
-                stats.stream_bytes_sent,
-                stats.stream_bytes_received,
-            });
+            if (!job.silent) {
+                const stats = client.client.transport.connection.connectionStats();
+                const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+                std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
+                    connect_ms,
+                    stats.smoothed_rtt_us,
+                    stats.packets_lost,
+                    stats.packets_retransmitted,
+                    stats.stream_bytes_sent,
+                    stats.stream_bytes_received,
+                });
+            }
         }
         return;
     }
@@ -387,14 +392,20 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     var output_path: ?[]const u8 = null;
     var include_headers = false;
     var follow_redirects = false;
+    var max_redirects: usize = 10;
+    var silent = false;
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
             insecure = true;
+        } else if (std.mem.eql(u8, a, "-s") or std.mem.eql(u8, a, "--silent")) {
+            silent = true;
         } else if (std.mem.eql(u8, a, "-i") or std.mem.eql(u8, a, "--include")) {
             include_headers = true;
         } else if (std.mem.eql(u8, a, "-L") or std.mem.eql(u8, a, "--location")) {
             follow_redirects = true;
+        } else if (std.mem.eql(u8, a, "--max-redirects")) {
+            max_redirects = try std.fmt.parseInt(usize, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-o") or std.mem.eql(u8, a, "--output")) {
             output_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "-X")) {
@@ -448,6 +459,8 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .output_path = output_path,
         .include_headers = include_headers,
         .follow_redirects = follow_redirects,
+        .max_redirects = max_redirects,
+        .silent = silent,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
@@ -948,4 +961,6 @@ test "resolve redirect location" {
     const rel = try resolveLocation(allocator, "https://a.com/a/b", "../c");
     defer allocator.free(rel);
     try std.testing.expectEqualStrings("https://a.com/a/../c", rel);
+
+    try std.testing.expectError(error.NonHttpsRedirect, resolveLocation(allocator, "https://a.com/", "http://b.com/x"));
 }
