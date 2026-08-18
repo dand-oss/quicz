@@ -33,6 +33,32 @@ quicz echo --client 127.0.0.1 4433 --data "ping"
 quicz bench 127.0.0.1 4433 --size 1048576
 ```
 
+## 线上 H3 验证
+
+`h3` 子命令已针对真实线上 HTTP/3 服务器做端到端验证（QUIC 握手 + HTTP/3 + QPACK），
+随后再跑一次本地 `serve` 回环：
+
+```bash
+../scripts/cli_h3_live_test.sh                  # 线上服务器 + 本地回环
+../scripts/cli_h3_live_test.sh --skip-live      # 只跑本地回环
+```
+
+线上目标为 `https://cloudflare-quic.com/` 和 `https://www.fastly.com/`；
+每次必须返回 `HTTP/3 200` 且正文非空。直接命令效果相同：
+
+```bash
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/ -k --timeout-ms 25000
+# HTTP/3 200
+# <完整响应正文>
+```
+
+Cloudflare 边缘会在请求/响应流的首个 HEADERS 帧前插入 GREASE 帧（RFC 9114 §7.2.8）。
+runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型（RFC 9114 §9）。
+回归测试覆盖双向：
+
+- `src/h3/client.zig` - "H3Client skips GREASE frames before response HEADERS"
+- `src/h3/server.zig` - "H3Server skips GREASE frames before request HEADERS"
+
 ## 边界
 
 - H3 客户端和服务端当前只支持 IPv4 / `localhost`；`--ca` 需要绝对路径 PEM。

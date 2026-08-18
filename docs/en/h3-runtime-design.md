@@ -57,6 +57,21 @@ Scope: 把 HTTP/3 + QPACK 接到生产 I/O runtime（`runtime.Server` / `runtime
 
 - `runtime.Server.drainOutgoing` 对 `Connection.sendOnStream` 返回 `FlowControlBlocked` 时**无条件清空队列（丢数据）** → 保留队列 + 保持 `send_pending`，MAX_STREAM_DATA 到达（入站 datagram 唤醒 drive）后重试。
 
+### GREASE / unknown frame interop (2026-08-18)
+
+- Request/response streams may legitimately start with GREASE frames before
+  the first HEADERS frame (RFC 9114 §7.2.8); Cloudflare's quiche edge does
+  this in production. Unknown extension frame types must also be ignored
+  (RFC 9114 §9).
+- `feedResponseData` (client) and `feedRequestData` (server) now skip reserved
+  and unknown frame types while scanning for the initial HEADERS frame; known
+  frame types such as DATA still fail as `ExpectedHeadersFrame` when seen
+  before HEADERS.
+- Regression tests: `H3Client skips GREASE frames before response HEADERS` and
+  `H3Server skips GREASE frames before request HEADERS`.
+- Live E2E: `scripts/cli_h3_live_test.sh` verifies `HTTP/3 200` on
+  `cloudflare-quic.com` and `www.fastly.com`, then a local serve round trip.
+
 ### 设计要点
 
 - 状态机自持全部请求/响应字节副本（`wire`/`body_wire`/`body`），runtime 驱动只当字节搬运工，按 `consumed` 收缩自己的缓冲。

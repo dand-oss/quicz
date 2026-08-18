@@ -35,6 +35,35 @@ quicz echo --client 127.0.0.1 4433 --data "ping"
 quicz bench 127.0.0.1 4433 --size 1048576
 ```
 
+## Real-world H3 verification
+
+The `h3` subcommand is verified end to end against real online HTTP/3
+servers (QUIC handshake + HTTP/3 + QPACK), then exercises a local `serve`
+round trip:
+
+```bash
+../scripts/cli_h3_live_test.sh                  # live servers + local round trip
+../scripts/cli_h3_live_test.sh --skip-live      # local round trip only
+```
+
+Live targets are `https://cloudflare-quic.com/` and `https://www.fastly.com/`;
+each must return `HTTP/3 200` with a non-empty body. Direct commands produce
+the same result:
+
+```bash
+./zig-out/bin/quicz h3 https://cloudflare-quic.com/ -k --timeout-ms 25000
+# HTTP/3 200
+# <full response body>
+```
+
+Cloudflare's edge inserts GREASE frames before the first HEADERS frame on
+request/response streams (RFC 9114 §7.2.8). The runtime parser skips reserved
+and unknown frame types while scanning for HEADERS (RFC 9114 §9). Regression
+tests cover both directions:
+
+- `src/h3/client.zig` - "H3Client skips GREASE frames before response HEADERS"
+- `src/h3/server.zig` - "H3Server skips GREASE frames before request HEADERS"
+
 ## Limits
 
 - The H3 client and server currently support IPv4 literals and `localhost`; `--ca` requires an absolute PEM path.
