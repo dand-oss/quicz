@@ -26,14 +26,14 @@ const response_body = "Hello from quicz HTTP/3!";
 
 /// Set in main so the handler can serve live server metrics.
 var g_server: ?*Server = null;
+var g_metrics_buf: [512]u8 = undefined;
 
 fn handleRequest(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
     // GET /metrics: live aggregate connection stats (see Server.Metrics).
     if (std.mem.eql(u8, req.method, "GET") and std.mem.eql(u8, req.path, "/metrics")) {
         if (g_server) |srv| {
             const m = srv.metricsSnapshot();
-            var buf: [512]u8 = undefined;
-            const body = std.fmt.bufPrint(&buf, "connections={d}\nsent={d}\nreceived={d}\nin_flight={d}\nsrtt_us={d}\nloss={d}\nretransmitted={d}\n", .{ m.active_connections, m.stream_bytes_sent, m.stream_bytes_received, m.total_bytes_in_flight, m.smoothed_rtt_us, m.packets_lost, m.packets_retransmitted }) catch "metrics error";
+            const body = std.fmt.bufPrint(&g_metrics_buf, "connections={d}\nsent={d}\nreceived={d}\nin_flight={d}\nsrtt_us={d}\nloss={d}\nretransmitted={d}\n", .{ m.active_connections, m.stream_bytes_sent, m.stream_bytes_received, m.total_bytes_in_flight, m.smoothed_rtt_us, m.packets_lost, m.packets_retransmitted }) catch "metrics error";
             return .{ .status = 200, .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }}, .body = body };
         }
         return .{ .status = 503, .body = "server not ready" };
