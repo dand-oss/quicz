@@ -8,6 +8,7 @@ pub const duration = @import("time/duration.zig");
 pub const protection = @import("quic/protection.zig");
 pub const address_validation_token = @import("quic/address_validation_token.zig");
 pub const endpoint = @import("quic/endpoint.zig");
+pub const pending_retry_slot = @import("quic/pending_retry_slot.zig");
 pub const runtime = struct {
     pub const server = @import("runtime/server.zig");
     pub const client = @import("runtime/client.zig");
@@ -151,6 +152,7 @@ test {
     _ = protection;
     _ = address_validation_token;
     _ = endpoint;
+    _ = pending_retry_slot;
     _ = transport_error;
     _ = transport_parameters;
     _ = transport_types;
