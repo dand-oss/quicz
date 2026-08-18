@@ -1477,7 +1477,7 @@ test "EndpointConnectionLifecycle validates path token and arms unblocked server
         .max_replay_entries = 4,
     });
     defer policy.deinit();
-    const token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_000, 60_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_000, 60_000, path, nonce);
     defer std.testing.allocator.free(token);
 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
@@ -1616,7 +1616,7 @@ test "EndpointConnectionLifecycle validates Retry token and consumes pending sta
         .max_replay_entries = 4,
     });
     defer policy.deinit();
-    const token = try policy.issueTokenForPath(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
     defer std.testing.allocator.free(token);
 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
@@ -1776,7 +1776,7 @@ test "EndpointConnectionLifecycle accepts Retry follow-up Initial through lifecy
         .max_replay_entries = 4,
     });
     defer policy.deinit();
-    const token = try policy.issueTokenForPath(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
     defer std.testing.allocator.free(token);
 
     var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
@@ -32087,8 +32087,8 @@ test "EndpointConnectionLifecycle feed installed-key path update commits after P
     try std.testing.expect(ping_route.path_changed);
     try std.testing.expect(ping_result.feed.updated_route == null);
     try std.testing.expect(ping_result.feed.path_challenge_queued);
-    try std.testing.expect((ping_result.feed.selected_output_path orelse return error.TestUnexpectedResult).eql(new_path));
-    try std.testing.expect((ping_result.output_path orelse return error.TestUnexpectedResult).eql(new_path));
+    try std.testing.expect((ping_result.feed.selected_output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
+    try std.testing.expect((ping_result.output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
     const challenge_packet = ping_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge_packet.datagram);
     try std.testing.expectEqual(@as(u64, 188), challenge_packet.connection_id);
@@ -32138,8 +32138,8 @@ test "EndpointConnectionLifecycle feed installed-key path update commits after P
     try std.testing.expect(response_route.path_changed);
     const updated_route = validation_result.feed.updated_route orelse return error.TestUnexpectedResult;
     try std.testing.expect(!validation_result.feed.path_challenge_queued);
-    try std.testing.expect((validation_result.feed.selected_output_path orelse return error.TestUnexpectedResult).eql(new_path));
-    try std.testing.expect((validation_result.output_path orelse return error.TestUnexpectedResult).eql(new_path));
+    try std.testing.expect((validation_result.feed.selected_output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
+    try std.testing.expect((validation_result.output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
     const ack_packet = validation_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack_packet.datagram);
     try std.testing.expectEqual(@as(u64, 188), ack_packet.connection_id);
@@ -32295,7 +32295,7 @@ test "EndpointConnectionLifecycle path-update feed poll surfaces close only afte
     );
     try std.testing.expectEqual(@as(?EndpointProtectedDatagramError, error.InvalidPacket), close_result.feed_error);
     try std.testing.expectEqual(ConnectionState.closing, server.connectionState());
-    try std.testing.expect((close_result.output_path orelse return error.TestUnexpectedResult).eql(path));
+    try std.testing.expect((close_result.output_path orelse return error.TestUnexpectedResult).eql(path.toUdp()));
     const close_datagram = close_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
     try std.testing.expectEqual(@as(u64, 189), close_datagram.connection_id);

@@ -562,7 +562,7 @@ pub const EndpointFeedInstalledKeyPathUpdateResult = struct {
     /// Whether a PATH_CHALLENGE was queued for a changed path.
     path_challenge_queued: bool = false,
     /// UDP tuple selected for immediate path-validation-related output.
-    selected_output_path: ?endpoint.Udp4Tuple = null,
+    selected_output_path: ?endpoint.UdpTuple = null,
 };
 
 /// Result from feeding with path update, then polling installed-key output.
@@ -577,7 +577,7 @@ pub const EndpointFeedPathUpdateDatagramPollResult = struct {
     ///
     /// Path-validation probes use the candidate tuple; other output uses the
     /// current committed route.
-    output_path: ?endpoint.Udp4Tuple = null,
+    output_path: ?endpoint.UdpTuple = null,
     /// Next endpoint-visible deadline for the selected connection after feed and poll.
     next_deadline: ?EndpointConnectionDeadline = null,
 };
