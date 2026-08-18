@@ -20,6 +20,7 @@ zig build test             # CLI 单元测试
 # H3 请求客户端：发 GET/POST，输出状态、响应体和连接指标
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
+quicz h3 https://host/api -i -L -o resp.html       # 打印响应头、跟随重定向、保存正文
 
 # H3 静态文件服务：目录 + /metrics
 quicz serve --dir ./dist --port 4433

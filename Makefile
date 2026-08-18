@@ -63,8 +63,8 @@ fuzz: # Run QUIC fuzz harness (FUZZ_LIMIT=..., default 20000)
 	$(ZIG) build run-fuzz -- $(FUZZ_LIMIT)
 
 .PHONY: fmt
-fmt: # Check Zig formatting (build.zig, src, examples)
-	$(ZIG) fmt --check build.zig src examples
+fmt: # Check Zig formatting (build.zig, src, examples, cli)
+	$(ZIG) fmt --check build.zig src examples cli/build.zig cli/src
 
 .PHONY: check
 check: fmt test quicz-test h3-loopback # Quick battery: fmt + tests + H3 loopback

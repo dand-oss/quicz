@@ -78,6 +78,10 @@ pub const H3Client = struct {
         body_wire: std.ArrayList(u8),
         /// Aggregated DATA payloads (the response body).
         body: std.ArrayList(u8),
+        /// Decoded response header fields; names/values borrow `wire` or the
+        /// QPACK static table, and the array itself lives here.
+        headers_buf: [32]qpack.HeaderField = undefined,
+        header_count: usize = 0,
         /// Peer FIN arrived; the response is complete.
         fin: bool = false,
         /// True while the QPACK decoder awaits inserts (RFC 9204 §2.2.1).
@@ -576,7 +580,7 @@ pub const H3Client = struct {
             var ric: u64 = 0;
             const headers_wire = rs.wire.items[0..frame.consumed];
             const decoded = if (self.dec_table) |*dt| blk: {
-                const r = h3_request.decodeResponseWithDynamic(headers_wire, dt) catch |e| {
+                const r = h3_request.decodeResponseWithDynamicAndHeaders(headers_wire, dt, &rs.headers_buf) catch |e| {
                     if (e == error.BlockedByQpack) {
                         rs.blocked = true;
                         return null;
@@ -584,8 +588,13 @@ pub const H3Client = struct {
                     return e;
                 };
                 ric = r.required_insert_count;
+                rs.header_count = r.header_count;
                 break :blk r.response;
-            } else (try h3_request.decodeResponse(headers_wire)).response;
+            } else blk: {
+                const r = try h3_request.decodeResponseWithHeaders(headers_wire, &rs.headers_buf);
+                rs.header_count = r.header_count;
+                break :blk r.response;
+            };
             try self.sendSectionAcknowledgement(stream_id, ric);
 
             if (frame.consumed < rs.wire.items.len) {
@@ -593,6 +602,7 @@ pub const H3Client = struct {
             }
             rs.wire.shrinkRetainingCapacity(frame.consumed);
             rs.decoded = decoded;
+            if (rs.decoded) |*d| d.headers = rs.headers_buf[0..rs.header_count];
             rs.phase = .body;
         } else {
             try rs.body_wire.appendSlice(self.allocator, data);

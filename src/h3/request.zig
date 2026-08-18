@@ -444,10 +444,24 @@ pub fn decodeRequest(data: []const u8) !struct { request: DecodedRequest, consum
 }
 
 /// Decode an HTTP/3 response from a byte buffer containing HEADERS + optional DATA frames.
-pub fn decodeResponse(data: []const u8) !struct { response: DecodedResponse, consumed: usize } {
+const DecodeResponseInfo = struct {
+    status: u16,
+    body: ?[]const u8,
+    required_insert_count: u64,
+    consumed: usize,
+    header_count: usize,
+};
+
+fn decodeResponseImpl(
+    data: []const u8,
+    dynamic_table: ?*const qpack.DynamicTable,
+    headers_out: ?[]qpack.HeaderField,
+) !DecodeResponseInfo {
     var pos: usize = 0;
     var status: ?u16 = null;
     var body: ?[]const u8 = null;
+    var required_insert_count: u64 = 0;
+    var header_count: usize = 0;
 
     // Parse HEADERS frame
     const headers_result = try h3_frame.decodeFrame(data[pos..]);
@@ -458,7 +472,19 @@ pub fn decodeResponse(data: []const u8) !struct { response: DecodedResponse, con
 
     // Decode QPACK header block
     var fields: [32]qpack.HeaderField = undefined;
-    const field_count = try qpack.decodeHeaderBlock(headers_result.frame.payload, &fields);
+    var field_count: usize = undefined;
+    if (dynamic_table) |dt| {
+        const decoded_block = try qpack.decodeHeaderBlockWithDynamicInfo(headers_result.frame.payload, &fields, dt);
+        field_count = decoded_block.field_count;
+        required_insert_count = decoded_block.required_insert_count;
+    } else {
+        field_count = try qpack.decodeHeaderBlock(headers_result.frame.payload, &fields);
+    }
+    if (headers_out) |out| {
+        const copied = @min(field_count, out.len);
+        @memcpy(out[0..copied], fields[0..copied]);
+        header_count = copied;
+    }
 
     for (fields[0..field_count]) |field| {
         if (std.mem.eql(u8, field.name, ":status")) {
@@ -480,11 +506,39 @@ pub fn decodeResponse(data: []const u8) !struct { response: DecodedResponse, con
     }
 
     return .{
-        .response = .{
-            .status = status.?,
-            .body = body,
-        },
+        .status = status.?,
+        .body = body,
+        .required_insert_count = required_insert_count,
         .consumed = pos,
+        .header_count = header_count,
+    };
+}
+
+/// Decode an HTTP/3 response without retaining the header fields.
+pub fn decodeResponse(data: []const u8) !struct { response: DecodedResponse, consumed: usize } {
+    const info = try decodeResponseImpl(data, null, null);
+    return .{
+        .response = .{ .status = info.status, .body = info.body },
+        .consumed = info.consumed,
+    };
+}
+
+/// Decode an HTTP/3 response and copy the decoded header fields into
+/// `headers_out`. Name/value slices borrow from `data` (or the QPACK static
+/// table), so the caller must keep the HEADERS frame alive while using them.
+pub fn decodeResponseWithHeaders(
+    data: []const u8,
+    headers_out: []qpack.HeaderField,
+) !struct { response: DecodedResponse, consumed: usize, header_count: usize } {
+    const info = try decodeResponseImpl(data, null, headers_out);
+    return .{
+        .response = .{
+            .status = info.status,
+            .body = info.body,
+            .headers = headers_out[0..info.header_count],
+        },
+        .consumed = info.consumed,
+        .header_count = info.header_count,
     };
 }
 
@@ -538,6 +592,10 @@ pub const DecodedRequest = struct {
 pub const DecodedResponse = struct {
     status: u16,
     body: ?[]const u8,
+    /// Decoded response header fields. The `[]HeaderField` array is
+    /// caller-provided; name/value slices borrow from the response wire or the
+    /// QPACK static table, so the backing HEADERS frame must outlive them.
+    headers: []const qpack.HeaderField = &.{},
 
     pub fn isSuccess(self: *const DecodedResponse) bool {
         return self.status >= 200 and self.status < 300;
@@ -801,48 +859,32 @@ pub fn decodeResponseWithDynamic(
     data: []const u8,
     dynamic_table: *const qpack.DynamicTable,
 ) !struct { response: DecodedResponse, consumed: usize, required_insert_count: u64 } {
-    var pos: usize = 0;
-    var status: ?u16 = null;
-    var body: ?[]const u8 = null;
+    const info = try decodeResponseImpl(data, dynamic_table, null);
+    return .{
+        .response = .{ .status = info.status, .body = info.body },
+        .consumed = info.consumed,
+        .required_insert_count = info.required_insert_count,
+    };
+}
 
-    // Parse HEADERS frame
-    const headers_result = try h3_frame.decodeFrame(data[pos..]);
-    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
-        return error.ExpectedHeadersFrame;
-    }
-    pos += headers_result.consumed;
-
-    // Decode QPACK header block with dynamic table
-    var fields: [32]qpack.HeaderField = undefined;
-    const decoded_block = try qpack.decodeHeaderBlockWithDynamicInfo(headers_result.frame.payload, &fields, dynamic_table);
-    const field_count = decoded_block.field_count;
-
-    for (fields[0..field_count]) |field| {
-        if (std.mem.eql(u8, field.name, ":status")) {
-            status = std.fmt.parseInt(u16, field.value, 10) catch return error.InvalidStatusCode;
-        }
-    }
-
-    if (status == null) return error.MissingStatus;
-
-    // Parse optional DATA frame
-    if (pos < data.len) {
-        const data_result = h3_frame.decodeFrame(data[pos..]) catch null;
-        if (data_result) |dr| {
-            if (dr.frame.frame_type == @intFromEnum(h3_frame.FrameType.data)) {
-                body = dr.frame.payload;
-                pos += dr.consumed;
-            }
-        }
-    }
-
+/// Decode an HTTP/3 response with dynamic QPACK and copy the decoded header
+/// fields into `headers_out`. Name/value slices borrow from `data` (or the
+/// QPACK static table), so the caller must keep the HEADERS frame alive.
+pub fn decodeResponseWithDynamicAndHeaders(
+    data: []const u8,
+    dynamic_table: *const qpack.DynamicTable,
+    headers_out: []qpack.HeaderField,
+) !struct { response: DecodedResponse, consumed: usize, required_insert_count: u64, header_count: usize } {
+    const info = try decodeResponseImpl(data, dynamic_table, headers_out);
     return .{
         .response = .{
-            .status = status.?,
-            .body = body,
+            .status = info.status,
+            .body = info.body,
+            .headers = headers_out[0..info.header_count],
         },
-        .consumed = pos,
-        .required_insert_count = decoded_block.required_insert_count,
+        .consumed = info.consumed,
+        .required_insert_count = info.required_insert_count,
+        .header_count = info.header_count,
     };
 }
 
@@ -905,6 +947,38 @@ test "HTTP/3 response with dynamic table roundtrip" {
     try std.testing.expectEqual(@as(u16, 200), result.response.status);
     try std.testing.expect(result.response.isSuccess());
     try std.testing.expectEqualStrings("{\"result\":\"ok\"}", result.response.body.?);
+}
+
+test "HTTP/3 dynamic response headers are retained via decodeResponseWithDynamicAndHeaders" {
+    var dt = qpack.DynamicTable.init(std.testing.allocator);
+    defer dt.deinit();
+    dt.setCapacity(4096);
+    try dt.insert("location", "/redirect-target");
+
+    const extra = [_]qpack.HeaderField{
+        .{ .name = "location", .value = "/redirect-target" },
+    };
+    const resp = Response{
+        .status = 302,
+        .extra_headers = &extra,
+    };
+
+    var buf: [4096]u8 = undefined;
+    var instr_buf: [4096]u8 = undefined;
+    const len = (try encodeResponseWithDynamic(&buf, resp, &dt, &instr_buf)).len;
+
+    var headers: [32]qpack.HeaderField = undefined;
+    const result = try decodeResponseWithDynamicAndHeaders(buf[0..len], &dt, &headers);
+    try std.testing.expectEqual(@as(u16, 302), result.response.status);
+    try std.testing.expectEqual(@as(usize, 2), result.header_count);
+    var found = false;
+    for (result.response.headers) |h| {
+        if (std.mem.eql(u8, h.name, "location")) {
+            try std.testing.expectEqualStrings("/redirect-target", h.value);
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
 }
 
 test "HTTP/3 dynamic table reduces wire size after acknowledgment" {

@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz h3 <url> [-k] [-i] [-L] [-o FILE] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
 //!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -61,7 +61,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz h3 <url> [-k] [-i] [-L] [-o FILE] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -89,10 +89,10 @@ fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
 /// Candidate system CA bundle paths, checked in order; the first file that
 /// yields at least one certificate wins.
 const system_ca_bundle_paths = [_][]const u8{
-    "/etc/ssl/cert.pem",                  // macOS, Debian/Ubuntu
+    "/etc/ssl/cert.pem", // macOS, Debian/Ubuntu
     "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu
-    "/etc/pki/tls/certs/ca-bundle.crt",   // RHEL/Fedora
-    "/etc/ssl/ca-bundle.pem",             // SUSE / others
+    "/etc/pki/tls/certs/ca-bundle.crt", // RHEL/Fedora
+    "/etc/ssl/ca-bundle.pem", // SUSE / others
 };
 
 fn loadSystemCaBundle(allocator: std.mem.Allocator, io: std.Io) !std.crypto.Certificate.Bundle {
@@ -229,66 +229,147 @@ const max_cli_response_body_size: usize = 256 * 1024 * 1024;
 
 const H3Job = struct {
     allocator: std.mem.Allocator,
-    parsed: H3Target,
-    ip: [4]u8,
+    url: []const u8,
     method: []const u8,
     body: ?[]const u8,
     headers: []const quicz.qpack.HeaderField,
     insecure: bool,
     ca_bundle: ?*const std.crypto.Certificate.Bundle,
+    output_path: ?[]const u8,
+    include_headers: bool,
+    follow_redirects: bool,
 };
+
+fn isRedirectStatus(status: u16) bool {
+    return switch (status) {
+        301, 302, 303, 307, 308 => true,
+        else => false,
+    };
+}
+
+fn findHeader(headers: []const quicz.qpack.HeaderField, name: []const u8) ?[]const u8 {
+    for (headers) |h| {
+        if (std.mem.eql(u8, h.name, name)) return h.value;
+    }
+    return null;
+}
+
+/// Resolve a `Location` header against the current URL. Returns an
+/// allocator-owned string; supports absolute https URLs, root-relative paths,
+/// and path-relative targets.
+fn resolveLocation(allocator: std.mem.Allocator, current_url: []const u8, location: []const u8) ![]const u8 {
+    const loc = std.mem.trim(u8, location, " \t");
+    if (loc.len == 0) return error.BadRedirectLocation;
+    if (std.mem.startsWith(u8, loc, "https://")) return allocator.dupe(u8, loc);
+    const base = try parseH3Url(current_url);
+    if (std.mem.startsWith(u8, loc, "/")) {
+        return resolvedTarget(allocator, base, "", loc);
+    }
+    var dir: []const u8 = "/";
+    if (std.mem.lastIndexOfScalar(u8, base.path, '/')) |slash| {
+        if (slash > 0) dir = base.path[0 .. slash + 1];
+    }
+    return resolvedTarget(allocator, base, dir, loc);
+}
+
+/// Rebuild an https URL from a target, omitting the default port 443.
+fn resolvedTarget(allocator: std.mem.Allocator, target: H3Target, dir: []const u8, loc: []const u8) ![]const u8 {
+    if (target.port == 443) {
+        return std.fmt.allocPrint(allocator, "https://{s}{s}{s}", .{ target.host, dir, loc });
+    }
+    return std.fmt.allocPrint(allocator, "https://{s}:{d}{s}{s}", .{ target.host, target.port, dir, loc });
+}
 
 fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     const job: *const H3Job = @ptrCast(@alignCast(ctx));
 
-    var client = try Client.init(job.allocator, io, .{
-        .server_host = job.ip,
-        .server_port = job.parsed.port,
-        .server_name = job.parsed.host,
-        .alpn = &alpn_h3,
-        .insecure_skip_verify = job.insecure or job.ca_bundle == null,
-        .ca_bundle = job.ca_bundle,
-    });
-    defer client.deinit();
+    var current_url = job.url;
+    var current_url_owned = false;
+    defer if (current_url_owned) job.allocator.free(current_url);
+    var redirects_left: usize = 10;
 
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    try client.connect();
-    const t1 = std.Io.Timestamp.now(io, .awake);
+    while (true) {
+        const parsed = try parseH3Url(current_url);
+        const ip = try resolveHost(io, parsed.host, parsed.port);
 
-    var h3cli = RuntimeH3Client.init(job.allocator, &client, 4096, 8);
-    defer h3cli.deinit();
-    try h3cli.run();
-    // A diagnostic client should fetch bodies larger than the library's 1 MiB
-    // default response cap.
-    h3cli.h3.max_response_body_size = max_cli_response_body_size;
+        {
+            var client = try Client.init(job.allocator, io, .{
+                .server_host = ip,
+                .server_port = parsed.port,
+                .server_name = parsed.host,
+                .alpn = &alpn_h3,
+                .insecure_skip_verify = job.insecure or job.ca_bundle == null,
+                .ca_bundle = job.ca_bundle,
+            });
+            defer client.deinit();
 
-    const request = quicz.h3_request.Request{
-        .method = job.method,
-        .path = job.parsed.path,
-        .scheme = "https",
-        .authority = job.parsed.host,
-        .extra_headers = job.headers,
-        .body = job.body,
-    };
-    const sid = try h3cli.sendRequest(request);
-    const response = try h3cli.receiveResponse(sid);
+            const t0 = std.Io.Timestamp.now(io, .awake);
+            try client.connect();
+            const t1 = std.Io.Timestamp.now(io, .awake);
 
-    std.debug.print("HTTP/3 {d}\n", .{response.status});
-    if (response.body) |payload| {
-        try std.Io.File.stdout().writeStreamingAll(io, payload);
-        try std.Io.File.stdout().writeStreamingAll(io, "\n");
+            var h3cli = RuntimeH3Client.init(job.allocator, &client, 4096, 8);
+            defer h3cli.deinit();
+            try h3cli.run();
+            // A diagnostic client should fetch bodies larger than the library's
+            // 1 MiB default response cap.
+            h3cli.h3.max_response_body_size = max_cli_response_body_size;
+
+            const request = quicz.h3_request.Request{
+                .method = job.method,
+                .path = parsed.path,
+                .scheme = "https",
+                .authority = parsed.host,
+                .extra_headers = job.headers,
+                .body = job.body,
+            };
+            const sid = try h3cli.sendRequest(request);
+            const response = try h3cli.receiveResponse(sid);
+
+            if (job.follow_redirects and isRedirectStatus(response.status)) {
+                if (findHeader(response.headers, "location")) |location| {
+                    if (redirects_left == 0) return error.TooManyRedirects;
+                    const next_url = try resolveLocation(job.allocator, current_url, location);
+                    if (current_url_owned) job.allocator.free(current_url);
+                    current_url = next_url;
+                    current_url_owned = true;
+                    redirects_left -= 1;
+                    continue;
+                }
+            }
+
+            if (job.include_headers) {
+                std.debug.print("HTTP/3 {d}\n", .{response.status});
+                for (response.headers) |h| {
+                    // Skip QPACK pseudo-headers; the status line already shows them.
+                    if (h.name.len > 0 and h.name[0] == ':') continue;
+                    std.debug.print("{s}: {s}\n", .{ h.name, h.value });
+                }
+            } else {
+                std.debug.print("HTTP/3 {d}\n", .{response.status});
+            }
+
+            if (job.output_path) |path| {
+                const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
+                defer file.close(io);
+                if (response.body) |payload| try file.writeStreamingAll(io, payload);
+            } else if (response.body) |payload| {
+                try std.Io.File.stdout().writeStreamingAll(io, payload);
+                try std.Io.File.stdout().writeStreamingAll(io, "\n");
+            }
+
+            const stats = client.client.transport.connection.connectionStats();
+            const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
+            std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
+                connect_ms,
+                stats.smoothed_rtt_us,
+                stats.packets_lost,
+                stats.packets_retransmitted,
+                stats.stream_bytes_sent,
+                stats.stream_bytes_received,
+            });
+        }
+        return;
     }
-
-    const stats = client.client.transport.connection.connectionStats();
-    const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-    std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
-        connect_ms,
-        stats.smoothed_rtt_us,
-        stats.packets_lost,
-        stats.packets_retransmitted,
-        stats.stream_bytes_sent,
-        stats.stream_bytes_received,
-    });
 }
 
 fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
@@ -303,10 +384,19 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         for (headers.items) |h| allocator.free(h.name);
     }
     var ca_pem: ?[]const u8 = null;
+    var output_path: ?[]const u8 = null;
+    var include_headers = false;
+    var follow_redirects = false;
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
             insecure = true;
+        } else if (std.mem.eql(u8, a, "-i") or std.mem.eql(u8, a, "--include")) {
+            include_headers = true;
+        } else if (std.mem.eql(u8, a, "-L") or std.mem.eql(u8, a, "--location")) {
+            follow_redirects = true;
+        } else if (std.mem.eql(u8, a, "-o") or std.mem.eql(u8, a, "--output")) {
+            output_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "-X")) {
             method = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--data")) {
@@ -329,9 +419,6 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         }
     }
 
-    const parsed = try parseH3Url(url);
-    const ip = try resolveHost(io, parsed.host, parsed.port);
-
     var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
     if (ca_pem) |pem| {
         if (!std.Io.Dir.path.isAbsolute(pem)) return error.CaPathMustBeAbsolute;
@@ -352,13 +439,15 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
 
     var job: H3Job = .{
         .allocator = allocator,
-        .parsed = parsed,
-        .ip = ip,
+        .url = url,
         .method = method,
         .body = body,
         .headers = headers.items,
         .insecure = insecure,
         .ca_bundle = if (maybe_bundle) |*b| b else null,
+        .output_path = output_path,
+        .include_headers = include_headers,
+        .follow_redirects = follow_redirects,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
@@ -831,4 +920,32 @@ test "lowercase header name" {
     const out = try lowercaseName(std.testing.allocator, "Content-Type");
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("content-type", out);
+}
+
+test "redirect helpers" {
+    try std.testing.expect(isRedirectStatus(301));
+    try std.testing.expect(isRedirectStatus(308));
+    try std.testing.expect(!isRedirectStatus(200));
+
+    const headers = [_]quicz.qpack.HeaderField{
+        .{ .name = "content-type", .value = "text/plain" },
+        .{ .name = "location", .value = "/new" },
+    };
+    try std.testing.expectEqualStrings("/new", findHeader(&headers, "location").?);
+    try std.testing.expect(findHeader(&headers, "server") == null);
+}
+
+test "resolve redirect location" {
+    const allocator = std.testing.allocator;
+    const abs = try resolveLocation(allocator, "https://a.com/x", "https://b.com/y");
+    defer allocator.free(abs);
+    try std.testing.expectEqualStrings("https://b.com/y", abs);
+
+    const root = try resolveLocation(allocator, "https://a.com:8443/x", "/new");
+    defer allocator.free(root);
+    try std.testing.expectEqualStrings("https://a.com:8443/new", root);
+
+    const rel = try resolveLocation(allocator, "https://a.com/a/b", "../c");
+    defer allocator.free(rel);
+    try std.testing.expectEqualStrings("https://a.com/a/../c", rel);
 }

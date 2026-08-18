@@ -21,6 +21,7 @@ zig build test             # CLI unit tests
 # H3 request client: GET/POST, prints status, response body and connection metrics
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
+quicz h3 https://host/api -i -L -o resp.html       # print headers, follow redirects, save body
 
 # H3 static file server: directory + /metrics
 quicz serve --dir ./dist --port 4433
