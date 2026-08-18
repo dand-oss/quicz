@@ -1807,6 +1807,8 @@ pub const EndpointConnectionLifecycle = struct {
         datagram: []const u8,
         options: EndpointFeedInstalledKeyDatagramOptions,
     ) EndpointProtectedDatagramError!EndpointFeedInstalledKeyPathUpdateResult {
+        connection.setReceivePathHint(path.toUdp());
+        defer connection.setReceivePathHint(null);
         const action = try self.feedDatagram(
             options.out,
             path,
@@ -1857,7 +1859,7 @@ pub const EndpointConnectionLifecycle = struct {
                             connection.outstandingPathChallengeCount() == 0)
                         {
                             if (options.path_challenge_data) |challenge_data| {
-                                try connection.sendPathChallenge(challenge_data);
+                                try connection.sendPathChallengeForPath(challenge_data, path.toUdp());
                                 path_challenge_queued = true;
                             }
                         }
@@ -9971,6 +9973,8 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
+        connection.setReceivePathHint(path.toUdp());
+        defer connection.setReceivePathHint(null);
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
@@ -10015,6 +10019,8 @@ pub const EndpointConnectionLifecycle = struct {
         keys: protection.Aes128PacketProtectionKeys,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
+        connection.setReceivePathHint(path.toUdp());
+        defer connection.setReceivePathHint(null);
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 
@@ -11980,6 +11986,8 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
+        connection.setReceivePathHint(path.toUdp());
+        defer connection.setReceivePathHint(null);
         const route = try self.routeDatagram(path, datagram);
         if (route.connection_id != connection_id) return error.InvalidPacket;
 

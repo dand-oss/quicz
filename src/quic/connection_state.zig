@@ -59,6 +59,9 @@ pub const PeerCloseSnapshot = enum { absent, present };
 pub const PendingPathChallenge = struct {
     data: [8]u8,
     transmissions: u8 = 0,
+    /// Candidate UDP path this challenge validates (carried onto the
+    /// outstanding entry once sent). Null for legacy unbound challenges.
+    path: ?@import("endpoint.zig").UdpTuple = null,
 };
 
 /// PATH_CHALLENGE data sent and awaiting response.
@@ -66,6 +69,10 @@ pub const OutstandingPathChallenge = struct {
     data: [8]u8,
     sent_time_nanos: i64,
     transmissions: u8,
+    /// Candidate UDP path this challenge validates. A matching
+    /// PATH_RESPONSE arriving from any other path must not consume it.
+    /// Null marks a legacy unbound challenge (path not recorded).
+    path: ?@import("endpoint.zig").UdpTuple = null,
 };
 
 /// Sent packet metadata retained for ACK/loss accounting.

@@ -706,6 +706,9 @@ pub const Connection = struct {
     pending_path_responses: std.ArrayList([8]u8),
     pending_path_challenges: std.ArrayList(PendingPathChallenge),
     outstanding_path_challenges: std.ArrayList(OutstandingPathChallenge),
+    /// Arrival path of the datagram currently being processed, when the
+    /// endpoint feed recorded one (see setReceivePathHint).
+    receive_path_hint: ?@import("endpoint.zig").UdpTuple = null,
     failed_path_validations: usize,
     active_connection_ids: std.ArrayList(ActiveConnectionId),
     local_connection_ids: std.ArrayList(LocalConnectionId),
@@ -6797,6 +6800,7 @@ pub const Connection = struct {
                 .data = removed.data,
                 .sent_time_nanos = now_nanos,
                 .transmissions = transmissions,
+                .path = removed.path,
             });
         }
         if (built.consume_retire_connection_id) _ = self.pending_retire_connection_ids.orderedRemove(0);
@@ -7885,6 +7889,30 @@ pub const Connection = struct {
     pub fn sendPathChallenge(self: *Connection, data: [8]u8) Error!void {
         if (self.isClosingOrClosed()) return error.ConnectionClosed;
         self.pending_path_challenges.append(self.allocator, .{ .data = data }) catch return error.OutOfMemory;
+    }
+
+    /// Queue one PATH_CHALLENGE frame bound to the candidate UDP path it
+    /// validates. Only a matching PATH_RESPONSE received from exactly
+    /// this path may consume it; a matching response from any other path
+    /// is ignored and never validates that other path.
+    pub fn sendPathChallengeForPath(
+        self: *Connection,
+        data: [8]u8,
+        path: endpoint.UdpTuple,
+    ) Error!void {
+        if (self.isClosingOrClosed()) return error.ConnectionClosed;
+        self.pending_path_challenges.append(self.allocator, .{
+            .data = data,
+            .path = path,
+        }) catch return error.OutOfMemory;
+    }
+
+    /// Record the UDP path the current datagram arrived on, so
+    /// PATH_RESPONSE processing can enforce per-challenge candidate-path
+    /// binding. Endpoint feeds set this before processing a protected
+    /// datagram and clear it afterwards.
+    pub fn setReceivePathHint(self: *Connection, path: ?endpoint.UdpTuple) void {
+        self.receive_path_hint = path;
     }
 
     /// Queue the server-only HANDSHAKE_DONE frame for Application/1-RTT transmission.
@@ -10158,6 +10186,7 @@ pub const Connection = struct {
             .data = challenge_data,
             .sent_time_nanos = now_nanos,
             .transmissions = transmissions,
+            .path = pending_challenge.path,
         }) catch return error.OutOfMemory;
         appended_outstanding_challenge = true;
 
@@ -10788,6 +10817,15 @@ pub const Connection = struct {
 
     fn receivePathResponseFrame(self: *Connection, path_response: frame.PathResponseFrame) Error!void {
         const challenge_index = self.pathResponseChallengeIndex(path_response.data) orelse return error.InvalidPacket;
+        const challenge = self.outstanding_path_challenges.items[challenge_index];
+        if (challenge.path) |bound| {
+            // A bound challenge validates only its candidate path. A
+            // matching response from any other path is ignored: it must
+            // not consume the challenge and must not validate that path.
+            if (self.receive_path_hint) |arrival| {
+                if (!arrival.eql(bound)) return;
+            }
+        }
         _ = self.outstanding_path_challenges.orderedRemove(challenge_index);
     }
 

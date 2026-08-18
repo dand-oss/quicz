@@ -64907,3 +64907,191 @@ test "streamSendProgress: FIN and reset semantics" {
     try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
     try std.testing.expect((try d.conn.streamState(rsid)).?.send == .reset_sent);
 }
+
+test "path validation: bound challenge consumes only on its candidate path" {
+    const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate_path = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_001),
+    };
+    const other_path = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_002),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(90, &server_dcid, old_path, .{});
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    // Bound challenge for the candidate path.
+    const challenge_data = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+    try server.sendPathChallengeForPath(challenge_data, candidate_path.toUdp());
+    const challenge = (try server.pollProtectedShortDatagram(1, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(challenge);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+
+    // Each delivery is a fresh protected datagram (distinct packet number)
+    // carrying the matching PATH_RESPONSE, so packet-number dedup cannot
+    // mask the path-binding behavior under test.
+    const makeResponse = struct {
+        fn make(alloc: std.mem.Allocator, pn: u64, data: [8]u8, keys: protection.Aes128PacketProtectionKeys) ![]u8 {
+            var payload: [64]u8 = undefined;
+            var w = buffer.fixedWriter(&payload);
+            frame.encodeFrame(w.writer(), .{ .path_response = .{ .data = data } }) catch return error.TestUnexpectedResult;
+            return protection.protectShortPacketAes128(alloc, .{
+                .dcid = &server_dcid,
+                .spin_bit = false,
+                .key_phase = false,
+                .packet_number = pn,
+            }, try packet.encodePacketNumberForHeader(pn, null), keys, w.getWritten());
+        }
+    }.make;
+
+    // WRONG PATH: a matching response from a third path neither consumes
+    // the challenge nor commits that path.
+    const wrong_dg = try makeResponse(std.testing.allocator, 2, challenge_data, secrets.client);
+    defer std.testing.allocator.free(wrong_dg);
+    const wrong = try lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        90,
+        &server,
+        other_path,
+        3,
+        secrets.client,
+        wrong_dg,
+    );
+    try std.testing.expect(wrong.route.path_changed);
+    try std.testing.expect(wrong.updated_route == null);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+    try std.testing.expect((try lifecycle.routeDatagram(old_path, wrong_dg)).connection_id == 90);
+
+    // OLD PATH: the registered path neither needs nor gets validation.
+    const old_dg = try makeResponse(std.testing.allocator, 4, challenge_data, secrets.client);
+    defer std.testing.allocator.free(old_dg);
+    _ = try lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        90,
+        &server,
+        old_path,
+        5,
+        secrets.client,
+        old_dg,
+    );
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+
+    // CANDIDATE PATH: only the bound path's response consumes and commits.
+    const valid_dg = try makeResponse(std.testing.allocator, 6, challenge_data, secrets.client);
+    defer std.testing.allocator.free(valid_dg);
+    const valid = try lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        90,
+        &server,
+        candidate_path,
+        7,
+        secrets.client,
+        valid_dg,
+    );
+    const updated = valid.updated_route orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u64, 90), updated.connection_id);
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
+    const committed = try lifecycle.routeDatagram(candidate_path, valid_dg);
+    try std.testing.expect(!committed.path_changed);
+}
+
+test "path validation: duplicate and mismatched responses never validate" {
+    const original_dcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const client_dcid = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const secrets = try protection.deriveInitialSecrets(.v1, &original_dcid);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate_path = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_001),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(91, &server_dcid, old_path, .{});
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+
+    const challenge_data = [_]u8{ 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22 };
+    try server.sendPathChallengeForPath(challenge_data, candidate_path.toUdp());
+    const challenge = (try server.pollProtectedShortDatagram(1, &client_dcid, secrets.server)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(challenge);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+
+    const makeResponse = struct {
+        fn make(alloc: std.mem.Allocator, pn: u64, data: [8]u8, keys: protection.Aes128PacketProtectionKeys) ![]u8 {
+            var payload: [64]u8 = undefined;
+            var w = buffer.fixedWriter(&payload);
+            frame.encodeFrame(w.writer(), .{ .path_response = .{ .data = data } }) catch return error.TestUnexpectedResult;
+            return protection.protectShortPacketAes128(alloc, .{
+                .dcid = &server_dcid,
+                .spin_bit = false,
+                .key_phase = false,
+                .packet_number = pn,
+            }, try packet.encodePacketNumberForHeader(pn, null), keys, w.getWritten());
+        }
+    }.make;
+
+    // MISMATCHED data on the candidate path: unknown bytes are rejected
+    // at frame level and consume nothing.
+    const mismatched = try makeResponse(std.testing.allocator, 2, [_]u8{ 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef }, secrets.client);
+    defer std.testing.allocator.free(mismatched);
+    try std.testing.expectError(error.InvalidPacket, lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        91,
+        &server,
+        candidate_path,
+        3,
+        secrets.client,
+        mismatched,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+
+    // VALID response consumes on the candidate path.
+    const valid_dg = try makeResponse(std.testing.allocator, 4, challenge_data, secrets.client);
+    defer std.testing.allocator.free(valid_dg);
+    const valid = try lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        91,
+        &server,
+        candidate_path,
+        5,
+        secrets.client,
+        valid_dg,
+    );
+    _ = valid.updated_route orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
+
+    // DUPLICATE: replaying the identical response datagram is dropped by
+    // packet-number dedup — no frame processing, no error, no route
+    // change, nothing left to validate.
+    const duplicate = try lifecycle.processRoutedProtectedShortDatagramAndUpdatePath(
+        91,
+        &server,
+        candidate_path,
+        6,
+        secrets.client,
+        valid_dg,
+    );
+    try std.testing.expect(!duplicate.route.path_changed);
+    try std.testing.expect(duplicate.updated_route == null);
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
+    const route = try lifecycle.routeDatagram(candidate_path, valid_dg);
+    try std.testing.expectEqual(@as(u64, 91), route.connection_id);
+}
