@@ -132,11 +132,11 @@ chooses the index file name served for directory paths.
 
 - The H3 client and server currently support IPv4 literals and `localhost`; `--ca` requires an absolute PEM path.
 - `serve` listens on both TCP (HTTP/1.1, browser-friendly) and UDP (HTTP/3).
-  The browser path is plain `http://127.0.0.1:PORT/`; the HTTP/3 path needs a
-  certificate, so use `quicz h3 https://127.0.0.1:PORT/ -k` (or `--ca`) against
-  the built-in loopback certificate, or `--cert` / `--key` (P-256 PEM) in production.
-  HTTP/1.1 responses include `Alt-Svc: h3=":PORT"; ma=86400` so browsers that
-  trust the origin's certificate upgrade to HTTP/3; a plain `http://` origin
-  stays on HTTP/1.1 because HTTP/3 requires TLS.
+  Browsers must use plain `http://127.0.0.1:PORT/`; the `https://...` URL is the
+  HTTP/3 (UDP) endpoint for `quicz h3 https://127.0.0.1:PORT/ -k` (or `--ca`),
+  not a browser URL. HTTP/1.1 responses include `Alt-Svc: h3=":PORT"; ma=86400`,
+  but a plain `http://` origin stays on HTTP/1.1 because HTTP/3 requires TLS;
+  serving HTTPS over TCP so a browser can complete the TLS + Alt-Svc upgrade
+  loop is not implemented yet.
 - `bench` connects to `echo --server` in insecure mode; it measures the transport path, not certificate verification.
 - Client subcommands default to a 10s timeout (`--timeout-ms`) so a missing or stalled server fails instead of hanging.

@@ -122,10 +122,10 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
 
 - H3 客户端和服务端当前只支持 IPv4 / `localhost`；`--ca` 需要绝对路径 PEM。
 - `serve` 同时监听 TCP（HTTP/1.1，浏览器可直接访问）与 UDP（HTTP/3）。
-  浏览器路径是明文 `http://127.0.0.1:PORT/`；HTTP/3 路径需要证书，本地用内置
-  loopback 证书时用 `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`），生产用
-  `--cert` / `--key`（P-256 PEM）。
-  HTTP/1.1 响应带 `Alt-Svc: h3=":PORT"; ma=86400`，浏览器在信任该源证书时会
-  升级到 HTTP/3；明文 `http://` 源因 HTTP/3 必须走 TLS，会停留在 HTTP/1.1。
+  浏览器必须用明文 `http://127.0.0.1:PORT/`；`https://...` 是 HTTP/3（UDP）专用
+  端点，供 `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`）使用，不是浏览器 URL。
+  HTTP/1.1 响应带 `Alt-Svc: h3=":PORT"; ma=86400`，但明文 `http://` 源因 HTTP/3
+  必须走 TLS 会停留在 HTTP/1.1；在 TCP 上提供 HTTPS、让浏览器完成 TLS + Alt-Svc
+  升级闭环，目前尚未实现。
 - `bench` 以 insecure 方式连接 `echo --server`，测的是传输路径而非证书链路。
 - 客户端子命令默认 10s 超时（`--timeout-ms`），连不上或服务端卡住会直接失败，不挂死。

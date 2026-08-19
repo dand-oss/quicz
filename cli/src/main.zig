@@ -993,13 +993,15 @@ fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16) void {
         var request = http_server.receiveHead() catch |err| switch (err) {
             error.HttpConnectionClosing => return,
             else => {
-                std.debug.print("serve: HTTP/1.1 receive failed: {s}\n", .{@errorName(err)});
+                // Non-HTTP probes (e.g. a browser dialing https:// against the
+                // plaintext listener) close silently; verbose shows the detail.
+                if (g_verbose) std.debug.print("serve: HTTP/1.1 receive failed: {s}\n", .{@errorName(err)});
                 return;
             },
         };
         handleHttp11Request(&request, port) catch |err| switch (err) {
             else => {
-                std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
+                if (g_verbose) std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
                 return;
             },
         };
@@ -1107,7 +1109,7 @@ fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
     defer tcp_serve_task.cancel(io) catch {};
 
     try server.serveH3(.{}, serveHandler);
-    std.debug.print("quicz serve: http://127.0.0.1:{d}/ (HTTP/1.1) https://127.0.0.1:{d}/ (HTTP/3) dir={s}\n", .{ port, port, dir_path });
+    std.debug.print("quicz serve: browser http://127.0.0.1:{d}/ | HTTP/3 https://127.0.0.1:{d}/ (use 'quicz h3 -k') | dir={s}\n", .{ port, port, dir_path });
     server.drive_group.await(io) catch {};
     tcp_serve_task.await(io) catch {};
 }
