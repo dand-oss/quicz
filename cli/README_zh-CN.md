@@ -38,10 +38,15 @@ quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
 quicz h3 https://host/api -d 'a=1&b=2'             # -d 隐含 POST + 表单 content-type
 quicz h3 https://host/api -A 'my-agent/1.0'        # 自定义 User-Agent（默认 quicz/0.1.0）
+quicz h3 https://host/api -u 'user:pass'           # HTTP Basic 认证
+quicz h3 https://host/api -e 'https://ref.example/' # Referer 头
+quicz h3 https://host/api -b 'sid=abc123'          # Cookie 头
+quicz h3 https://host/api -T ./file.bin            # PUT 上传（octet-stream）
 quicz h3 https://host/api --resolve host:443:127.0.0.1   # 强制 host 指向指定 IPv4
 quicz h3 https://host/api -v                      # verbose：DNS/连接/重定向追踪
 quicz h3 https://host/api --max-time 30            # 整个请求超时（秒）
 quicz h3 https://host/api --connect-timeout 5      # 握手超时（秒）
+quicz h3 https://host/api -o /dev/null -w 'code=%{http_code} time=%{time_total_ms}ms\n'
 quicz h3 https://host/api -i -L -s -f -o resp.html # 响应头、重定向、静默、4xx/5xx 失败、保存正文
 quicz h3 https://host/api -I                          # HEAD 请求，只要响应头
 quicz h3 https://host/api -X POST --data @body.json   # 从文件读取请求体上传
@@ -110,6 +115,13 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
   `--data @file` 从文件读取请求体。
 - `-A` / `--user-agent` 覆盖默认 `User-Agent: quicz/0.1.0`；会替换任何
   `-H user-agent:` 头。
+- `-u` / `--user user:pass` 添加 HTTP Basic 认证；`-e` / `--referer` 与
+  `-b` / `--cookie` 设置 `Referer` 与 `Cookie` 头。
+- `-T` / `--upload-file FILE` 以 PUT 上传文件内容作为请求体，默认
+  `content-type: application/octet-stream`（可覆盖）。
+- `-w` / `--write-out FORMAT` 输出 curl 风格变量到 stdout，支持
+  `%{http_code}` `%{url_effective}` `%{time_total_ms}` `%{time_connect_ms}`
+  `%{size_download}` `%{num_redirects}`；支持 `\n`/`\r`/`\t` 转义。
 - `--resolve host:port:addr` 为指定 host/port 覆盖 DNS（仅 IPv4），适合拿真实
   域名测试本地服务。
 - `--connect-timeout` / `--connect-timeout-ms` 只限制 QUIC 握手；

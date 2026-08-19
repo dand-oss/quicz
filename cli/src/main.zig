@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
 //!   quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -83,7 +83,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
         \\  quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -332,6 +332,7 @@ const H3Job = struct {
     dump_headers_path: ?[]const u8,
     resolve: []const ResolveOverride,
     connect_timeout_ms: ?u64,
+    write_out: ?[]const u8,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -358,11 +359,13 @@ fn applyH3Defaults(
     data_given: bool,
     headers: *std.ArrayList(quicz.qpack.HeaderField),
     user_agent: ?[]const u8,
+    upload: bool,
 ) !void {
     if (data_given and !method_explicit and std.mem.eql(u8, method.*, "GET")) method.* = "POST";
     if (data_given and findHeader(headers.items, "content-type") == null) {
         const name = try lowercaseName(allocator, "content-type");
-        headers.append(allocator, .{ .name = name, .value = "application/x-www-form-urlencoded" }) catch |e| {
+        const content_type = if (upload) "application/octet-stream" else "application/x-www-form-urlencoded";
+        headers.append(allocator, .{ .name = name, .value = content_type }) catch |e| {
             allocator.free(name);
             return e;
         };
@@ -382,6 +385,106 @@ fn applyH3Defaults(
         allocator.free(ua_name);
         return e;
     };
+}
+
+/// Replace any existing header with `name`, then append the new value.
+/// Header values are borrowed and must outlive the request.
+fn setHeader(
+    allocator: std.mem.Allocator,
+    headers: *std.ArrayList(quicz.qpack.HeaderField),
+    name: []const u8,
+    value: []const u8,
+) !void {
+    var i: usize = 0;
+    while (i < headers.items.len) {
+        if (std.mem.eql(u8, headers.items[i].name, name)) {
+            allocator.free(headers.items[i].name);
+            _ = headers.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+    const name_owned = try lowercaseName(allocator, name);
+    headers.append(allocator, .{ .name = name_owned, .value = value }) catch |e| {
+        allocator.free(name_owned);
+        return e;
+    };
+}
+
+/// Render a `-u user:pass` value as an `Authorization: Basic ...` header value.
+fn buildBasicAuth(userpass: []const u8, buf: []u8) ![]const u8 {
+    const enc = std.base64.standard.Encoder;
+    const b64_len = enc.calcSize(userpass.len);
+    if (b64_len + 6 > buf.len) return error.AuthTooLong;
+    @memcpy(buf[0..6], "Basic ");
+    _ = enc.encode(buf[6 .. 6 + b64_len], userpass);
+    return buf[0 .. 6 + b64_len];
+}
+
+const WriteOutVars = struct {
+    http_code: u16,
+    url_effective: []const u8,
+    time_total_ms: u64,
+    time_connect_ms: u64,
+    size_download: usize,
+    num_redirects: usize,
+};
+
+/// Render a curl-style `-w` format with `%{var}` placeholders to stdout.
+/// Variables are integer milliseconds unless noted.
+fn writeOutVars(io: std.Io, format: []const u8, vars: WriteOutVars) !void {
+    var out: [1024]u8 = undefined;
+    var pos: usize = 0;
+    var i: usize = 0;
+    var scratch: [64]u8 = undefined;
+    while (i < format.len) {
+        if (pos >= out.len) break;
+        if (format[i] == '%' and i + 1 < format.len and format[i + 1] == '{') {
+            const close = std.mem.indexOfScalarPos(u8, format, i + 2, '}') orelse {
+                out[pos] = format[i];
+                pos += 1;
+                i += 1;
+                continue;
+            };
+            const name = format[i + 2 .. close];
+            var rendered: []const u8 = "";
+            if (std.mem.eql(u8, name, "http_code")) {
+                rendered = std.fmt.bufPrint(&scratch, "{d}", .{vars.http_code}) catch "";
+            } else if (std.mem.eql(u8, name, "url_effective")) {
+                rendered = vars.url_effective;
+            } else if (std.mem.eql(u8, name, "time_total_ms")) {
+                rendered = std.fmt.bufPrint(&scratch, "{d}", .{vars.time_total_ms}) catch "";
+            } else if (std.mem.eql(u8, name, "time_connect_ms")) {
+                rendered = std.fmt.bufPrint(&scratch, "{d}", .{vars.time_connect_ms}) catch "";
+            } else if (std.mem.eql(u8, name, "size_download")) {
+                rendered = std.fmt.bufPrint(&scratch, "{d}", .{vars.size_download}) catch "";
+            } else if (std.mem.eql(u8, name, "num_redirects")) {
+                rendered = std.fmt.bufPrint(&scratch, "{d}", .{vars.num_redirects}) catch "";
+            }
+            if (pos + rendered.len > out.len) break;
+            @memcpy(out[pos .. pos + rendered.len], rendered);
+            pos += rendered.len;
+            i = close + 1;
+        } else {
+            if (format[i] == '\\' and i + 1 < format.len) {
+                const esc = switch (format[i + 1]) {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '\\' => '\\',
+                    else => format[i + 1],
+                };
+                out[pos] = esc;
+                pos += 1;
+                i += 2;
+            } else {
+                out[pos] = format[i];
+                pos += 1;
+                i += 1;
+            }
+        }
+    }
+    try std.Io.File.stdout().writeStreamingAll(io, out[0..pos]);
 }
 
 /// Resolve a `Location` header against the current URL. Returns an
@@ -417,11 +520,13 @@ fn sameOrigin(host_a: []const u8, port_a: u16, host_b: []const u8, port_b: u16) 
 
 fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     const job: *const H3Job = @ptrCast(@alignCast(ctx));
+    const t0 = std.Io.Timestamp.now(io, .awake);
 
     var current_url = job.url;
     var current_url_owned = false;
     defer if (current_url_owned) job.allocator.free(current_url);
     var redirects_left: usize = job.max_redirects;
+    var redirect_count: usize = 0;
 
     // Connection reused across same-origin redirects to avoid re-handshaking.
     var client: ?Client = null;
@@ -529,6 +634,7 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
                 current_url = next_url;
                 current_url_owned = true;
                 redirects_left -= 1;
+                redirect_count += 1;
                 continue;
             }
         }
@@ -569,7 +675,17 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             std.debug.print("final URL: {s}\n", .{current_url});
         }
 
-        if (!job.silent) {
+        if (job.write_out) |fmt| {
+            const t1 = std.Io.Timestamp.now(io, .awake);
+            try writeOutVars(io, fmt, .{
+                .http_code = response.status,
+                .url_effective = current_url,
+                .time_total_ms = @intCast(@max(std.Io.Duration.toMilliseconds(t0.durationTo(t1)), 0)),
+                .time_connect_ms = @intCast(@max(connect_ms, 0)),
+                .size_download = if (response.body) |b| b.len else 0,
+                .num_redirects = redirect_count,
+            });
+        } else if (!job.silent) {
             const stats = h3cli.?.client.client.transport.connection.connectionStats();
             std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
                 connect_ms,
@@ -608,6 +724,9 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     defer if (owned_body) |b| allocator.free(b);
     var data_given = false;
     var user_agent: ?[]const u8 = null;
+    var upload_given = false;
+    var write_out: ?[]const u8 = null;
+    var auth_buf: [128]u8 = undefined;
     var connect_timeout_ms: ?u64 = null;
     var resolves = std.ArrayList(ResolveOverride).empty;
     defer resolves.deinit(allocator);
@@ -648,8 +767,26 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             } else {
                 body = raw;
             }
+        } else if (std.mem.eql(u8, a, "-T") or std.mem.eql(u8, a, "--upload-file")) {
+            const file_path = try nextArg(args);
+            const buf = try readFileAll(allocator, io, file_path);
+            owned_body = buf;
+            body = buf;
+            method = "PUT";
+            method_explicit = true;
+            data_given = true;
+            upload_given = true;
         } else if (std.mem.eql(u8, a, "-A") or std.mem.eql(u8, a, "--user-agent")) {
             user_agent = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "-u") or std.mem.eql(u8, a, "--user")) {
+            const value = try buildBasicAuth(try nextArg(args), &auth_buf);
+            try setHeader(allocator, &headers, "authorization", value);
+        } else if (std.mem.eql(u8, a, "-e") or std.mem.eql(u8, a, "--referer")) {
+            try setHeader(allocator, &headers, "referer", try nextArg(args));
+        } else if (std.mem.eql(u8, a, "-b") or std.mem.eql(u8, a, "--cookie")) {
+            try setHeader(allocator, &headers, "cookie", try nextArg(args));
+        } else if (std.mem.eql(u8, a, "-w") or std.mem.eql(u8, a, "--write-out")) {
+            write_out = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--resolve")) {
             const override = try parseResolveSpec(try nextArg(args));
             try resolves.append(allocator, override);
@@ -679,7 +816,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         }
     }
 
-    try applyH3Defaults(allocator, &method, method_explicit, data_given, &headers, user_agent);
+    try applyH3Defaults(allocator, &method, method_explicit, data_given, &headers, user_agent, upload_given);
 
     var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
     if (ca_pem) |pem| {
@@ -716,6 +853,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .dump_headers_path = dump_headers_path,
         .resolve = resolves.items,
         .connect_timeout_ms = connect_timeout_ms,
+        .write_out = write_out,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
@@ -1435,7 +1573,7 @@ test "apply h3 defaults" {
     }
 
     var method: []const u8 = "GET";
-    try applyH3Defaults(allocator, &method, false, true, &headers, null);
+    try applyH3Defaults(allocator, &method, false, true, &headers, null, false);
     try std.testing.expectEqualStrings("POST", method);
     try std.testing.expectEqualStrings("application/x-www-form-urlencoded", findHeader(headers.items, "content-type").?);
     try std.testing.expectEqualStrings("quicz/0.1.0", findHeader(headers.items, "user-agent").?);
@@ -1448,7 +1586,7 @@ test "apply h3 defaults" {
     const legacy_ua_name = try lowercaseName(allocator, "User-Agent");
     try headers.append(allocator, .{ .name = legacy_ua_name, .value = "legacy" });
     var m2: []const u8 = "GET";
-    try applyH3Defaults(allocator, &m2, false, true, &headers, "my-agent/1.0");
+    try applyH3Defaults(allocator, &m2, false, true, &headers, "my-agent/1.0", false);
     try std.testing.expectEqualStrings("application/json", findHeader(headers.items, "content-type").?);
     try std.testing.expectEqualStrings("my-agent/1.0", findHeader(headers.items, "user-agent").?);
     var ua_count: usize = 0;
@@ -1461,8 +1599,41 @@ test "apply h3 defaults" {
     for (headers.items) |h| allocator.free(h.name);
     headers.clearRetainingCapacity();
     var m3: []const u8 = "GET";
-    try applyH3Defaults(allocator, &m3, true, true, &headers, null);
+    try applyH3Defaults(allocator, &m3, true, true, &headers, null, false);
     try std.testing.expectEqualStrings("GET", m3);
+}
+
+test "basic auth and setHeader" {
+    const allocator = std.testing.allocator;
+    var buf: [128]u8 = undefined;
+    const auth = try buildBasicAuth("user:pass", &buf);
+    try std.testing.expectEqualStrings("Basic dXNlcjpwYXNz", auth);
+
+    var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
+    defer {
+        for (headers.items) |h| allocator.free(h.name);
+        headers.deinit(allocator);
+    }
+    try setHeader(allocator, &headers, "authorization", auth);
+    try setHeader(allocator, &headers, "authorization", "Basic ABC");
+    try std.testing.expectEqualStrings("Basic ABC", findHeader(headers.items, "authorization").?);
+    var count: usize = 0;
+    for (headers.items) |h| {
+        if (std.mem.eql(u8, h.name, "authorization")) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "upload implies octet-stream content type" {
+    const allocator = std.testing.allocator;
+    var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
+    defer {
+        for (headers.items) |h| allocator.free(h.name);
+        headers.deinit(allocator);
+    }
+    var method: []const u8 = "PUT";
+    try applyH3Defaults(allocator, &method, true, true, &headers, null, true);
+    try std.testing.expectEqualStrings("application/octet-stream", findHeader(headers.items, "content-type").?);
 }
 
 test "lowercase header name" {

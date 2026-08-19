@@ -41,10 +41,15 @@ quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
 quicz h3 https://host/api -d 'a=1&b=2'             # -d implies POST + form content-type
 quicz h3 https://host/api -A 'my-agent/1.0'        # custom user-agent (default: quicz/0.1.0)
+quicz h3 https://host/api -u 'user:pass'           # HTTP Basic auth
+quicz h3 https://host/api -e 'https://ref.example/' # Referer header
+quicz h3 https://host/api -b 'sid=abc123'          # Cookie header
+quicz h3 https://host/api -T ./file.bin            # PUT upload (octet-stream)
 quicz h3 https://host/api --resolve host:443:127.0.0.1   # force host to an IPv4 address
 quicz h3 https://host/api -v                      # verbose: DNS/connect/redirect tracing
 quicz h3 https://host/api --max-time 30            # whole-request timeout in seconds
 quicz h3 https://host/api --connect-timeout 5      # handshake timeout in seconds
+quicz h3 https://host/api -o /dev/null -w 'code=%{http_code} time=%{time_total_ms}ms\n'
 quicz h3 https://host/api -i -L -s -f -o resp.html # headers, redirects, silent, fail on 4xx/5xx, save body
 quicz h3 https://host/api -I                          # HEAD request, headers only
 quicz h3 https://host/api -X POST --data @body.json   # upload a request body from a file
@@ -119,6 +124,13 @@ printed.
   body from a file.
 - `-A` / `--user-agent` overrides the default `User-Agent: quicz/0.1.0`;
   any `-H user-agent:` header is replaced.
+- `-u` / `--user user:pass` adds HTTP Basic auth; `-e` / `--referer` and
+  `-b` / `--cookie` set the `Referer` and `Cookie` headers.
+- `-T` / `--upload-file FILE` sends a PUT with the file as the body and
+  `content-type: application/octet-stream` unless overridden.
+- `-w` / `--write-out FORMAT` prints curl-style variables to stdout, e.g.
+  `%{http_code}` `%{url_effective}` `%{time_total_ms}` `%{time_connect_ms}`
+  `%{size_download}` `%{num_redirects}`; `\n`/`\r`/`\t` escapes are honored.
 - `--resolve host:port:addr` overrides DNS for that host/port (IPv4 only),
   which is handy for testing a real hostname against a local server.
 - `--connect-timeout` / `--connect-timeout-ms` bounds only the QUIC handshake;
