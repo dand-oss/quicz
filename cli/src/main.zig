@@ -471,6 +471,10 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             try std.Io.File.stdout().writeStreamingAll(io, "\n");
         }
 
+        if (job.follow_redirects and !std.mem.eql(u8, current_url, job.url)) {
+            std.debug.print("final URL: {s}\n", .{current_url});
+        }
+
         if (!job.silent) {
             const stats = h3cli.?.client.client.transport.connection.connectionStats();
             std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
@@ -668,6 +672,42 @@ fn ownedResponse(status: u16, content_type: []const u8, data: []u8) quicz.h3_req
     };
 }
 
+/// Owned headers for a bodyless response. HEAD responses send HEADERS only and
+/// never pump a body, so the headers are released via the body-stream deinit
+/// callback in the H3 server instead of an OwnedBody.
+const HeadBody = struct {
+    allocator: std.mem.Allocator,
+    headers: []quicz.qpack.HeaderField,
+};
+
+fn headBodyNext(_: *anyopaque, buf: []u8) anyerror!?usize {
+    _ = buf;
+    return null;
+}
+
+fn headBodyDeinit(ctx: *anyopaque) void {
+    const state: *HeadBody = @ptrCast(@alignCast(ctx));
+    const allocator = state.allocator;
+    allocator.free(state.headers);
+    allocator.destroy(state);
+}
+
+fn headResponse(status: u16, content_type: []const u8) quicz.h3_request.Response {
+    const allocator = g_allocator;
+    const state = allocator.create(HeadBody) catch return .{ .status = 500, .body = "out of memory" };
+    const headers = allocator.alloc(quicz.qpack.HeaderField, 1) catch {
+        allocator.destroy(state);
+        return .{ .status = 500, .body = "out of memory" };
+    };
+    headers[0] = .{ .name = "content-type", .value = content_type };
+    state.* = .{ .allocator = allocator, .headers = headers };
+    return .{
+        .status = status,
+        .extra_headers = headers,
+        .body_stream = .{ .ctx = state, .next_fn = headBodyNext, .deinit_fn = headBodyDeinit },
+    };
+}
+
 fn readFileBody(rel: []const u8) ![]u8 {
     const file = try g_root_dir.openFile(g_io, rel, .{});
     defer file.close(g_io);
@@ -706,8 +746,9 @@ fn directoryListingResponse() quicz.h3_request.Response {
 }
 
 fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
-    if (!std.mem.eql(u8, req.method, "GET")) {
-        return .{ .status = 405, .extra_headers = &.{.{ .name = "allow", .value = "GET" }}, .body = "method not allowed" };
+    const is_head = std.mem.eql(u8, req.method, "HEAD");
+    if (!std.mem.eql(u8, req.method, "GET") and !is_head) {
+        return .{ .status = 405, .extra_headers = &.{.{ .name = "allow", .value = "GET, HEAD" }}, .body = "method not allowed" };
     }
 
     if (std.mem.eql(u8, req.path, "/metrics")) {
@@ -722,30 +763,35 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
                 m.packets_lost,
                 m.packets_retransmitted,
             }) catch "metrics error";
+            if (is_head) return headResponse(200, "text/plain");
             return .{ .status = 200, .extra_headers = &.{.{ .name = "content-type", .value = "text/plain" }}, .body = body };
         }
         return .{ .status = 503, .body = "server not ready" };
     }
 
     const rel = sanitizeRelPath(req.path) catch return .{ .status = 400, .body = "bad request" };
-    if (rel.len == 0) {
-        if (readFileBody("index.html")) |data| {
-            return ownedResponse(200, contentTypeFor("index.html"), data);
-        } else |e| switch (e) {
-            error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
-            else => return directoryListingResponse(),
+    const primary = if (rel.len == 0) "index.html" else rel;
+    if (readFileBody(primary)) |data| {
+        if (is_head) {
+            g_allocator.free(data);
+            return headResponse(200, contentTypeFor(primary));
         }
-    }
-
-    if (readFileBody(rel)) |data| {
-        return ownedResponse(200, contentTypeFor(rel), data);
+        return ownedResponse(200, contentTypeFor(primary), data);
     } else |e| switch (e) {
         error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
         else => {
+            if (rel.len == 0) {
+                if (is_head) return headResponse(200, "text/html; charset=utf-8");
+                return directoryListingResponse();
+            }
             // Maybe rel is a directory: serve its index.html.
             const combined = concatPaths(g_allocator, rel, "/index.html") catch return .{ .status = 500, .body = "server error" };
             defer g_allocator.free(combined);
             if (readFileBody(combined)) |data| {
+                if (is_head) {
+                    g_allocator.free(data);
+                    return headResponse(200, contentTypeFor(combined));
+                }
                 return ownedResponse(200, contentTypeFor(combined), data);
             } else |e2| switch (e2) {
                 error.FileTooLarge => return .{ .status = 413, .body = "file too large" },

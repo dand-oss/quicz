@@ -371,6 +371,11 @@ pub const H3Server = struct {
     /// machine owns (the driver may shrink its buffer by that amount).
     pub const FeedDataResult = struct { result: FeedResult, consumed: usize };
 
+    /// Whether an HTTP method is HEAD; such responses send headers only.
+    fn isHeadMethod(method: []const u8) bool {
+        return std.mem.eql(u8, method, "HEAD");
+    }
+
     pub fn feedRequestBytes(self: *H3Server, stream_id: u64, data: []const u8) !FeedResult {
         const frame = try h3_frame.decodeFrame(data);
         if (frame.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
@@ -465,7 +470,7 @@ pub const H3Server = struct {
             // Body is now stable; expose it to the handler and start the response.
             if (rs.decoded) |*d| d.body = if (rs.body.items.len > 0) rs.body.items else null;
             const resp = self.handler(rs.decoded.?);
-            try self.startResponse(stream_id, resp);
+            try self.startResponse(stream_id, resp, isHeadMethod(rs.decoded.?.method));
             return .{ .result = .processed, .consumed = data.len };
         }
         return .{ .result = .need_more, .consumed = data.len };
@@ -543,7 +548,7 @@ pub const H3Server = struct {
         // Call handler
         const response = self.handler(decoded);
 
-        try self.startResponse(stream_id, response);
+        try self.startResponse(stream_id, response, isHeadMethod(decoded.method));
         return true;
     }
 
@@ -551,11 +556,12 @@ pub const H3Server = struct {
     /// HEADERS frame with fin; any body (static slice or streamed) is sent as
     /// HEADERS (fin=false) plus a `ResponseStream` entry, drained by
     /// `pumpResponses` in max-response-chunk-payload DATA frames.
-    fn startResponse(self: *H3Server, stream_id: u64, response: h3_request.Response) !void {
+    fn startResponse(self: *H3Server, stream_id: u64, response: h3_request.Response, is_head: bool) !void {
         var resp_buf: [8192]u8 = undefined;
         var enc_instr: [4096]u8 = undefined;
 
-        const has_body = (response.body_stream != null) or (response.body != null and response.body.?.len > 0);
+        // HEAD responses carry HEADERS (and no DATA), like curl/HTTP semantics.
+        const has_body = !is_head and ((response.body_stream != null) or (response.body != null and response.body.?.len > 0));
 
         if (self.enc_table) |*et| {
             const enc = try h3_request.encodeResponseHeadersWithDynamic(&resp_buf, response, et, &enc_instr);
@@ -582,6 +588,9 @@ pub const H3Server = struct {
                 .static_body = if (response.body_stream == null) (response.body orelse &.{}) else &.{},
             });
         } else {
+            // HEAD responses never send DATA; release any body resources the
+            // handler attached so they do not leak.
+            if (response.body_stream) |bs| bs.deinit();
             // Bodyless response fully sent (fin on HEADERS); the request entry
             // is no longer needed and may be released.
             self.releaseRequest(stream_id);
@@ -666,7 +675,7 @@ pub const H3Server = struct {
 
     /// Send a minimal bodyless error response (e.g. 413) and retire the stream.
     pub fn sendSimpleError(self: *H3Server, stream_id: u64, status: u16) !void {
-        try self.startResponse(stream_id, .{ .status = status });
+        try self.startResponse(stream_id, .{ .status = status }, false);
     }
 
     /// Retry all buffered blocked requests once the decoder table has advanced.
@@ -716,7 +725,7 @@ pub const H3Server = struct {
             if (rs.body_fin) {
                 if (rs.decoded) |*d| d.body = if (rs.body.items.len > 0) rs.body.items else null;
                 const resp = self.handler(rs.decoded.?);
-                try self.startResponse(sid, resp);
+                try self.startResponse(sid, resp, isHeadMethod(rs.decoded.?.method));
             }
         }
     }
@@ -1119,6 +1128,65 @@ test "H3Server skips GREASE frames before request HEADERS" {
     const decoded = try h3_request.decodeResponse(mock.response_data.items);
     try std.testing.expectEqual(@as(u16, 200), decoded.response.status);
     try std.testing.expectEqualStrings(req_body, decoded.response.body.?);
+}
+
+test "H3Server sends HEAD responses without a body" {
+    var req_buf: [128]u8 = undefined;
+    const req = h3_request.Request{ .method = "HEAD", .path = "/", .authority = "example.com" };
+    const req_len = try h3_request.encodeRequest(&req_buf, req);
+
+    const MockCtx = struct {
+        response_data: std.ArrayList(u8) = .empty,
+        fins: std.ArrayList(bool) = .empty,
+        fn openUni(ctx: *anyopaque) !u64 {
+            _ = ctx;
+            return 3;
+        }
+        fn send(ctx: *anyopaque, sid: u64, data: []const u8, fin: bool) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (sid != 3) {
+                try self.response_data.appendSlice(std.testing.allocator, data);
+                try self.fins.append(std.testing.allocator, fin);
+            }
+        }
+        fn recv(ctx: *anyopaque, sid: u64, buf: []u8) !?usize {
+            _ = ctx;
+            _ = sid;
+            _ = buf;
+            return null;
+        }
+    };
+    var mock = MockCtx{};
+    defer {
+        mock.response_data.deinit(std.testing.allocator);
+        mock.fins.deinit(std.testing.allocator);
+    }
+    var conn = H3Server.H3ServerConnection{
+        .openUniStreamFn = MockCtx.openUni,
+        .sendOnStreamFn = MockCtx.send,
+        .recvOnStreamFn = MockCtx.recv,
+        .ctx = &mock,
+    };
+    const handler = struct {
+        fn handle(decoded_req: h3_request.DecodedRequest) h3_request.Response {
+            _ = decoded_req;
+            // The body must be discarded for HEAD; leaking it (deinit never
+            // called) fails the test via the testing allocator.
+            return .{ .status = 200, .body_stream = h3_request.ResponseBody.fromRepeating(std.testing.allocator, '*', 20_000) catch unreachable };
+        }
+    }.handle;
+    var server = try H3Server.init(&conn, handler, std.testing.allocator, 4096, 8);
+    defer server.deinit();
+
+    _ = try server.feedRequestData(0, req_buf[0..req_len], true);
+    try server.pumpResponses();
+
+    // Only the HEADERS frame is on the wire, finished in a single send.
+    try std.testing.expectEqual(@as(usize, 1), mock.fins.items.len);
+    try std.testing.expect(mock.fins.items[0]);
+    const frame = try h3_frame.decodeFrame(mock.response_data.items);
+    try std.testing.expectEqual(@as(u64, 0x01), frame.frame.frame_type);
+    try std.testing.expectEqual(frame.consumed, mock.response_data.items.len);
 }
 
 test "H3Server pumps a streamed response as multiple DATA frames with fin last" {
