@@ -975,7 +975,22 @@ pub const Connection = struct {
     }
 
     /// Release all buffers owned by this connection.
+    /// Zeroize every retained packet-protection secret: handshake keys,
+    /// 0-RTT keys, and both 1-RTT key-phase states including generations
+    /// retained across key updates. `deinit` calls this, so a normally
+    /// destroyed connection never leaves key material behind; embedders
+    /// can also call it explicitly before teardown.
+    pub fn secureWipe(self: *Connection) void {
+        if (self.local_handshake_keys) |*keys| protection.secureWipeProtectionKeys(keys);
+        if (self.peer_handshake_keys) |*keys| protection.secureWipeProtectionKeys(keys);
+        if (self.local_zero_rtt_keys) |*keys| protection.secureWipeProtectionKeys(keys);
+        if (self.peer_zero_rtt_keys) |*keys| protection.secureWipeProtectionKeys(keys);
+        if (self.local_one_rtt_key_phase_state) |*state| protection.secureWipeKeyPhaseState(state);
+        if (self.peer_one_rtt_key_phase_state) |*state| protection.secureWipeKeyPhaseState(state);
+    }
+
     pub fn deinit(self: *Connection) void {
+        self.secureWipe();
         self.initial_packet_space.deinit(self.allocator);
         self.handshake_packet_space.deinit(self.allocator);
         for (self.crypto_send_queue.items) |pending| {
@@ -11312,3 +11327,27 @@ pub const Connection = struct {
 /// New code should use `Connection`; the alias keeps existing examples and
 /// downstream experiments source-compatible while the API remains experimental.
 pub const QuicConnection = Connection;
+
+test "secureWipe zeroizes connection packet-protection secrets" {
+    var conn = try Connection.init(std.testing.allocator, .client, .{});
+    defer conn.deinit();
+
+    const secrets = HandshakeTrafficSecrets{
+        .local = [_]u8{0x11} ** 32,
+        .peer = [_]u8{0x22} ** 32,
+    };
+    try conn.installHandshakeTrafficSecrets(secrets);
+    const local = &conn.local_handshake_keys.?;
+    const peer = &conn.peer_handshake_keys.?;
+    const nonzero_before = !std.mem.allEqual(u8, &local.key, 0) and
+        !std.mem.allEqual(u8, &peer.secret, 0);
+    try std.testing.expect(nonzero_before);
+
+    conn.secureWipe();
+    try std.testing.expect(std.mem.allEqual(u8, &local.secret, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &local.key, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &local.iv, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &local.hp, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &peer.secret, 0));
+    try std.testing.expect(std.mem.allEqual(u8, &peer.key, 0));
+}

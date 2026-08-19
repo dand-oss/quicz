@@ -132,6 +132,31 @@ pub const InitialSecrets = struct {
     server: Aes128PacketProtectionKeys,
 };
 
+/// Zeroize one packet-protection key set: secret, key, iv, and header
+/// protection key.
+pub fn secureWipeProtectionKeys(keys: *Aes128PacketProtectionKeys) void {
+    std.crypto.secureZero(u8, &keys.secret);
+    std.crypto.secureZero(u8, &keys.key);
+    std.crypto.secureZero(u8, &keys.iv);
+    std.crypto.secureZero(u8, &keys.hp);
+}
+
+/// Zeroize both Initial directions and the shared Initial secret.
+pub fn secureWipeInitialSecrets(secrets: *InitialSecrets) void {
+    secureWipeProtectionKeys(&secrets.client);
+    secureWipeProtectionKeys(&secrets.server);
+    std.crypto.secureZero(u8, &secrets.initial_secret);
+}
+
+/// Zeroize every key generation held by one key-phase state, including a
+/// retained previous generation awaiting the key-update discard window.
+pub fn secureWipeKeyPhaseState(state: *Aes128KeyPhaseState) void {
+    secureWipeProtectionKeys(&state.current);
+    secureWipeProtectionKeys(&state.next);
+    if (state.previous) |*previous| secureWipeProtectionKeys(previous);
+    state.previous = null;
+}
+
 /// Long-header packet opened after QUIC packet protection is removed.
 pub const OpenedLongPacket = struct {
     /// Unprotected long-header fields. `payload_length` preserves the protected

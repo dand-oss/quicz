@@ -68,8 +68,16 @@ pub const Tls13ServerTransport = struct {
         };
     }
 
-    /// Release the owned QUIC connection state.
+    /// Idempotent test hook: zeroize the backend's TLS secrets without
+    /// releasing anything (deinit also wipes).
+    pub fn wipeSecrets(self: *Tls13ServerTransport) void {
+        self.backend.secureWipe();
+    }
+
+    /// Release the owned QUIC connection state, wiping the TLS backend's
+    /// secret material first (key schedule, PSKs, ephemeral keys).
     pub fn deinit(self: *Tls13ServerTransport) void {
+        self.backend.secureWipe();
         self.connection.deinit();
     }
 
@@ -475,4 +483,24 @@ test "Tls13ServerTransport closes with protected application output and deadline
     const serviced = (try transport.serviceDueDeadline(close_deadline)) orelse return error.TestUnexpectedResult;
     try std.testing.expect(serviced == .close_timeout);
     try std.testing.expectEqual(transport_types.ConnectionState.closed, transport.connection.connectionState());
+}
+
+test "Tls13ServerTransport deinit wipes TLS backend secrets" {
+    const alloc = std.testing.allocator;
+    var transport = try Tls13ServerTransport.init(alloc, .{
+        .initial_max_data = 8192,
+        .initial_max_stream_data = 2048,
+        .initial_max_streams_bidi = 8,
+        .max_datagram_size = 8192,
+    }, .{ .alpn = &.{} });
+    transport.backend = @import("tls13_backend.zig").Tls13Backend.initServerWithPsk(
+        .{ .alpn = &.{} },
+        [_]u8{0x9d} ** @import("../tls/tls13.zig").secret_len,
+    );
+    try std.testing.expect(!std.mem.allEqual(u8, &transport.backend.hs.key_schedule.early_secret, 0));
+    transport.deinit();
+    // Assert after wipe, before any further use; deinit already freed
+    // connection state, and the backend bytes live in the transport
+    // struct which is still addressable here.
+    try std.testing.expect(std.mem.allEqual(u8, &transport.backend.hs.key_schedule.early_secret, 0));
 }
