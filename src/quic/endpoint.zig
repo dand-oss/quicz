@@ -44,6 +44,11 @@ pub const Udp4Address = struct {
         return self.port == other.port and std.mem.eql(u8, &self.octets, &other.octets);
     }
 
+    /// Widen to the address-neutral address. Lossless for IPv4.
+    pub fn toUdp(self: Udp4Address) UdpAddress {
+        return UdpAddress.init4(self.octets, self.port);
+    }
+
     /// Return the stable binary address binding used for address-validation tokens.
     ///
     /// The binding is IPv4 octets followed by the UDP port in network byte
@@ -75,6 +80,69 @@ pub const Udp4Tuple = struct {
     /// into this peer-address token binding.
     pub fn peerAddressValidationBinding(self: Udp4Tuple) [address_validation_peer_binding_len]u8 {
         return self.remote.addressValidationBinding();
+    }
+
+    /// Widen to the address-neutral tuple. Lossless for IPv4 paths.
+    pub fn toUdp(self: Udp4Tuple) UdpTuple {
+        return .{ .local = self.local.toUdp(), .remote = self.remote.toUdp() };
+    }
+};
+
+/// Address-family-neutral UDP endpoint address.
+///
+/// Routed connections are not inherently IPv4: QUIC routes by destination
+/// connection ID, and the UDP tuple only names the path a datagram arrived
+/// on. This type carries either family; the IPv4-shaped `Udp4Address` and
+/// `Udp4Tuple` remain as compatibility helpers and convert losslessly.
+pub const UdpAddress = struct {
+    pub const Family = enum { ipv4, ipv6 };
+
+    family: Family,
+    port: u16,
+    v4: [4]u8 = .{ 0, 0, 0, 0 },
+    v6: [16]u8 = @splat(0),
+
+    /// Construct an IPv4 address from network-order octets and a port.
+    pub fn init4(octets: [4]u8, port: u16) UdpAddress {
+        return .{ .family = .ipv4, .port = port, .v4 = octets };
+    }
+
+    /// Construct an IPv6 address from network-order octets and a port.
+    pub fn init6(octets: [16]u8, port: u16) UdpAddress {
+        return .{ .family = .ipv6, .port = port, .v6 = octets };
+    }
+
+    /// Return whether family, address, and port are all identical.
+    pub fn eql(self: UdpAddress, other: UdpAddress) bool {
+        if (self.family != other.family or self.port != other.port) return false;
+        return switch (self.family) {
+            .ipv4 => std.mem.eql(u8, &self.v4, &other.v4),
+            .ipv6 => std.mem.eql(u8, &self.v6, &other.v6),
+        };
+    }
+
+    /// Return the IPv4 view, or null for an IPv6 address.
+    pub fn to4(self: UdpAddress) ?Udp4Address {
+        if (self.family != .ipv4) return null;
+        return Udp4Address{ .octets = self.v4, .port = self.port };
+    }
+};
+
+/// Address-family-neutral local/remote UDP tuple.
+pub const UdpTuple = struct {
+    local: UdpAddress,
+    remote: UdpAddress,
+
+    /// Return whether local and remote addresses both match.
+    pub fn eql(self: UdpTuple, other: UdpTuple) bool {
+        return self.local.eql(other.local) and self.remote.eql(other.remote);
+    }
+
+    /// Return the IPv4 view, or null when either side is IPv6.
+    pub fn to4(self: UdpTuple) ?Udp4Tuple {
+        const local = self.local.to4() orelse return null;
+        const remote = self.remote.to4() orelse return null;
+        return Udp4Tuple{ .local = local, .remote = remote };
     }
 };
 
@@ -313,7 +381,7 @@ const Route = struct {
     connection_id: u64,
     sequence_number: ?u64,
     destination_connection_id: ConnectionId,
-    path: Udp4Tuple,
+    path: UdpTuple,
     active_migration_disabled: bool,
 };
 
@@ -686,11 +754,11 @@ pub const EndpointRouter = struct {
     }
 
     /// Register a destination connection ID for a caller-owned connection handle.
-    pub fn registerConnectionId(
+    pub fn registerConnectionIdAddress(
         self: *EndpointRouter,
         connection_id: u64,
         destination_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         options: RouteOptions,
     ) RouteError!void {
         const cid = try ConnectionId.init(destination_connection_id);
@@ -732,17 +800,17 @@ pub const EndpointRouter = struct {
     /// caller-owned client connection. It does not own socket I/O or construct
     /// the Initial packet; callers still choose the outgoing Destination CID and
     /// packetization policy at the connection layer.
-    pub fn registerClientInitialSourceConnectionId(
+    pub fn registerClientInitialSourceConnectionIdAddress(
         self: *EndpointRouter,
         connection_id: u64,
         client_source_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         options: ClientInitialRouteOptions,
     ) RouteError!RouteResult {
-        try self.registerConnectionId(connection_id, client_source_connection_id, path, .{
+        try self.registerConnectionIdAddress(connection_id, client_source_connection_id, path, .{
             .active_migration_disabled = options.active_migration_disabled,
         });
-        return self.routeConnectionId(client_source_connection_id, path);
+        return self.routeConnectionIdAddress(client_source_connection_id, path);
     }
 
     /// Register routes for a server connection created from an accepted Initial.
@@ -764,20 +832,20 @@ pub const EndpointRouter = struct {
         if (original_cid.len < 8) return error.InvalidConnectionIdLength;
         const server_cid = try ConnectionId.init(server_source_connection_id);
 
-        try self.registerConnectionId(connection_id, original_cid.asSlice(), initial_accept.path, .{
+        try self.registerConnectionIdAddress(connection_id, original_cid.asSlice(), initial_accept.path.toUdp(), .{
             .active_migration_disabled = options.active_migration_disabled,
         });
-        errdefer _ = self.retireConnectionIdOnPath(original_cid.asSlice(), initial_accept.path) catch false;
+        errdefer _ = self.retireConnectionIdOnPathAddress(original_cid.asSlice(), initial_accept.path.toUdp()) catch false;
 
-        try self.registerConnectionId(connection_id, server_cid.asSlice(), initial_accept.path, .{
+        try self.registerConnectionIdAddress(connection_id, server_cid.asSlice(), initial_accept.path.toUdp(), .{
             .sequence_number = if (server_cid.len == 0) null else 0,
             .active_migration_disabled = options.active_migration_disabled,
             .stateless_reset_token = options.stateless_reset_token,
         });
 
         return .{
-            .original_destination_route = try self.routeConnectionId(original_cid.asSlice(), initial_accept.path),
-            .server_source_route = try self.routeConnectionId(server_cid.asSlice(), initial_accept.path),
+            .original_destination_route = try self.routeConnectionIdAddress(original_cid.asSlice(), initial_accept.path.toUdp()),
+            .server_source_route = try self.routeConnectionIdAddress(server_cid.asSlice(), initial_accept.path.toUdp()),
         };
     }
 
@@ -811,10 +879,10 @@ pub const EndpointRouter = struct {
     }
 
     /// Remove a destination connection ID route bound to a UDP tuple.
-    pub fn retireConnectionIdOnPath(
+    pub fn retireConnectionIdOnPathAddress(
         self: *EndpointRouter,
         destination_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
     ) RouteError!bool {
         const cid = try ConnectionId.init(destination_connection_id);
         const index = if (cid.len == 0) self.findZeroLengthRouteIndex(path) else self.findRouteIndex(cid);
@@ -887,17 +955,17 @@ pub const EndpointRouter = struct {
     /// scope. The replacement route is installed first so the endpoint keeps at
     /// least one active route while applying `retire_prior_to`; the threshold
     /// must not exceed the replacement sequence number.
-    pub fn registerReplacementConnectionId(
+    pub fn registerReplacementConnectionIdAddress(
         self: *EndpointRouter,
         connection_id: u64,
         destination_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         sequence_number: u64,
         retire_prior_to: u64,
         options: ReplacementRouteOptions,
     ) RouteError!ReplacementResult {
         if (retire_prior_to > sequence_number) return error.InvalidConnectionIdSequence;
-        try self.registerConnectionId(connection_id, destination_connection_id, path, .{
+        try self.registerConnectionIdAddress(connection_id, destination_connection_id, path, .{
             .sequence_number = sequence_number,
             .active_migration_disabled = options.active_migration_disabled,
             .stateless_reset_token = options.stateless_reset_token,
@@ -917,11 +985,11 @@ pub const EndpointRouter = struct {
     /// making that route switch explicit in endpoint policy. It is only for
     /// Initial routes, so routes created from NEW_CONNECTION_ID sequence numbers
     /// are rejected.
-    pub fn switchInitialDestinationConnectionIdAfterRetry(
+    pub fn switchInitialDestinationConnectionIdAfterRetryAddress(
         self: *EndpointRouter,
         original_destination_connection_id: []const u8,
         retry_source_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
     ) RouteError!RouteResult {
         const original_cid = try ConnectionId.init(original_destination_connection_id);
         const retry_cid = try ConnectionId.init(retry_source_connection_id);
@@ -949,12 +1017,12 @@ pub const EndpointRouter = struct {
     /// path, this helper installs the preferred route for the same
     /// caller-owned connection handle and retires the previous active route.
     /// Socket I/O and path validation remain outside this in-memory policy.
-    pub fn commitPreferredAddressMigration(
+    pub fn commitPreferredAddressMigrationAddress(
         self: *EndpointRouter,
         current_destination_connection_id: []const u8,
-        current_path: Udp4Tuple,
+        current_path: UdpTuple,
         preferred_destination_connection_id: []const u8,
-        preferred_path: Udp4Tuple,
+        preferred_path: UdpTuple,
         preferred_stateless_reset_token: [stateless_reset_token_len]u8,
     ) RouteError!RouteResult {
         const current_cid = try ConnectionId.init(current_destination_connection_id);
@@ -965,7 +1033,7 @@ pub const EndpointRouter = struct {
         const current_route = self.routes.items[current_index];
         if (!current_route.path.eql(current_path)) return error.PathMismatch;
 
-        try self.registerConnectionId(current_route.connection_id, preferred_cid.asSlice(), preferred_path, .{
+        try self.registerConnectionIdAddress(current_route.connection_id, preferred_cid.asSlice(), preferred_path, .{
             .active_migration_disabled = current_route.active_migration_disabled,
             .stateless_reset_token = preferred_stateless_reset_token,
         });
@@ -980,11 +1048,11 @@ pub const EndpointRouter = struct {
     /// The caller is responsible for QUIC path validation and packet-number
     /// ordering. `current_path` must still match the route so a stale validation
     /// result cannot overwrite a newer path update.
-    pub fn updateRoutePath(
+    pub fn updateRoutePathAddress(
         self: *EndpointRouter,
         destination_connection_id: []const u8,
-        current_path: Udp4Tuple,
-        new_path: Udp4Tuple,
+        current_path: UdpTuple,
+        new_path: UdpTuple,
     ) RouteError!RouteResult {
         const cid = try ConnectionId.init(destination_connection_id);
         const index = self.findRouteIndexForPath(cid, current_path) orelse return error.UnknownConnectionId;
@@ -1006,10 +1074,10 @@ pub const EndpointRouter = struct {
     /// authenticated a protected datagram and proved it consumed a pending
     /// PATH_CHALLENGE. Zero-length CID routes cannot be updated by CID alone
     /// because their route identity is the UDP tuple.
-    pub fn updateRoutePathFromValidatedDatagram(
+    pub fn updateRoutePathFromValidatedDatagramAddress(
         self: *EndpointRouter,
         destination_connection_id: []const u8,
-        new_path: Udp4Tuple,
+        new_path: UdpTuple,
     ) RouteError!RouteResult {
         const cid = try ConnectionId.init(destination_connection_id);
         if (cid.len == 0) return error.AmbiguousConnectionId;
@@ -1028,9 +1096,9 @@ pub const EndpointRouter = struct {
     /// matched by their encoded DCID. Short-header datagrams are matched against
     /// registered reset-token CID prefixes, with ambiguity rejected instead of
     /// guessing.
-    pub fn statelessResetTokenForDatagram(
+    pub fn statelessResetTokenForDatagramAddress(
         self: *const EndpointRouter,
-        path: Udp4Tuple,
+        path: UdpTuple,
         datagram: []const u8,
     ) RouteError!?[stateless_reset_token_len]u8 {
         if (datagram.len < 1) return error.InvalidDatagram;
@@ -1058,14 +1126,14 @@ pub const EndpointRouter = struct {
     /// buffer. Active routes return null, and the generated reset must be
     /// shorter than the triggering datagram so endpoint code cannot create a
     /// reset loop with another endpoint.
-    pub fn writeStatelessResetForDatagram(
+    pub fn writeStatelessResetForDatagramAddress(
         self: *const EndpointRouter,
         out: []u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         triggering_datagram: []const u8,
         unpredictable_prefix: []const u8,
     ) RouteError!?[]const u8 {
-        const token = (try self.statelessResetTokenForDatagram(path, triggering_datagram)) orelse return null;
+        const token = (try self.statelessResetTokenForDatagramAddress(path, triggering_datagram)) orelse return null;
         if (unpredictable_prefix.len < packet.min_stateless_reset_datagram_len - stateless_reset_token_len) {
             return error.InvalidResetSize;
         }
@@ -1088,10 +1156,10 @@ pub const EndpointRouter = struct {
     /// reset packets that still belong to an active connection. Packets with
     /// the QUIC fixed bit cleared are ignored before routing or stateless reset
     /// handling.
-    pub fn handleDatagram(
+    pub fn handleDatagramAddress(
         self: *const EndpointRouter,
         out: []u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         datagram: []const u8,
         unpredictable_prefix: []const u8,
     ) RouteError!DatagramAction {
@@ -1103,14 +1171,14 @@ pub const EndpointRouter = struct {
             if (@intFromEnum(version) != 0) return .dropped;
         }
 
-        if (self.routeDatagram(path, datagram)) |route| {
+        if (self.routeDatagramAddress(path, datagram)) |route| {
             return .{ .routed = route };
         } else |err| switch (err) {
             error.UnknownConnectionId => {},
             else => return err,
         }
 
-        if (try self.writeStatelessResetForDatagram(out, path, datagram, unpredictable_prefix)) |reset| {
+        if (try self.writeStatelessResetForDatagramAddress(out, path, datagram, unpredictable_prefix)) |reset| {
             return .{ .stateless_reset = reset };
         }
         return .dropped;
@@ -1122,10 +1190,10 @@ pub const EndpointRouter = struct {
     /// this writes a Version Negotiation response before route lookup. Short
     /// headers, Version Negotiation packets, and supported versions continue
     /// through normal route/reset/drop handling.
-    pub fn handleDatagramWithVersionNegotiation(
+    pub fn handleDatagramWithVersionNegotiationAddress(
         self: *const EndpointRouter,
         out: []u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
         datagram: []const u8,
         unpredictable_prefix: []const u8,
         supported_versions: []const packet.Version,
@@ -1133,7 +1201,7 @@ pub const EndpointRouter = struct {
         if (try writeVersionNegotiationForUnsupportedVersion(out, datagram, supported_versions)) |response| {
             return .{ .version_negotiation = response };
         }
-        const action = try self.handleDatagram(out, path, datagram, unpredictable_prefix);
+        const action = try self.handleDatagramAddress(out, path, datagram, unpredictable_prefix);
         switch (action) {
             .dropped => {},
             else => return action,
@@ -1149,9 +1217,9 @@ pub const EndpointRouter = struct {
     /// Long headers carry an explicit DCID length. Short headers do not, so the
     /// router matches the datagram against registered CIDs and rejects ambiguous
     /// prefix matches.
-    pub fn routeDatagram(
+    pub fn routeDatagramAddress(
         self: *const EndpointRouter,
-        path: Udp4Tuple,
+        path: UdpTuple,
         datagram: []const u8,
     ) RouteError!RouteResult {
         if (datagram.len < 1) return error.InvalidDatagram;
@@ -1161,17 +1229,17 @@ pub const EndpointRouter = struct {
                 const version: packet.Version = @enumFromInt(std.mem.readInt(u32, datagram[1..5], .big));
                 if (@intFromEnum(version) != 0) return error.InvalidDatagram;
             }
-            return self.routeConnectionId(try peekLongDestinationConnectionId(datagram), path);
+            return self.routeConnectionIdAddress(try peekLongDestinationConnectionId(datagram), path);
         }
         if ((datagram[0] & 0x40) == 0) return error.InvalidDatagram;
         return self.routeShortDatagram(path, datagram);
     }
 
     /// Route a datagram when the destination connection ID is already known.
-    pub fn routeConnectionId(
+    pub fn routeConnectionIdAddress(
         self: *const EndpointRouter,
         destination_connection_id: []const u8,
-        path: Udp4Tuple,
+        path: UdpTuple,
     ) RouteError!RouteResult {
         const cid = try ConnectionId.init(destination_connection_id);
         const index = self.findRouteIndexForPath(cid, path) orelse return error.UnknownConnectionId;
@@ -1179,21 +1247,21 @@ pub const EndpointRouter = struct {
     }
 
     /// Return the committed UDP tuple for a registered destination connection ID.
-    pub fn currentRoutePath(
+    pub fn currentRoutePathAddress(
         self: *const EndpointRouter,
         destination_connection_id: []const u8,
-    ) RouteError!Udp4Tuple {
+    ) RouteError!UdpTuple {
         const cid = try ConnectionId.init(destination_connection_id);
         const index = self.findRouteIndex(cid) orelse return error.UnknownConnectionId;
         return self.routes.items[index].path;
     }
 
-    fn routeShortDatagram(self: *const EndpointRouter, path: Udp4Tuple, datagram: []const u8) RouteError!RouteResult {
+    fn routeShortDatagram(self: *const EndpointRouter, path: UdpTuple, datagram: []const u8) RouteError!RouteResult {
         const index = (try self.findShortRouteIndex(path, datagram)) orelse return error.UnknownConnectionId;
         return resultForRoute(self.routes.items[index], path);
     }
 
-    fn findShortRouteIndex(self: *const EndpointRouter, path: Udp4Tuple, datagram: []const u8) RouteError!?usize {
+    fn findShortRouteIndex(self: *const EndpointRouter, path: UdpTuple, datagram: []const u8) RouteError!?usize {
         if (datagram.len < 1) return error.InvalidDatagram;
         if ((datagram[0] & 0x40) == 0) return null;
         var match_index: ?usize = null;
@@ -1211,7 +1279,7 @@ pub const EndpointRouter = struct {
         return match_index;
     }
 
-    fn findRouteIndexForPath(self: *const EndpointRouter, cid: ConnectionId, path: Udp4Tuple) ?usize {
+    fn findRouteIndexForPath(self: *const EndpointRouter, cid: ConnectionId, path: UdpTuple) ?usize {
         if (cid.len == 0) return self.findZeroLengthRouteIndex(path);
         return self.findRouteIndex(cid);
     }
@@ -1232,7 +1300,7 @@ pub const EndpointRouter = struct {
         return null;
     }
 
-    fn findZeroLengthRouteIndex(self: *const EndpointRouter, path: Udp4Tuple) ?usize {
+    fn findZeroLengthRouteIndex(self: *const EndpointRouter, path: UdpTuple) ?usize {
         for (self.routes.items, 0..) |route, index| {
             if (route.destination_connection_id.len == 0 and route.path.eql(path)) return index;
         }
@@ -1284,6 +1352,177 @@ pub const EndpointRouter = struct {
         }
         return match_index;
     }
+    /// IPv4 compatibility wrappers: identical to their `...Address`
+    /// variants with the tuple widened from `Udp4Tuple`. Native IPv6
+    /// paths use the `...Address` forms directly.
+    pub fn handleDatagram(
+        self: *const EndpointRouter,
+        out: []u8,
+        path: Udp4Tuple,
+        datagram: []const u8,
+        unpredictable_prefix: []const u8,
+    ) RouteError!DatagramAction {
+        return self.handleDatagramAddress(out, path.toUdp(), datagram, unpredictable_prefix);
+    }
+
+    pub fn writeStatelessResetForDatagram(
+        self: *const EndpointRouter,
+        out: []u8,
+        path: Udp4Tuple,
+        triggering_datagram: []const u8,
+        unpredictable_prefix: []const u8,
+    ) RouteError!?[]const u8 {
+        return self.writeStatelessResetForDatagramAddress(out, path.toUdp(), triggering_datagram, unpredictable_prefix);
+    }
+
+    pub fn handleDatagramWithVersionNegotiation(
+        self: *const EndpointRouter,
+        out: []u8,
+        path: Udp4Tuple,
+        datagram: []const u8,
+        unpredictable_prefix: []const u8,
+        supported_versions: []const packet.Version,
+    ) RouteError!DatagramAction {
+        return self.handleDatagramWithVersionNegotiationAddress(out, path.toUdp(), datagram, unpredictable_prefix, supported_versions);
+    }
+
+    pub fn registerConnectionId(
+        self: *EndpointRouter,
+        connection_id: u64,
+        destination_connection_id: []const u8,
+        path: Udp4Tuple,
+        options: RouteOptions,
+    ) RouteError!void {
+        return self.registerConnectionIdAddress(connection_id, destination_connection_id, path.toUdp(), options);
+    }
+
+    pub fn registerClientInitialSourceConnectionId(
+        self: *EndpointRouter,
+        connection_id: u64,
+        client_source_connection_id: []const u8,
+        path: Udp4Tuple,
+        options: ClientInitialRouteOptions,
+    ) RouteError!RouteResult {
+        return self.registerClientInitialSourceConnectionIdAddress(
+            connection_id,
+            client_source_connection_id,
+            path.toUdp(),
+            options,
+        );
+    }
+
+    pub fn retireConnectionIdOnPath(
+        self: *EndpointRouter,
+        destination_connection_id: []const u8,
+        path: Udp4Tuple,
+    ) RouteError!bool {
+        return self.retireConnectionIdOnPathAddress(destination_connection_id, path.toUdp());
+    }
+
+    pub fn registerReplacementConnectionId(
+        self: *EndpointRouter,
+        connection_id: u64,
+        destination_connection_id: []const u8,
+        path: Udp4Tuple,
+        sequence_number: u64,
+        retire_prior_to: u64,
+        options: ReplacementRouteOptions,
+    ) RouteError!ReplacementResult {
+        return self.registerReplacementConnectionIdAddress(
+            connection_id,
+            destination_connection_id,
+            path.toUdp(),
+            sequence_number,
+            retire_prior_to,
+            options,
+        );
+    }
+
+    pub fn switchInitialDestinationConnectionIdAfterRetry(
+        self: *EndpointRouter,
+        original_destination_connection_id: []const u8,
+        retry_source_connection_id: []const u8,
+        path: Udp4Tuple,
+    ) RouteError!RouteResult {
+        return self.switchInitialDestinationConnectionIdAfterRetryAddress(
+            original_destination_connection_id,
+            retry_source_connection_id,
+            path.toUdp(),
+        );
+    }
+
+    pub fn commitPreferredAddressMigration(
+        self: *EndpointRouter,
+        current_destination_connection_id: []const u8,
+        current_path: Udp4Tuple,
+        preferred_destination_connection_id: []const u8,
+        preferred_path: Udp4Tuple,
+        preferred_stateless_reset_token: [stateless_reset_token_len]u8,
+    ) RouteError!RouteResult {
+        return self.commitPreferredAddressMigrationAddress(
+            current_destination_connection_id,
+            current_path.toUdp(),
+            preferred_destination_connection_id,
+            preferred_path.toUdp(),
+            preferred_stateless_reset_token,
+        );
+    }
+
+    pub fn updateRoutePath(
+        self: *EndpointRouter,
+        destination_connection_id: []const u8,
+        current_path: Udp4Tuple,
+        new_path: Udp4Tuple,
+    ) RouteError!RouteResult {
+        return self.updateRoutePathAddress(
+            destination_connection_id,
+            current_path.toUdp(),
+            new_path.toUdp(),
+        );
+    }
+
+    pub fn updateRoutePathFromValidatedDatagram(
+        self: *EndpointRouter,
+        destination_connection_id: []const u8,
+        new_path: Udp4Tuple,
+    ) RouteError!RouteResult {
+        return self.updateRoutePathFromValidatedDatagramAddress(destination_connection_id, new_path.toUdp());
+    }
+
+    pub fn statelessResetTokenForDatagram(
+        self: *const EndpointRouter,
+        path: Udp4Tuple,
+        datagram: []const u8,
+    ) RouteError!?[stateless_reset_token_len]u8 {
+        return self.statelessResetTokenForDatagramAddress(path.toUdp(), datagram);
+    }
+
+    pub fn routeDatagram(
+        self: *const EndpointRouter,
+        path: Udp4Tuple,
+        datagram: []const u8,
+    ) RouteError!RouteResult {
+        return self.routeDatagramAddress(path.toUdp(), datagram);
+    }
+
+    pub fn routeConnectionId(
+        self: *const EndpointRouter,
+        destination_connection_id: []const u8,
+        path: Udp4Tuple,
+    ) RouteError!RouteResult {
+        return self.routeConnectionIdAddress(destination_connection_id, path.toUdp());
+    }
+
+    /// IPv4 view of a registered route path. Returns `error.InvalidDatagram`
+    /// when the route is IPv6; use `currentRoutePathAddress` for the
+    /// family-neutral view.
+    pub fn currentRoutePath(
+        self: *const EndpointRouter,
+        destination_connection_id: []const u8,
+    ) RouteError!Udp4Tuple {
+        const neutral = try self.currentRoutePathAddress(destination_connection_id);
+        return neutral.to4() orelse error.InvalidDatagram;
+    }
 };
 
 /// Write an RFC 8999 Version Negotiation packet for an unsupported long header.
@@ -1326,7 +1565,7 @@ pub fn writeVersionNegotiationForUnsupportedVersion(
 /// Non-Initial long headers, unsupported versions, Version Negotiation packets,
 /// and short headers return `null`.
 pub fn peekInitialAcceptDatagram(
-    path: Udp4Tuple,
+    path: UdpTuple,
     datagram: []const u8,
     supported_versions: []const packet.Version,
 ) RouteError!?InitialAcceptResult {
@@ -1371,7 +1610,7 @@ pub fn peekInitialAcceptDatagram(
     if (reader.remainingLen() < encoded_packet_len) return error.InvalidDatagram;
 
     return .{
-        .path = path,
+        .path = path.to4() orelse return error.InvalidDatagram,
         .version = version,
         .original_destination_connection_id = datagram[dcid_start..][0..dcid_len],
         .source_connection_id = datagram[scid_start..][0..scid_len],
@@ -1401,7 +1640,7 @@ pub fn peekLongHeaderConnectionIds(datagram: []const u8) RouteError!LongHeaderCo
     };
 }
 
-fn resultForRoute(route: Route, path: Udp4Tuple) RouteError!RouteResult {
+fn resultForRoute(route: Route, path: UdpTuple) RouteError!RouteResult {
     const path_changed = !route.path.eql(path);
     if (path_changed and route.active_migration_disabled) return error.ActiveMigrationDisabled;
     return .{
@@ -1731,6 +1970,63 @@ test "EndpointRouter routes long and short datagrams by destination CID" {
     try std.testing.expect(!short_route.path_changed);
 }
 
+test "EndpointRouter routes native IPv6 tuples address-neutrally" {
+    const dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    var v6 = [_]u8{0x20} ** 16;
+    v6[15] = 0x02;
+    const local6 = UdpAddress.init6(v6, 4433);
+    var remote6 = v6;
+    remote6[15] = 0x09;
+    const path6 = UdpTuple{ .local = local6, .remote = UdpAddress.init6(remote6, 51000) };
+
+    var router = EndpointRouter.init(std.testing.allocator);
+    defer router.deinit();
+    try router.registerConnectionIdAddress(7, &dcid, path6, .{ .active_migration_disabled = true });
+
+    const long_datagram = [_]u8{
+        0xc0, 0x00, 0x00, 0x00, 0x01,
+        0x04, 0xaa, 0xbb, 0xcc, 0xdd,
+        0x00,
+    };
+    const route = try router.routeDatagramAddress(path6, &long_datagram);
+    try std.testing.expectEqual(@as(u64, 7), route.connection_id);
+    try std.testing.expect(!route.path_changed);
+
+    // A different IPv6 remote is a path change; with migration disabled
+    // it is refused, and a migration-enabled route moves.
+    var moved_remote6 = remote6;
+    moved_remote6[15] = 0x0a;
+    const moved_path = UdpTuple{ .local = local6, .remote = UdpAddress.init6(moved_remote6, 52000) };
+    try std.testing.expectError(
+        error.ActiveMigrationDisabled,
+        router.routeDatagramAddress(moved_path, &long_datagram),
+    );
+
+    const roam_dcid = [_]u8{ 0x0a, 0x0b, 0x0c, 0x0d };
+    try router.registerConnectionIdAddress(9, &roam_dcid, path6, .{});
+    const roam_datagram = [_]u8{
+        0xc0, 0x00, 0x00, 0x00, 0x01,
+        0x04, 0x0a, 0x0b, 0x0c, 0x0d,
+        0x00,
+    };
+    _ = try router.updateRoutePathAddress(&roam_dcid, path6, moved_path);
+    const moved_route = try router.routeDatagramAddress(moved_path, &roam_datagram);
+    try std.testing.expectEqual(@as(u64, 9), moved_route.connection_id);
+    try std.testing.expect(!moved_route.path_changed);
+
+    // The IPv4 view of an IPv6 route is unavailable; the neutral view is
+    // exact, and a widening v4 tuple is lossless through the same table.
+    try std.testing.expectError(error.InvalidDatagram, router.currentRoutePath(&roam_dcid));
+    const neutral = try router.currentRoutePathAddress(&roam_dcid);
+    try std.testing.expect(neutral.eql(moved_path));
+
+    const dcid4 = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
+    const path4 = testPath(50_000);
+    try router.registerConnectionId(8, &dcid4, path4, .{});
+    try std.testing.expect((try router.currentRoutePath(&dcid4)).eql(path4));
+    try std.testing.expect((try router.currentRoutePathAddress(&dcid4)).eql(path4.toUdp()));
+}
+
 test "Endpoint version negotiation response swaps connection IDs" {
     const supported_versions = [_]packet.Version{ .v1, .v2 };
     const unsupported_version: packet.Version = @enumFromInt(0xface_b00c);
@@ -2014,7 +2310,7 @@ test "Endpoint handleDatagram classifies supported unknown Initial for server ac
     var router = EndpointRouter.init(std.testing.allocator);
     defer router.deinit();
 
-    const accept = (try peekInitialAcceptDatagram(path, &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
+    const accept = (try peekInitialAcceptDatagram(path.toUdp(), &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(packet.Version.v1, accept.version);
     try std.testing.expect(accept.path.eql(path));
     try std.testing.expectEqualSlices(u8, &original_dcid, accept.original_destination_connection_id);
@@ -2141,7 +2437,7 @@ test "EndpointRouter rejects accepted Initial route registration without partial
     var router = EndpointRouter.init(std.testing.allocator);
     defer router.deinit();
 
-    const accept = (try peekInitialAcceptDatagram(path, &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
+    const accept = (try peekInitialAcceptDatagram(path.toUdp(), &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
     try router.registerConnectionId(1, &duplicate_scid, path, .{});
     try std.testing.expectError(
         error.DuplicateConnectionId,
@@ -2188,7 +2484,7 @@ test "EndpointRouter rolls back accepted Initial routes when capacity is exhaust
     });
     defer router.deinit();
 
-    const accept = (try peekInitialAcceptDatagram(path, &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
+    const accept = (try peekInitialAcceptDatagram(path.toUdp(), &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
     try std.testing.expectError(
         error.RouteCapacityReached,
         router.registerAcceptedInitialConnectionIds(17, accept, &server_scid, .{}),
@@ -2256,19 +2552,19 @@ test "Endpoint Initial accept ignores non-Initial and rejects malformed Initial 
         0x01,
     };
 
-    try std.testing.expect((try peekInitialAcceptDatagram(path, &short_header, &supported_versions)) == null);
-    try std.testing.expect((try peekInitialAcceptDatagram(path, &version_negotiation, &supported_versions)) == null);
-    try std.testing.expect((try peekInitialAcceptDatagram(path, &handshake, &supported_versions)) == null);
-    try std.testing.expect((try peekInitialAcceptDatagram(path, &unsupported_initial, &supported_versions)) == null);
-    try std.testing.expect((try peekInitialAcceptDatagram(path, &fixed_bit_clear_initial, &supported_versions)) == null);
-    try std.testing.expectError(error.InvalidDatagram, peekInitialAcceptDatagram(path, &truncated_initial, &supported_versions));
-    try std.testing.expectError(error.InvalidDatagram, peekInitialAcceptDatagram(path, &bad_length_initial, &supported_versions));
-    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path, &bad_length_initial, &[_]packet.Version{}));
+    try std.testing.expect((try peekInitialAcceptDatagram(path.toUdp(), &short_header, &supported_versions)) == null);
+    try std.testing.expect((try peekInitialAcceptDatagram(path.toUdp(), &version_negotiation, &supported_versions)) == null);
+    try std.testing.expect((try peekInitialAcceptDatagram(path.toUdp(), &handshake, &supported_versions)) == null);
+    try std.testing.expect((try peekInitialAcceptDatagram(path.toUdp(), &unsupported_initial, &supported_versions)) == null);
+    try std.testing.expect((try peekInitialAcceptDatagram(path.toUdp(), &fixed_bit_clear_initial, &supported_versions)) == null);
+    try std.testing.expectError(error.InvalidDatagram, peekInitialAcceptDatagram(path.toUdp(), &truncated_initial, &supported_versions));
+    try std.testing.expectError(error.InvalidDatagram, peekInitialAcceptDatagram(path.toUdp(), &bad_length_initial, &supported_versions));
+    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path.toUdp(), &bad_length_initial, &[_]packet.Version{}));
 
     const zero_version = [_]packet.Version{@enumFromInt(0)};
-    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path, &bad_length_initial, &zero_version));
+    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path.toUdp(), &bad_length_initial, &zero_version));
     const reserved_version = [_]packet.Version{@enumFromInt(0x0a0a0a0a)};
-    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path, &bad_length_initial, &reserved_version));
+    try std.testing.expectError(error.InvalidVersionList, peekInitialAcceptDatagram(path.toUdp(), &bad_length_initial, &reserved_version));
 }
 
 test "EndpointRouter reports path changes and active migration rejection" {
@@ -2753,7 +3049,7 @@ test "EndpointRouter rejects unknown duplicate ambiguous and malformed routes" {
     try std.testing.expectError(error.AmbiguousConnectionId, router.routeDatagram(path, &[_]u8{ 0x40, 0xaa, 0xbb, 0x00 }));
     try std.testing.expectError(error.InvalidDatagram, router.routeDatagram(path, &[_]u8{0xc0}));
     try std.testing.expectError(error.InvalidDatagram, router.routeDatagram(path, &[_]u8{ 0x00, 0xaa, 0xbb, 0x00 }));
-    try std.testing.expectEqual(@as(?usize, null), try router.findShortRouteIndex(path, &[_]u8{ 0x00, 0xaa, 0xbb, 0x00 }));
+    try std.testing.expectEqual(@as(?usize, null), try router.findShortRouteIndex(path.toUdp(), &[_]u8{ 0x00, 0xaa, 0xbb, 0x00 }));
 
     var too_long: [max_connection_id_len + 1]u8 = undefined;
     @memset(&too_long, 0);
@@ -2783,7 +3079,7 @@ test "EndpointRouter rejects ambiguous stateless reset token prefixes" {
     try std.testing.expectEqual(@as(?[stateless_reset_token_len]u8, null), try router.statelessResetTokenForDatagram(testPath(50_000), &[_]u8{ 0x40, 0xcc, 0x00 }));
     try std.testing.expectError(error.InvalidDatagram, router.statelessResetTokenForDatagram(testPath(50_000), &[_]u8{}));
     try std.testing.expectEqual(@as(usize, 2), router.statelessResetTokenCount());
-    try std.testing.expectEqual(@as(?usize, null), try router.findShortRouteIndex(testPath(50_000), &[_]u8{ 0x40, 0xaa, 0xbb, 0x00 }));
+    try std.testing.expectEqual(@as(?usize, null), try router.findShortRouteIndex(testPath(50_000).toUdp(), &[_]u8{ 0x40, 0xaa, 0xbb, 0x00 }));
     try std.testing.expectEqual(@as(usize, 0), router.routeCount());
 }
 
