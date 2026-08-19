@@ -125,5 +125,7 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
   浏览器路径是明文 `http://127.0.0.1:PORT/`；HTTP/3 路径需要证书，本地用内置
   loopback 证书时用 `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`），生产用
   `--cert` / `--key`（P-256 PEM）。
+  HTTP/1.1 响应带 `Alt-Svc: h3=":PORT"; ma=86400`，浏览器在信任该源证书时会
+  升级到 HTTP/3；明文 `http://` 源因 HTTP/3 必须走 TLS，会停留在 HTTP/1.1。
 - `bench` 以 insecure 方式连接 `echo --server`，测的是传输路径而非证书链路。
 - 客户端子命令默认 10s 超时（`--timeout-ms`），连不上或服务端卡住会直接失败，不挂死。

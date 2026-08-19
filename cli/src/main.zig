@@ -957,7 +957,7 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
 /// HTTP/1.1 fallback server so browsers can open the same static content over
 /// TCP while the QUIC listener keeps serving HTTP/3. Mirrors how real H3 sites
 /// expose both listeners and let browsers upgrade via Alt-Svc.
-fn serveHttp11(tcp_server: *std.Io.net.Server) std.Io.Cancelable!void {
+fn serveHttp11(tcp_server: *std.Io.net.Server, port: u16) std.Io.Cancelable!void {
     const io = g_io;
     var group: std.Io.Group = .init;
     defer group.cancel(io);
@@ -969,7 +969,7 @@ fn serveHttp11(tcp_server: *std.Io.net.Server) std.Io.Cancelable!void {
                 return;
             },
         };
-        group.concurrent(io, handleHttp11Connection, .{stream}) catch |err| {
+        group.concurrent(io, handleHttp11Connection, .{ stream, port }) catch |err| {
             std.debug.print("serve: HTTP/1.1 handler spawn failed: {s}\n", .{@errorName(err)});
             stream.close(io);
             continue;
@@ -977,7 +977,7 @@ fn serveHttp11(tcp_server: *std.Io.net.Server) std.Io.Cancelable!void {
     }
 }
 
-fn handleHttp11Connection(stream: std.Io.net.Stream) void {
+fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16) void {
     const io = g_io;
     defer {
         var copy = stream;
@@ -997,7 +997,7 @@ fn handleHttp11Connection(stream: std.Io.net.Stream) void {
                 return;
             },
         };
-        handleHttp11Request(&request) catch |err| switch (err) {
+        handleHttp11Request(&request, port) catch |err| switch (err) {
             else => {
                 std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
                 return;
@@ -1006,7 +1006,7 @@ fn handleHttp11Connection(stream: std.Io.net.Stream) void {
     }
 }
 
-fn handleHttp11Request(request: *std.http.Server.Request) !void {
+fn handleHttp11Request(request: *std.http.Server.Request, port: u16) !void {
     const target = request.head.target;
     const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
     const decoded = quicz.h3_request.DecodedRequest{
@@ -1033,6 +1033,14 @@ fn handleHttp11Request(request: *std.http.Server.Request) !void {
         if (header_count >= header_buf.len) break;
         header_buf[header_count] = .{ .name = h.name, .value = h.value };
         header_count += 1;
+    }
+    var alt_svc_buf: [64]u8 = undefined;
+    const alt_svc = std.fmt.bufPrint(&alt_svc_buf, "h3=\":{d}\"; ma=86400", .{port}) catch null;
+    if (alt_svc) |as| {
+        if (header_count < header_buf.len) {
+            header_buf[header_count] = .{ .name = "alt-svc", .value = as };
+            header_count += 1;
+        }
     }
 
     const status: std.http.Status = @enumFromInt(@as(u10, @intCast(h3resp.status)));
@@ -1092,7 +1100,7 @@ fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
         return err;
     };
     defer tcp_server.deinit(io);
-    var tcp_serve_task = io.concurrent(serveHttp11, .{&tcp_server}) catch |err| {
+    var tcp_serve_task = io.concurrent(serveHttp11, .{ &tcp_server, port }) catch |err| {
         std.debug.print("serve: failed to start HTTP/1.1 serve loop: {s}\n", .{@errorName(err)});
         return err;
     };
