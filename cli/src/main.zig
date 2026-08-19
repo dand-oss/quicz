@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+//!   quicz h3 <url> [-k] [-G] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [--max-filesize BYTES] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
 //!   quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -83,7 +83,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+        \\  quicz h3 <url> [-k] [-G] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [--max-filesize BYTES] [-X METHOD] [-A UA] [-u USER:PASS] [-e URL] [-b COOKIE] [-T FILE] [-w FORMAT] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
         \\  quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -333,6 +333,7 @@ const H3Job = struct {
     resolve: []const ResolveOverride,
     connect_timeout_ms: ?u64,
     write_out: ?[]const u8,
+    max_filesize: ?usize,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -518,6 +519,13 @@ fn sameOrigin(host_a: []const u8, port_a: u16, host_b: []const u8, port_b: u16) 
     return port_a == port_b and std.mem.eql(u8, host_a, host_b);
 }
 
+fn appendQuery(allocator: std.mem.Allocator, url: []const u8, query: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, url, '?') != null) {
+        return std.fmt.allocPrint(allocator, "{s}&{s}", .{ url, query });
+    }
+    return std.fmt.allocPrint(allocator, "{s}?{s}", .{ url, query });
+}
+
 fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     const job: *const H3Job = @ptrCast(@alignCast(ctx));
     const t0 = std.Io.Timestamp.now(io, .awake);
@@ -625,6 +633,12 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
         if (g_verbose) std.debug.print("> {s} {s} HTTP/3\n", .{ job.method, parsed.path });
         const response = try h3cli.?.receiveResponse(sid);
 
+        if (job.max_filesize) |limit| {
+            if (response.body) |b| {
+                if (b.len > limit) return error.MaxFilesizeExceeded;
+            }
+        }
+
         if (job.follow_redirects and isRedirectStatus(response.status)) {
             if (findHeader(response.headers, "location")) |location| {
                 if (redirects_left == 0) return error.TooManyRedirects;
@@ -701,7 +715,9 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
 }
 
 fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
-    const url = try nextArg(args);
+    var url = try nextArg(args);
+    var owned_url: ?[]u8 = null;
+    defer if (owned_url) |u| allocator.free(u);
     var insecure = false;
     var method: []const u8 = "GET";
     var body: ?[]const u8 = null;
@@ -723,9 +739,11 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     var owned_body: ?[]u8 = null;
     defer if (owned_body) |b| allocator.free(b);
     var data_given = false;
+    var get_mode = false;
     var user_agent: ?[]const u8 = null;
     var upload_given = false;
     var write_out: ?[]const u8 = null;
+    var max_filesize: ?usize = null;
     var auth_buf: [128]u8 = undefined;
     var connect_timeout_ms: ?u64 = null;
     var resolves = std.ArrayList(ResolveOverride).empty;
@@ -734,6 +752,8 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
             insecure = true;
+        } else if (std.mem.eql(u8, a, "-G") or std.mem.eql(u8, a, "--get")) {
+            get_mode = true;
         } else if (std.mem.eql(u8, a, "-v") or std.mem.eql(u8, a, "--verbose")) {
             g_verbose = true;
         } else if (std.mem.eql(u8, a, "-f") or std.mem.eql(u8, a, "--fail")) {
@@ -752,6 +772,8 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             dump_headers_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--max-redirects")) {
             max_redirects = try std.fmt.parseInt(usize, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--max-filesize")) {
+            max_filesize = try std.fmt.parseInt(usize, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-o") or std.mem.eql(u8, a, "--output")) {
             output_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "-X")) {
@@ -816,6 +838,19 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         }
     }
 
+    if (get_mode) {
+        // `-G` turns `--data` into a URL query and keeps the method GET.
+        method = "GET";
+        method_explicit = true;
+        if (body) |query| {
+            const combined = try appendQuery(allocator, url, query);
+            owned_url = combined;
+            url = combined;
+            body = null;
+            data_given = false;
+        }
+    }
+
     try applyH3Defaults(allocator, &method, method_explicit, data_given, &headers, user_agent, upload_given);
 
     var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
@@ -854,6 +889,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .resolve = resolves.items,
         .connect_timeout_ms = connect_timeout_ms,
         .write_out = write_out,
+        .max_filesize = max_filesize,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
@@ -1050,12 +1086,13 @@ fn echoResponse(req: quicz.h3_request.DecodedRequest, is_head: bool) quicz.h3_re
 
 fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
     const is_head = std.mem.eql(u8, req.method, "HEAD");
-    if (std.mem.eql(u8, req.path, "/echo")) return echoResponse(req, is_head);
+    const req_path = if (std.mem.indexOfScalar(u8, req.path, '?')) |q| req.path[0..q] else req.path;
+    if (std.mem.eql(u8, req_path, "/echo")) return echoResponse(req, is_head);
     if (!std.mem.eql(u8, req.method, "GET") and !is_head) {
         return .{ .status = 405, .extra_headers = &.{.{ .name = "allow", .value = "GET, HEAD" }}, .body = "method not allowed" };
     }
 
-    if (std.mem.eql(u8, req.path, "/metrics")) {
+    if (std.mem.eql(u8, req_path, "/metrics")) {
         if (g_server) |srv| {
             const m = srv.metricsSnapshot();
             const body = std.fmt.bufPrint(&g_metrics_buf, "connections={d}\nsent={d}\nreceived={d}\nin_flight={d}\nsrtt_us={d}\nloss={d}\nretransmitted={d}\n", .{
@@ -1073,7 +1110,7 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
         return .{ .status = 503, .body = "server not ready" };
     }
 
-    const rel = sanitizeRelPath(req.path) catch return .{ .status = 400, .body = "bad request" };
+    const rel = sanitizeRelPath(req_path) catch return .{ .status = 400, .body = "bad request" };
     const primary = if (rel.len == 0) g_index_name else rel;
     if (readFileBody(primary)) |data| {
         if (is_head) {
@@ -1562,6 +1599,16 @@ test "parse resolve spec" {
     try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, o.addr);
     try std.testing.expectError(error.BadResolveSpec, parseResolveSpec("example.com:443"));
     try std.testing.expectError(error.BadResolveSpec, parseResolveSpec(":443:127.0.0.1"));
+}
+
+test "append query" {
+    const allocator = std.testing.allocator;
+    const a = try appendQuery(allocator, "https://x/", "a=1");
+    defer allocator.free(a);
+    try std.testing.expectEqualStrings("https://x/?a=1", a);
+    const b = try appendQuery(allocator, "https://x/?q=1", "a=1");
+    defer allocator.free(b);
+    try std.testing.expectEqualStrings("https://x/?q=1&a=1", b);
 }
 
 test "apply h3 defaults" {

@@ -42,6 +42,8 @@ quicz h3 https://host/api -u 'user:pass'           # HTTP Basic 认证
 quicz h3 https://host/api -e 'https://ref.example/' # Referer 头
 quicz h3 https://host/api -b 'sid=abc123'          # Cookie 头
 quicz h3 https://host/api -T ./file.bin            # PUT 上传（octet-stream）
+quicz h3 https://host/api -G -d 'a=1&b=2'          # GET，data 拼到 URL query
+quicz h3 https://host/api --max-filesize 100000    # 响应体超限则失败
 quicz h3 https://host/api --resolve host:443:127.0.0.1   # 强制 host 指向指定 IPv4
 quicz h3 https://host/api -v                      # verbose：DNS/连接/重定向追踪
 quicz h3 https://host/api --max-time 30            # 整个请求超时（秒）
@@ -119,6 +121,8 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
   `-b` / `--cookie` 设置 `Referer` 与 `Cookie` 头。
 - `-T` / `--upload-file FILE` 以 PUT 上传文件内容作为请求体，默认
   `content-type: application/octet-stream`（可覆盖）。
+- `-G` / `--get` 把 `--data` 拼到 URL query 且保持 GET；
+  `--max-filesize BYTES` 在响应体超限时使请求失败。
 - `-w` / `--write-out FORMAT` 输出 curl 风格变量到 stdout，支持
   `%{http_code}` `%{url_effective}` `%{time_total_ms}` `%{time_connect_ms}`
   `%{size_download}` `%{num_redirects}`；支持 `\n`/`\r`/`\t` 转义。
