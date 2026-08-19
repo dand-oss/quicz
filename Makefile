@@ -34,6 +34,10 @@ install: # Build (ReleaseFast) and install the quicz CLI to $(PREFIX)/bin (PREFI
 	cd $(CLI_DIR) && $(ZIG) build -Doptimize=ReleaseFast --prefix $(PREFIX)
 	@echo "installed: $(PREFIX)/bin/quicz"
 
+.PHONY: install-local
+install-local: # Install the quicz CLI to $(HOME)/.local/bin (no sudo needed)
+	$(MAKE) install PREFIX="$(HOME)/.local"
+
 .PHONY: uninstall
 uninstall: # Remove the installed quicz CLI from $(PREFIX)/bin
 	rm -f $(PREFIX)/bin/quicz
