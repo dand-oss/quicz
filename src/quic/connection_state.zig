@@ -64,6 +64,15 @@ pub const PendingPathChallenge = struct {
     path: ?@import("endpoint.zig").UdpTuple = null,
 };
 
+/// Pending PATH_RESPONSE data awaiting transmission, bound to the
+/// arrival path of the challenge that requested it, so egress can send
+/// the response on that exact path. Null marks a legacy unbound
+/// response.
+pub const PendingPathResponse = struct {
+    data: [8]u8,
+    path: ?@import("endpoint.zig").UdpTuple = null,
+};
+
 /// PATH_CHALLENGE data sent and awaiting response.
 pub const OutstandingPathChallenge = struct {
     data: [8]u8,

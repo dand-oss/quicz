@@ -54950,8 +54950,8 @@ test "duplicate PATH_CHALLENGE data queues one pending PATH_RESPONSE" {
 
     try server.processDatagram(20 * ms, challenge_out.getWritten());
     try std.testing.expectEqual(@as(usize, 2), server.pending_path_responses.items.len);
-    try std.testing.expectEqualSlices(u8, &first_challenge, &server.pending_path_responses.items[0]);
-    try std.testing.expectEqualSlices(u8, &second_challenge, &server.pending_path_responses.items[1]);
+    try std.testing.expectEqualSlices(u8, &first_challenge, &server.pending_path_responses.items[0].data);
+    try std.testing.expectEqualSlices(u8, &second_challenge, &server.pending_path_responses.items[1].data);
     try std.testing.expectEqual(@as(?u64, 0), server.pending_ack_largest);
 }
 
@@ -65763,4 +65763,100 @@ test "legacy unbound challenge never authorizes route mutation" {
     const route = try lifecycle.routeDatagram(old_path, dg);
     try std.testing.expectEqual(@as(u64, 94), route.connection_id);
     try std.testing.expect(!route.path_changed);
+}
+test "path-bound challenge survives timeout requeue with its candidate path" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = server_send_secret,
+        .peer = client_send_secret,
+    });
+
+    const data = [_]u8{ 0x21, 0x43, 0x65, 0x87, 0x78, 0x56, 0x34, 0x12 };
+    try server.sendPathChallengeForPath(data, candidate.toUdp());
+    const packetized = (try server.pollProtectedShortDatagram(1, &server_dcid, protection.deriveForCipher(server_send_secret, .v1, .aes_128_gcm))) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(packetized);
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCount());
+    try std.testing.expectEqual(@as(usize, 1), server.outstandingPathChallengeCountForPath(candidate.toUdp()));
+
+    // Advance past the challenge retry window and collect the timed-out
+    // entry: the requeued pending challenge must STILL carry the candidate
+    // UDP path, so egress can tag the retransmission correctly.
+    try server.checkPathValidationTimeouts(5 * std.time.ns_per_s);
+    try std.testing.expectEqual(@as(usize, 0), server.outstandingPathChallengeCount());
+    try std.testing.expectEqual(@as(usize, 1), server.pendingPathChallengeCount());
+    const requeued = server.pending_path_challenges.items[0];
+    try std.testing.expect(requeued.path != null);
+    try std.testing.expect(requeued.path.?.eql(candidate.toUdp()));
+}
+
+test "PATH_RESPONSE dedup is path-bound: same data on a second path queues a second response" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+    const peer_keys = protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm);
+
+    const path_a = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_010),
+    };
+    const path_b = endpoint.Udp4Tuple{
+        .local = path_a.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 3 }, 50_011),
+    };
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{ .local = server_send_secret, .peer = client_send_secret });
+
+    // Three distinct datagrams (fresh packet numbers) carrying the SAME
+    // challenge data: from path A, path B, then path A again.
+    const data = [_]u8{ 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8 };
+    var crafted: [3][]u8 = undefined;
+    for (0..3) |i| {
+        var cb: [64]u8 = undefined;
+        var cw = buffer.fixedWriter(&cb);
+        try frame.encodeFrame(cw.writer(), .{ .path_challenge = .{ .data = data } });
+        try cw.writer().writeAll(&[_]u8{0} ** 12);
+        const pn: u64 = i + 1;
+        crafted[i] = try protection.protectShortPacketAes128(std.testing.allocator, .{
+            .dcid = &server_dcid,
+            .spin_bit = false,
+            .key_phase = false,
+            .packet_number = pn,
+        }, try packet.encodePacketNumberForHeader(pn, null), peer_keys, cw.getWritten());
+    }
+    defer for (crafted) |dg| std.testing.allocator.free(dg);
+
+    // Same challenge data from path A, then path B: TWO pending
+    // responses, each bound to its own arrival path.
+    server.setReceivePathHint(path_a.toUdp());
+    try server.processProtectedShortDatagram(2, peer_keys, server_dcid.len, crafted[0]);
+    server.setReceivePathHint(path_b.toUdp());
+    try server.processProtectedShortDatagram(3, peer_keys, server_dcid.len, crafted[1]);
+    try std.testing.expectEqual(@as(usize, 2), server.pending_path_responses.items.len);
+    try std.testing.expect(server.pending_path_responses.items[0].path != null);
+    try std.testing.expect(server.pending_path_responses.items[0].path.?.eql(path_a.toUdp()));
+    try std.testing.expect(server.pending_path_responses.items[1].path.?.eql(path_b.toUdp()));
+
+    // A third copy from path A is the SAME {data, path} pair: suppressed.
+    server.setReceivePathHint(path_a.toUdp());
+    try server.processProtectedShortDatagram(4, peer_keys, server_dcid.len, crafted[2]);
+    server.setReceivePathHint(null);
+    try std.testing.expectEqual(@as(usize, 2), server.pending_path_responses.items.len);
 }

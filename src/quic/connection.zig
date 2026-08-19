@@ -172,6 +172,7 @@ const PendingMaxFrame = connection_state.PendingMaxFrame;
 const PendingCloseFrame = connection_state.PendingCloseFrame;
 const PeerCloseSnapshot = connection_state.PeerCloseSnapshot;
 const PendingPathChallenge = connection_state.PendingPathChallenge;
+const PendingPathResponse = connection_state.PendingPathResponse;
 const OutstandingPathChallenge = connection_state.OutstandingPathChallenge;
 const SentPacket = connection_state.SentPacket;
 const RttEstimateSnapshot = connection_state.RttEstimateSnapshot;
@@ -703,7 +704,7 @@ pub const Connection = struct {
     next_peer_packet_number: u64,
     pending_ack_largest: ?u64,
     received_packet_ranges: ReceivedPacketRanges,
-    pending_path_responses: std.ArrayList([8]u8),
+    pending_path_responses: std.ArrayList(PendingPathResponse),
     pending_path_challenges: std.ArrayList(PendingPathChallenge),
     outstanding_path_challenges: std.ArrayList(OutstandingPathChallenge),
     /// Arrival path of the datagram currently being processed, when the
@@ -5780,7 +5781,7 @@ pub const Connection = struct {
     ) Error!BuiltProtectedShortPacket {
         if (self.next_packet_number > max_quic_varint) return error.Internal;
 
-        const response_data = self.pending_path_responses.items[0];
+        const response_data = self.pending_path_responses.items[0].data;
         const response_encoded_len = pathResponseFrameWireLen();
         var encoded_frame_len = response_encoded_len;
         if (ack_to_send) |ack| {
@@ -9465,6 +9466,7 @@ pub const Connection = struct {
             self.pending_path_challenges.appendAssumeCapacity(.{
                 .data = challenge.data,
                 .transmissions = challenge.transmissions,
+                .path = challenge.path,
             });
             _ = self.outstanding_path_challenges.orderedRemove(i);
         }
@@ -9582,7 +9584,7 @@ pub const Connection = struct {
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
 
-        const response_data = self.pending_path_responses.items[0];
+        const response_data = self.pending_path_responses.items[0].data;
         var out = buffer.fixedWriter(out_buf[0..encoded_len]);
         if (include_ack) {
             frame.encodeFrame(out.writer(), .{ .ack = ack_to_send.? }) catch |err| switch (err) {
@@ -10814,11 +10816,24 @@ pub const Connection = struct {
         self.peer_max_streams_uni = @max(self.peer_max_streams_uni, max_streams.maximum_streams);
     }
 
+    fn pathTupleEqual(a: ?endpoint.UdpTuple, b: ?endpoint.UdpTuple) bool {
+        if (a == null and b == null) return true;
+        if (a == null or b == null) return false;
+        return a.?.eql(b.?);
+    }
+
     fn receivePathChallengeFrame(self: *Connection, path_challenge: frame.PathChallengeFrame) Error!void {
-        for (self.pending_path_responses.items) |response_data| {
-            if (std.mem.eql(u8, &response_data, &path_challenge.data)) return;
+        // Deduplication is over the FULL {data, path} pair: the same
+        // challenge bytes arriving on a second path still deserve a
+        // response on that path.
+        for (self.pending_path_responses.items) |response| {
+            if (!std.mem.eql(u8, &response.data, &path_challenge.data)) continue;
+            if (pathTupleEqual(response.path, self.receive_path_hint)) return;
         }
-        self.pending_path_responses.append(self.allocator, path_challenge.data) catch return error.OutOfMemory;
+        self.pending_path_responses.append(self.allocator, .{
+            .data = path_challenge.data,
+            .path = self.receive_path_hint,
+        }) catch return error.OutOfMemory;
     }
 
     fn pathResponseChallengeIndex(self: *Connection, data: [8]u8) ?usize {
