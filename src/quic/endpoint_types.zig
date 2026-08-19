@@ -163,6 +163,9 @@ pub const EndpointPathValidatedShortDatagramResult = struct {
     route: endpoint.RouteResult,
     /// Route after endpoint path update, present only when validation completed.
     updated_route: ?endpoint.RouteResult,
+    /// True when this call queued exactly one PATH_CHALLENGE bound to
+    /// the changed path, from the caller-supplied option bytes.
+    path_challenge_queued: bool = false,
 };
 
 /// Endpoint result from servicing a 1-RTT recovery timer and polling a probe.

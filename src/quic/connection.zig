@@ -172,6 +172,7 @@ const PendingMaxFrame = connection_state.PendingMaxFrame;
 const PendingCloseFrame = connection_state.PendingCloseFrame;
 const PeerCloseSnapshot = connection_state.PeerCloseSnapshot;
 const PendingPathChallenge = connection_state.PendingPathChallenge;
+const PendingPathResponse = connection_state.PendingPathResponse;
 const OutstandingPathChallenge = connection_state.OutstandingPathChallenge;
 const SentPacket = connection_state.SentPacket;
 const RttEstimateSnapshot = connection_state.RttEstimateSnapshot;
@@ -306,6 +307,10 @@ const BuiltProtectedShortPacket = struct {
     consume_crypto: bool = false,
     consume_path_response: bool = false,
     consume_path_challenge: bool = false,
+    /// UDP path of the path-validation frame this packet carries
+    /// (PATH_CHALLENGE or PATH_RESPONSE bound to a candidate path).
+    /// Null for every other emission — the committed route applies.
+    emitted_path: ?endpoint.UdpTuple = null,
     consume_retire_connection_id: bool = false,
     new_connection_id_index: ?usize = null,
     consume_new_token: bool = false,
@@ -703,7 +708,7 @@ pub const Connection = struct {
     next_peer_packet_number: u64,
     pending_ack_largest: ?u64,
     received_packet_ranges: ReceivedPacketRanges,
-    pending_path_responses: std.ArrayList([8]u8),
+    pending_path_responses: std.ArrayList(PendingPathResponse),
     pending_path_challenges: std.ArrayList(PendingPathChallenge),
     outstanding_path_challenges: std.ArrayList(OutstandingPathChallenge),
     /// Arrival path of the datagram currently being processed, when the
@@ -4409,6 +4414,30 @@ pub const Connection = struct {
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
     ) Error!?[]u8 {
+        var egress_path: ?endpoint.UdpTuple = null;
+        return self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+            now_nanos,
+            dcid,
+            keys,
+            key_phase,
+            &egress_path,
+        );
+    }
+
+    /// `pollProtectedShortDatagramWithKeyPhase` with the emitted
+    /// datagram's path-validation binding reported through
+    /// `egress_out`: the candidate UDP path when the packet carries a
+    /// bound PATH_CHALLENGE or PATH_RESPONSE, null for every other
+    /// emission (the committed route applies).
+    pub fn pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+        self: *Connection,
+        now_nanos: i64,
+        dcid: []const u8,
+        keys: protection.Aes128PacketProtectionKeys,
+        key_phase: bool,
+        egress_out: *?endpoint.UdpTuple,
+    ) Error!?[]u8 {
+        egress_out.* = null;
         self.expireIdleState(now_nanos);
         self.expireCloseState(now_nanos);
         if (self.pending_close != null) {
@@ -4458,6 +4487,7 @@ pub const Connection = struct {
             const srtt: u64 = self.recovery_state.smoothed_rtt_ns;
             self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
+        egress_out.* = built.emitted_path;
         return built.datagram;
     }
 
@@ -4491,6 +4521,37 @@ pub const Connection = struct {
     ) Error!?[]u8 {
         const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
         return self.pollProtectedShortDatagramWithKeyPhaseState(now_nanos, dcid, &state);
+    }
+
+    /// One protected 1-RTT datagram together with the egress path
+    /// binding of the path-validation frame it actually carries.
+    /// `path_override == null` means the committed route applies.
+    pub const ShortEgressDatagram = struct {
+        datagram: []u8,
+        path_override: ?endpoint.UdpTuple,
+    };
+
+    /// Atomic egress poll: the datagram AND the UDP path it must be
+    /// sent on, selected from the frame the packet actually carries —
+    /// never inferred from the existence of pending path state.
+    pub fn pollProtectedShortDatagramWithInstalledKeysAndEgressPath(
+        self: *Connection,
+        now_nanos: i64,
+        dcid: []const u8,
+    ) Error!?ShortEgressDatagram {
+        const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
+        var path_override: ?endpoint.UdpTuple = null;
+        const datagram = try self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+            now_nanos,
+            dcid,
+            state.currentKeys(),
+            state.currentKeyPhase(),
+            &path_override,
+        );
+        return if (datagram) |bytes| .{
+            .datagram = bytes,
+            .path_override = path_override,
+        } else null;
     }
 
     fn protectedPathValidationPlaintextLen(
@@ -5780,7 +5841,9 @@ pub const Connection = struct {
     ) Error!BuiltProtectedShortPacket {
         if (self.next_packet_number > max_quic_varint) return error.Internal;
 
-        const response_data = self.pending_path_responses.items[0];
+        const response = self.pending_path_responses.items[0];
+        const response_data = response.data;
+        const response_path = response.path;
         const response_encoded_len = pathResponseFrameWireLen();
         var encoded_frame_len = response_encoded_len;
         if (ack_to_send) |ack| {
@@ -5836,6 +5899,7 @@ pub const Connection = struct {
             .ack_eliciting = true,
             .clear_ack = ack_to_send != null,
             .consume_path_response = true,
+            .emitted_path = response_path,
         };
     }
 
@@ -6240,6 +6304,7 @@ pub const Connection = struct {
         if (self.next_packet_number > max_quic_varint) return error.Internal;
 
         const pending_challenge = self.pending_path_challenges.items[0];
+        const challenge_path = pending_challenge.path;
         const challenge_encoded_len = pathChallengeFrameWireLen();
         var encoded_frame_len = challenge_encoded_len;
         if (ack_to_send) |ack| {
@@ -6295,6 +6360,7 @@ pub const Connection = struct {
             .ack_eliciting = true,
             .clear_ack = ack_to_send != null,
             .consume_path_challenge = true,
+            .emitted_path = challenge_path,
         };
     }
 
@@ -9465,6 +9531,7 @@ pub const Connection = struct {
             self.pending_path_challenges.appendAssumeCapacity(.{
                 .data = challenge.data,
                 .transmissions = challenge.transmissions,
+                .path = challenge.path,
             });
             _ = self.outstanding_path_challenges.orderedRemove(i);
         }
@@ -9582,7 +9649,7 @@ pub const Connection = struct {
         }) catch return error.OutOfMemory;
         appended_sent_packet = true;
 
-        const response_data = self.pending_path_responses.items[0];
+        const response_data = self.pending_path_responses.items[0].data;
         var out = buffer.fixedWriter(out_buf[0..encoded_len]);
         if (include_ack) {
             frame.encodeFrame(out.writer(), .{ .ack = ack_to_send.? }) catch |err| switch (err) {
@@ -10815,10 +10882,13 @@ pub const Connection = struct {
     }
 
     fn receivePathChallengeFrame(self: *Connection, path_challenge: frame.PathChallengeFrame) Error!void {
-        for (self.pending_path_responses.items) |response_data| {
-            if (std.mem.eql(u8, &response_data, &path_challenge.data)) return;
+        for (self.pending_path_responses.items) |response| {
+            if (std.mem.eql(u8, &response.data, &path_challenge.data)) return;
         }
-        self.pending_path_responses.append(self.allocator, path_challenge.data) catch return error.OutOfMemory;
+        self.pending_path_responses.append(self.allocator, .{
+            .data = path_challenge.data,
+            .path = self.receive_path_hint,
+        }) catch return error.OutOfMemory;
     }
 
     fn pathResponseChallengeIndex(self: *Connection, data: [8]u8) ?usize {

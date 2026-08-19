@@ -101,6 +101,18 @@ pub const PendingRetrySlot = struct {
     /// 16-byte integrity tag, comfortably below the 1200-byte floor.
     pub const max_retry_datagram_len = 512;
 
+    /// The stored Retry token, readable only while the slot holds a
+    /// live (unexpired, uncommitted) exchange. Null when unoccupied or
+    /// expired — expiry does not clear `occupied`, so callers must use
+    /// this accessor rather than reading `occupied` alone. The slice
+    /// aliases the slot's fixed buffer and is valid until the next
+    /// slot mutation.
+    pub fn storedToken(self: *const PendingRetrySlot, now_nanos: i64) ?[]const u8 {
+        if (!self.occupied) return null;
+        if (now_nanos >= self.expires_nanos) return null;
+        return self.retry_token[0..self.retry_token_len];
+    }
+
     /// Build the slot's Retry datagram for one tokenless Initial.
     ///
     /// `token` is the address-validation token the caller issued for the
@@ -447,4 +459,49 @@ test "PendingRetrySlot: wrong-path token is rejected" {
         .send_retry => {},
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "PendingRetrySlot: storedToken across occupied, expired, and post-commit states" {
+    const alloc = std.testing.allocator;
+    const secret: address_validation_token.Secret = [_]u8{0x5a} ** address_validation_token.secret_len;
+    const nonce: address_validation_token.Nonce = [_]u8{0x31} ** address_validation_token.nonce_len;
+    var policy = endpoint.AddressValidationPolicy.init(alloc, secret, .{});
+    defer policy.deinit();
+
+    var v6: [16]u8 = @splat(0);
+    v6[15] = 0x09;
+    const path = endpoint.UdpTuple{
+        .local = endpoint.UdpAddress.init6(v6, 4433),
+        .remote = endpoint.UdpAddress.init6Scoped(v6, 51000, 2),
+    };
+    const odcid = [_]u8{ 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08 };
+    const scid = [_]u8{ 0x21, 0x22, 0x23, 0x24 };
+    const rscid = [_]u8{ 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
+
+    const now: i64 = 1000;
+    const token = try policy.issueTokenForPath(
+        alloc,
+        .retry,
+        now,
+        10 * std.time.ns_per_s,
+        path,
+        nonce,
+    );
+    defer alloc.free(token);
+
+    var slot = PendingRetrySlot{};
+    _ = try slot.open(alloc, now, 10 * std.time.ns_per_s, path, .v1, &odcid, &scid, &rscid, token);
+
+    // Occupied and live: the exact stored bytes are readable.
+    const stored = slot.storedToken(now + 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualSlices(u8, token, stored);
+
+    // Expired: null even though `occupied` is still set.
+    try std.testing.expect(slot.occupied);
+    try std.testing.expect(slot.storedToken(now + 10 * std.time.ns_per_s) == null);
+
+    // Post-commit: null once the exchange is published.
+    try slot.commit(&policy, now + 2, token);
+    try std.testing.expect(!slot.occupied);
+    try std.testing.expect(slot.storedToken(now + 3) == null);
 }
