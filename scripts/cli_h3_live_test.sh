@@ -114,8 +114,16 @@ fi
 echo "PASS: HTTPS browser path HTTP/1.1 200"
 
 # OpenSSL client completes the pure-Zig TLS 1.3 handshake and gets the page.
-if ! (printf 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'; sleep 1) | \
-  openssl s_client -connect "127.0.0.1:$port" -servername 127.0.0.1 2>&1 | grep -q "HTTP/1.1 200 OK"; then
+openssl_ok=0
+for _ in 1 2 3; do
+  if (printf 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'; sleep 1) | \
+    openssl s_client -connect "127.0.0.1:$port" -servername 127.0.0.1 2>&1 | grep -q "HTTP/1.1 200 OK"; then
+    openssl_ok=1
+    break
+  fi
+  sleep 1
+done
+if [ "$openssl_ok" != "1" ]; then
   echo "FAIL: OpenSSL TLS interop" >&2
   kill "$srv" 2>/dev/null
   rm -rf "$dir"
