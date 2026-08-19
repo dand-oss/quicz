@@ -20,14 +20,20 @@ zig build test             # CLI 单元测试
 # H3 请求客户端：发 GET/POST，输出状态、响应体和连接指标
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
+quicz h3 https://host/api -d 'a=1&b=2'             # -d 隐含 POST + 表单 content-type
+quicz h3 https://host/api -A 'my-agent/1.0'        # 自定义 User-Agent（默认 quicz/0.1.0）
+quicz h3 https://host/api --resolve host:443:127.0.0.1   # 强制 host 指向指定 IPv4
+quicz h3 https://host/api -v                      # verbose：DNS/连接/重定向追踪
 quicz h3 https://host/api -i -L -s -f -o resp.html # 响应头、重定向、静默、4xx/5xx 失败、保存正文
 quicz h3 https://host/api -I                          # HEAD 请求，只要响应头
 quicz h3 https://host/api -X POST --data @body.json   # 从文件读取请求体上传
 quicz h3 https://host/api -D headers.txt              # 把响应头保存到文件
+quicz h3 https://host/api -o -                        # 显式把正文写到 stdout
 
-# H3 静态文件服务：目录 + /metrics
+# H3 静态文件服务：目录 + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
+quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # /echo 回显 method/path/authority/body
 
 # 原始 QUIC 流 echo：验证 quicz 与外部对端的互通
 quicz echo --server --port 4433
@@ -77,6 +83,18 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
 系统 CA 从 `/etc/ssl/cert.pem`（macOS、Debian/Ubuntu）、
 `/etc/ssl/certs/ca-certificates.crt` 或 `/etc/pki/tls/certs/ca-bundle.crt` 加载。
 找不到系统 CA 时禁用校验并打印警告。
+
+## 请求选项
+
+- `-d` / `--data` 发送请求体并隐含 `POST` 与 `content-type: application/x-www-form-urlencoded`；
+  `--data @file` 从文件读取请求体。
+- `-A` / `--user-agent` 覆盖默认 `User-Agent: quicz/0.1.0`；会替换任何
+  `-H user-agent:` 头。
+- `--resolve host:port:addr` 为指定 host/port 覆盖 DNS（仅 IPv4），适合拿真实
+  域名测试本地服务。
+- `--connect-timeout-ms` 只限制 QUIC 握手；`--timeout-ms` 仍限制整个请求（默认 10s）。
+- `-v` / `--verbose` 在 stderr 输出 DNS 解析、连接、重定向和请求行。
+- `-o -` 把响应体写到 stdout；其他 `-o` 路径写入文件。
 
 ## 边界
 

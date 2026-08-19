@@ -21,14 +21,20 @@ zig build test             # CLI unit tests
 # H3 request client: GET/POST, prints status, response body and connection metrics
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
+quicz h3 https://host/api -d 'a=1&b=2'             # -d implies POST + form content-type
+quicz h3 https://host/api -A 'my-agent/1.0'        # custom user-agent (default: quicz/0.1.0)
+quicz h3 https://host/api --resolve host:443:127.0.0.1   # force host to an IPv4 address
+quicz h3 https://host/api -v                      # verbose: DNS/connect/redirect tracing
 quicz h3 https://host/api -i -L -s -f -o resp.html # headers, redirects, silent, fail on 4xx/5xx, save body
 quicz h3 https://host/api -I                          # HEAD request, headers only
 quicz h3 https://host/api -X POST --data @body.json   # upload a request body from a file
 quicz h3 https://host/api -D headers.txt              # dump response headers to a file
+quicz h3 https://host/api -o -                        # write body to stdout explicitly
 
-# H3 static file server: directory + /metrics
+# H3 static file server: directory + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
+quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # /echo reflects method/path/authority/body
 
 # Raw QUIC stream echo: verify quicz interop with external peers
 quicz echo --server --port 4433
@@ -83,6 +89,21 @@ The system bundle is loaded from `/etc/ssl/cert.pem` (macOS, Debian/Ubuntu),
 `/etc/ssl/certs/ca-certificates.crt`, or `/etc/pki/tls/certs/ca-bundle.crt`.
 If no system bundle is found, verification is disabled and a warning is
 printed.
+
+## Request options
+
+- `-d` / `--data` sends a request body and implies `POST` plus
+  `content-type: application/x-www-form-urlencoded`; `--data @file` reads the
+  body from a file.
+- `-A` / `--user-agent` overrides the default `User-Agent: quicz/0.1.0`;
+  any `-H user-agent:` header is replaced.
+- `--resolve host:port:addr` overrides DNS for that host/port (IPv4 only),
+  which is handy for testing a real hostname against a local server.
+- `--connect-timeout-ms` bounds only the QUIC handshake; `--timeout-ms` still
+  caps the whole request (default 10s).
+- `-v` / `--verbose` traces DNS resolution, connects, redirects, and request
+  lines to stderr.
+- `-o -` writes the response body to stdout; other `-o` paths write to a file.
 
 ## Limits
 

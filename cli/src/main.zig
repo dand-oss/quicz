@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout-ms MS] [--timeout-ms MS]
 //!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -15,23 +15,23 @@ const test_certs = @import("test_certs");
 const quicz = @import("quicz");
 
 pub const std_options: std.Options = .{
-    .log_level = .info,
+    .log_level = .debug,
     .logFn = cliLog,
 };
 
 /// The CLI reports its own status and metrics via `std.debug.print`; swallow
 /// the library's internal runtime logs so a successful request stays clean
 /// even when the peer retransmits a packet the client cannot yet decrypt.
+/// `-v` re-enables those runtime logs for connection debugging.
+var g_verbose = false;
+
 fn cliLog(
     comptime message_level: std.log.Level,
     comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    _ = message_level;
-    _ = scope;
-    _ = format;
-    _ = args;
+    if (g_verbose) std.log.defaultLog(message_level, scope, format, args);
 }
 
 const Server = quicz.runtime.server.Server;
@@ -81,7 +81,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout-ms MS] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -97,6 +97,24 @@ fn nextArg(args: *std.process.Args.Iterator) ![]const u8 {
 fn parseIpv4(s: []const u8) ![4]u8 {
     const addr = try std.Io.net.IpAddress.parseIp4(s, 0);
     return addr.ip4.bytes;
+}
+
+const ResolveOverride = struct {
+    host: []const u8,
+    port: u16,
+    addr: [4]u8,
+};
+
+/// Parse a `--resolve HOST:PORT:ADDR` argument (curl-style DNS override).
+fn parseResolveSpec(spec: []const u8) !ResolveOverride {
+    const first_colon = std.mem.indexOfScalar(u8, spec, ':') orelse return error.BadResolveSpec;
+    const last_colon = std.mem.lastIndexOfScalar(u8, spec, ':') orelse return error.BadResolveSpec;
+    if (first_colon == last_colon) return error.BadResolveSpec;
+    const host = spec[0..first_colon];
+    if (host.len == 0) return error.BadResolveSpec;
+    const port = try std.fmt.parseInt(u16, spec[first_colon + 1 .. last_colon], 10);
+    const addr = try parseIpv4(spec[last_colon + 1 ..]);
+    return .{ .host = host, .port = port, .addr = addr };
 }
 
 fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
@@ -207,6 +225,20 @@ fn runWithTimeout(io: std.Io, timeout_ms: u64, work: *const fn (io: std.Io, ctx:
     return;
 }
 
+const ConnectCtx = struct { client: *Client };
+
+fn connectWork(_: std.Io, ctx: *anyopaque) anyerror!void {
+    const c: *ConnectCtx = @ptrCast(@alignCast(ctx));
+    try c.client.connect();
+}
+
+/// Bound only the QUIC handshake with `--connect-timeout-ms`; the enclosing
+/// `--timeout-ms` still caps the whole request.
+fn connectWithTimeout(io: std.Io, timeout_ms: u64, client: *Client) !void {
+    var ctx = ConnectCtx{ .client = client };
+    try runWithTimeout(io, timeout_ms, connectWork, &ctx);
+}
+
 /// Resolve a host name to an IPv4 address. IPv4 literals and `localhost` are
 /// handled directly; anything else goes through the std.Io DNS lookup.
 fn resolveHost(io: std.Io, host: []const u8, port: u16) ![4]u8 {
@@ -229,6 +261,13 @@ fn resolveHost(io: std.Io, host: []const u8, port: u16) ![4]u8 {
         }
     } else |_| {}
     return error.NoIpv4Address;
+}
+
+fn resolveHostWithOverrides(io: std.Io, host: []const u8, port: u16, overrides: []const ResolveOverride) ![4]u8 {
+    for (overrides) |o| {
+        if (o.port == port and std.ascii.eqlIgnoreCase(o.host, host)) return o.addr;
+    }
+    return resolveHost(io, host, port);
 }
 
 fn loadCertKey(io: std.Io, cert_pem: ?[]const u8, key_pem: ?[]const u8) !struct { cert_der: []const u8, private_key: [32]u8 } {
@@ -289,6 +328,8 @@ const H3Job = struct {
     silent: bool,
     fail_on_http_error: bool,
     dump_headers_path: ?[]const u8,
+    resolve: []const ResolveOverride,
+    connect_timeout_ms: ?u64,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -303,6 +344,42 @@ fn findHeader(headers: []const quicz.qpack.HeaderField, name: []const u8) ?[]con
         if (std.mem.eql(u8, h.name, name)) return h.value;
     }
     return null;
+}
+
+/// Apply curl-like defaults for the h3 subcommand: `-d` implies POST plus the
+/// form content type, and every request carries a user-agent (overridable with
+/// `-A`, replacing any `-H user-agent:` header).
+fn applyH3Defaults(
+    allocator: std.mem.Allocator,
+    method: *[]const u8,
+    method_explicit: bool,
+    data_given: bool,
+    headers: *std.ArrayList(quicz.qpack.HeaderField),
+    user_agent: ?[]const u8,
+) !void {
+    if (data_given and !method_explicit and std.mem.eql(u8, method.*, "GET")) method.* = "POST";
+    if (data_given and findHeader(headers.items, "content-type") == null) {
+        const name = try lowercaseName(allocator, "content-type");
+        headers.append(allocator, .{ .name = name, .value = "application/x-www-form-urlencoded" }) catch |e| {
+            allocator.free(name);
+            return e;
+        };
+    }
+    const effective_user_agent = user_agent orelse "quicz/0.1.0";
+    var i: usize = 0;
+    while (i < headers.items.len) {
+        if (std.mem.eql(u8, headers.items[i].name, "user-agent")) {
+            allocator.free(headers.items[i].name);
+            _ = headers.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+    const ua_name = try lowercaseName(allocator, "user-agent");
+    headers.append(allocator, .{ .name = ua_name, .value = effective_user_agent }) catch |e| {
+        allocator.free(ua_name);
+        return e;
+    };
 }
 
 /// Resolve a `Location` header against the current URL. Returns an
@@ -378,7 +455,10 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             const new_host = try job.allocator.dupe(u8, parsed.host);
             errdefer job.allocator.free(new_host);
 
-            const ip = try resolveHost(io, parsed.host, parsed.port);
+            const ip = try resolveHostWithOverrides(io, parsed.host, parsed.port, job.resolve);
+            if (g_verbose) {
+                std.debug.print("* resolve {s} -> {d}.{d}.{d}.{d}\n", .{ parsed.host, ip[0], ip[1], ip[2], ip[3] });
+            }
             // Initialise directly into the optional payload so the drive task
             // started by `connect()` keeps pointing at a stable address.
             client = try Client.init(job.allocator, io, .{
@@ -396,9 +476,16 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
                 }
             }
             const c0 = std.Io.Timestamp.now(io, .awake);
-            try client.?.connect();
+            if (job.connect_timeout_ms) |ms| {
+                try connectWithTimeout(io, ms, &client.?);
+            } else {
+                try client.?.connect();
+            }
             const c1 = std.Io.Timestamp.now(io, .awake);
             connect_ms = std.Io.Duration.toMilliseconds(c0.durationTo(c1));
+            if (g_verbose) {
+                std.debug.print("* Connected to {s} ({d}.{d}.{d}.{d}) port {d}\n", .{ parsed.host, ip[0], ip[1], ip[2], ip[3], parsed.port });
+            }
 
             // Initialise directly into the optional payload: `run()` points
             // the adapter's ctx at the H3 client itself, so it must not move.
@@ -428,12 +515,14 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             .body = job.body,
         };
         const sid = try h3cli.?.sendRequest(request);
+        if (g_verbose) std.debug.print("> {s} {s} HTTP/3\n", .{ job.method, parsed.path });
         const response = try h3cli.?.receiveResponse(sid);
 
         if (job.follow_redirects and isRedirectStatus(response.status)) {
             if (findHeader(response.headers, "location")) |location| {
                 if (redirects_left == 0) return error.TooManyRedirects;
                 const next_url = try resolveLocation(job.allocator, current_url, location);
+                if (g_verbose) std.debug.print("* redirect: {s}\n", .{next_url});
                 if (current_url_owned) job.allocator.free(current_url);
                 current_url = next_url;
                 current_url_owned = true;
@@ -463,12 +552,15 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
         }
 
         if (job.output_path) |path| {
-            const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
-            defer file.close(io);
-            if (response.body) |payload| try file.writeStreamingAll(io, payload);
+            if (std.mem.eql(u8, path, "-")) {
+                if (response.body) |payload| try std.Io.File.stdout().writeStreamingAll(io, payload);
+            } else {
+                const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
+                defer file.close(io);
+                if (response.body) |payload| try file.writeStreamingAll(io, payload);
+            }
         } else if (response.body) |payload| {
             try std.Io.File.stdout().writeStreamingAll(io, payload);
-            try std.Io.File.stdout().writeStreamingAll(io, "\n");
         }
 
         if (job.follow_redirects and !std.mem.eql(u8, current_url, job.url)) {
@@ -496,6 +588,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     var method: []const u8 = "GET";
     var body: ?[]const u8 = null;
     var timeout_ms: u64 = 10000;
+    var method_explicit = false;
     var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
     defer headers.deinit(allocator);
     defer {
@@ -511,16 +604,24 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     var fail_on_http_error = false;
     var owned_body: ?[]u8 = null;
     defer if (owned_body) |b| allocator.free(b);
+    var data_given = false;
+    var user_agent: ?[]const u8 = null;
+    var connect_timeout_ms: ?u64 = null;
+    var resolves = std.ArrayList(ResolveOverride).empty;
+    defer resolves.deinit(allocator);
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
             insecure = true;
+        } else if (std.mem.eql(u8, a, "-v") or std.mem.eql(u8, a, "--verbose")) {
+            g_verbose = true;
         } else if (std.mem.eql(u8, a, "-f") or std.mem.eql(u8, a, "--fail")) {
             fail_on_http_error = true;
         } else if (std.mem.eql(u8, a, "-s") or std.mem.eql(u8, a, "--silent")) {
             silent = true;
         } else if (std.mem.eql(u8, a, "-I") or std.mem.eql(u8, a, "--head")) {
             method = "HEAD";
+            method_explicit = true;
             include_headers = true;
         } else if (std.mem.eql(u8, a, "-i") or std.mem.eql(u8, a, "--include")) {
             include_headers = true;
@@ -534,8 +635,10 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             output_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "-X")) {
             method = try nextArg(args);
-        } else if (std.mem.eql(u8, a, "--data")) {
+            method_explicit = true;
+        } else if (std.mem.eql(u8, a, "-d") or std.mem.eql(u8, a, "--data")) {
             const raw = try nextArg(args);
+            data_given = true;
             if (raw.len > 0 and raw[0] == '@') {
                 const buf = try readFileAll(allocator, io, raw[1..]);
                 owned_body = buf;
@@ -543,6 +646,13 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             } else {
                 body = raw;
             }
+        } else if (std.mem.eql(u8, a, "-A") or std.mem.eql(u8, a, "--user-agent")) {
+            user_agent = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--resolve")) {
+            const override = try parseResolveSpec(try nextArg(args));
+            try resolves.append(allocator, override);
+        } else if (std.mem.eql(u8, a, "--connect-timeout-ms")) {
+            connect_timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "--timeout-ms")) {
             timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-H")) {
@@ -560,6 +670,8 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             return error.UnknownOption;
         }
     }
+
+    try applyH3Defaults(allocator, &method, method_explicit, data_given, &headers, user_agent);
 
     var maybe_bundle: ?std.crypto.Certificate.Bundle = null;
     if (ca_pem) |pem| {
@@ -594,6 +706,8 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .silent = silent,
         .fail_on_http_error = fail_on_http_error,
         .dump_headers_path = dump_headers_path,
+        .resolve = resolves.items,
+        .connect_timeout_ms = connect_timeout_ms,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
@@ -745,8 +859,31 @@ fn directoryListingResponse() quicz.h3_request.Response {
     return ownedResponse(200, "text/html; charset=utf-8", data);
 }
 
+/// HTTP/3 request echo: returns the method, path, authority, and body the
+/// client sent, so any H3 client can inspect its request on the wire.
+fn echoResponse(req: quicz.h3_request.DecodedRequest, is_head: bool) quicz.h3_request.Response {
+    if (is_head) return headResponse(200, "text/plain; charset=utf-8");
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(g_allocator);
+    out.appendSlice(g_allocator, "method: ") catch return .{ .status = 500, .body = "server error" };
+    out.appendSlice(g_allocator, req.method) catch return .{ .status = 500, .body = "server error" };
+    out.appendSlice(g_allocator, "\npath: ") catch return .{ .status = 500, .body = "server error" };
+    out.appendSlice(g_allocator, req.path) catch return .{ .status = 500, .body = "server error" };
+    if (req.authority) |authority| {
+        out.appendSlice(g_allocator, "\nauthority: ") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, authority) catch return .{ .status = 500, .body = "server error" };
+    }
+    if (req.body) |body| {
+        out.appendSlice(g_allocator, "\nbody: ") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, body) catch return .{ .status = 500, .body = "server error" };
+    }
+    const data = out.toOwnedSlice(g_allocator) catch return .{ .status = 500, .body = "server error" };
+    return ownedResponse(200, "text/plain; charset=utf-8", data);
+}
+
 fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response {
     const is_head = std.mem.eql(u8, req.method, "HEAD");
+    if (std.mem.eql(u8, req.path, "/echo")) return echoResponse(req, is_head);
     if (!std.mem.eql(u8, req.method, "GET") and !is_head) {
         return .{ .status = 405, .extra_headers = &.{.{ .name = "allow", .value = "GET, HEAD" }}, .body = "method not allowed" };
     }
@@ -1102,6 +1239,54 @@ test "sanitize rel path rejects traversal" {
 test "parse ipv4" {
     try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, try parseIpv4("127.0.0.1"));
     try std.testing.expectError(error.InvalidCharacter, parseIpv4("not-an-ip"));
+}
+
+test "parse resolve spec" {
+    const o = try parseResolveSpec("example.com:443:127.0.0.1");
+    try std.testing.expectEqualStrings("example.com", o.host);
+    try std.testing.expectEqual(@as(u16, 443), o.port);
+    try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, o.addr);
+    try std.testing.expectError(error.BadResolveSpec, parseResolveSpec("example.com:443"));
+    try std.testing.expectError(error.BadResolveSpec, parseResolveSpec(":443:127.0.0.1"));
+}
+
+test "apply h3 defaults" {
+    const allocator = std.testing.allocator;
+    var headers = std.ArrayList(quicz.qpack.HeaderField).empty;
+    defer {
+        for (headers.items) |h| allocator.free(h.name);
+        headers.deinit(allocator);
+    }
+
+    var method: []const u8 = "GET";
+    try applyH3Defaults(allocator, &method, false, true, &headers, null);
+    try std.testing.expectEqualStrings("POST", method);
+    try std.testing.expectEqualStrings("application/x-www-form-urlencoded", findHeader(headers.items, "content-type").?);
+    try std.testing.expectEqualStrings("quicz/0.1.0", findHeader(headers.items, "user-agent").?);
+
+    // A user-supplied content-type survives; -A replaces any -H user-agent.
+    for (headers.items) |h| allocator.free(h.name);
+    headers.clearRetainingCapacity();
+    const content_type_name = try lowercaseName(allocator, "Content-Type");
+    try headers.append(allocator, .{ .name = content_type_name, .value = "application/json" });
+    const legacy_ua_name = try lowercaseName(allocator, "User-Agent");
+    try headers.append(allocator, .{ .name = legacy_ua_name, .value = "legacy" });
+    var m2: []const u8 = "GET";
+    try applyH3Defaults(allocator, &m2, false, true, &headers, "my-agent/1.0");
+    try std.testing.expectEqualStrings("application/json", findHeader(headers.items, "content-type").?);
+    try std.testing.expectEqualStrings("my-agent/1.0", findHeader(headers.items, "user-agent").?);
+    var ua_count: usize = 0;
+    for (headers.items) |h| {
+        if (std.mem.eql(u8, h.name, "user-agent")) ua_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), ua_count);
+
+    // An explicit -X GET is not overridden by -d.
+    for (headers.items) |h| allocator.free(h.name);
+    headers.clearRetainingCapacity();
+    var m3: []const u8 = "GET";
+    try applyH3Defaults(allocator, &m3, true, true, &headers, null);
+    try std.testing.expectEqualStrings("GET", m3);
 }
 
 test "lowercase header name" {

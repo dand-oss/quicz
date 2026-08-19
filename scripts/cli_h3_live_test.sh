@@ -50,15 +50,46 @@ srv=$!
 trap 'kill "$srv" 2>/dev/null; wait "$srv" 2>/dev/null; rm -rf "$dir"' RETURN
 sleep 1
 out=$(./zig-out/bin/quicz h3 "https://127.0.0.1:$port/hello.txt" -k --timeout-ms 10000 2>&1) || true
-kill "$srv" 2>/dev/null
-wait "$srv" 2>/dev/null || true
-rm -rf "$dir"
 if ! echo "$out" | grep -q "HTTP/3 200"; then
   echo "FAIL: local serve + h3 round trip: $out" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
   exit 1
 fi
 if ! echo "$out" | grep -q "hello from quicz serve"; then
   echo "FAIL: local serve + h3 round trip body mismatch" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
   exit 1
 fi
 echo "PASS: local serve + h3 round trip HTTP/3 200"
+
+# /echo reflects the method and body; -d implies POST over HTTP/3.
+out=$(./zig-out/bin/quicz h3 "https://127.0.0.1:$port/echo" -k -d 'a=1&b=2' --timeout-ms 10000 2>&1) || true
+if ! echo "$out" | grep -q "method: POST"; then
+  echo "FAIL: echo POST method: $out" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
+  exit 1
+fi
+if ! echo "$out" | grep -q "body: a=1&b=2"; then
+  echo "FAIL: echo POST body: $out" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
+  exit 1
+fi
+echo "PASS: h3 -d POST echo HTTP/3 200"
+
+# --resolve points a fake hostname at the local server.
+out=$(./zig-out/bin/quicz h3 "https://local.test:$port/echo" -k --resolve "local.test:$port:127.0.0.1" --timeout-ms 10000 2>&1) || true
+if ! echo "$out" | grep -q "authority: local.test"; then
+  echo "FAIL: resolve override authority: $out" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
+  exit 1
+fi
+echo "PASS: h3 --resolve override HTTP/3 200"
+
+kill "$srv" 2>/dev/null
+wait "$srv" 2>/dev/null || true
+rm -rf "$dir"
