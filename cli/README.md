@@ -49,11 +49,12 @@ quicz h3 https://host/api -X POST --data @body.json   # upload a request body fr
 quicz h3 https://host/api -D headers.txt              # dump response headers to a file
 quicz h3 https://host/api -o -                        # write body to stdout explicitly
 
-# H3 static file server: directory + /metrics + /echo
+# Static file server: HTTP/1.1 (browser) + HTTP/3 + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
 quicz serve --dir ./dist --index index.htm         # custom index file (default index.html)
-quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # /echo reflects method/path/authority/body
+curl http://127.0.0.1:4433/                        # browsers open this URL directly
+quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # HTTP/3 client: /echo reflects method/path/authority/body
 
 # Raw QUIC stream echo: verify quicz interop with external peers
 quicz echo --server --port 4433
@@ -130,6 +131,9 @@ chooses the index file name served for directory paths.
 ## Limits
 
 - The H3 client and server currently support IPv4 literals and `localhost`; `--ca` requires an absolute PEM path.
-- `serve` uses a built-in loopback test certificate by default; use `--cert` / `--key` (P-256 PEM) in production.
+- `serve` listens on both TCP (HTTP/1.1, browser-friendly) and UDP (HTTP/3).
+  The browser path is plain `http://127.0.0.1:PORT/`; the HTTP/3 path needs a
+  certificate, so use `quicz h3 https://127.0.0.1:PORT/ -k` (or `--ca`) against
+  the built-in loopback certificate, or `--cert` / `--key` (P-256 PEM) in production.
 - `bench` connects to `echo --server` in insecure mode; it measures the transport path, not certificate verification.
 - Client subcommands default to a 10s timeout (`--timeout-ms`) so a missing or stalled server fails instead of hanging.

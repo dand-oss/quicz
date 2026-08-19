@@ -46,11 +46,12 @@ quicz h3 https://host/api -X POST --data @body.json   # 从文件读取请求体
 quicz h3 https://host/api -D headers.txt              # 把响应头保存到文件
 quicz h3 https://host/api -o -                        # 显式把正文写到 stdout
 
-# H3 静态文件服务：目录 + /metrics + /echo
+# 静态文件服务：HTTP/1.1（浏览器）+ HTTP/3 + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
 quicz serve --dir ./dist --index index.htm         # 自定义索引文件（默认 index.html）
-quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # /echo 回显 method/path/authority/body
+curl http://127.0.0.1:4433/                        # 浏览器直接打开这个地址
+quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # HTTP/3 客户端：/echo 回显 method/path/authority/body
 
 # 原始 QUIC 流 echo：验证 quicz 与外部对端的互通
 quicz echo --server --port 4433
@@ -120,6 +121,9 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
 ## 边界
 
 - H3 客户端和服务端当前只支持 IPv4 / `localhost`；`--ca` 需要绝对路径 PEM。
-- `serve` 默认使用内置 loopback 测试证书；生产用 `--cert` / `--key`（P-256 PEM）。
+- `serve` 同时监听 TCP（HTTP/1.1，浏览器可直接访问）与 UDP（HTTP/3）。
+  浏览器路径是明文 `http://127.0.0.1:PORT/`；HTTP/3 路径需要证书，本地用内置
+  loopback 证书时用 `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`），生产用
+  `--cert` / `--key`（P-256 PEM）。
 - `bench` 以 insecure 方式连接 `echo --server`，测的是传输路径而非证书链路。
 - 客户端子命令默认 10s 超时（`--timeout-ms`），连不上或服务端卡住会直接失败，不挂死。

@@ -761,6 +761,10 @@ const OwnedBody = struct {
     /// outlive the handler return; owned here and freed with the body.
     headers: []quicz.qpack.HeaderField,
     offset: usize = 0,
+
+    fn allData(self: *OwnedBody) []const u8 {
+        return self.data[self.offset..];
+    }
 };
 
 fn ownedBodyNext(ctx: *anyopaque, buf: []u8) anyerror!?usize {
@@ -793,39 +797,24 @@ fn ownedResponse(status: u16, content_type: []const u8, data: []u8) quicz.h3_req
     };
 }
 
-/// Owned headers for a bodyless response. HEAD responses send HEADERS only and
-/// never pump a body, so the headers are released via the body-stream deinit
-/// callback in the H3 server instead of an OwnedBody.
-const HeadBody = struct {
-    allocator: std.mem.Allocator,
-    headers: []quicz.qpack.HeaderField,
-};
-
-fn headBodyNext(_: *anyopaque, buf: []u8) anyerror!?usize {
-    _ = buf;
-    return null;
-}
-
-fn headBodyDeinit(ctx: *anyopaque) void {
-    const state: *HeadBody = @ptrCast(@alignCast(ctx));
-    const allocator = state.allocator;
-    allocator.free(state.headers);
-    allocator.destroy(state);
-}
-
 fn headResponse(status: u16, content_type: []const u8) quicz.h3_request.Response {
     const allocator = g_allocator;
-    const state = allocator.create(HeadBody) catch return .{ .status = 500, .body = "out of memory" };
+    const state = allocator.create(OwnedBody) catch return .{ .status = 500, .body = "out of memory" };
     const headers = allocator.alloc(quicz.qpack.HeaderField, 1) catch {
         allocator.destroy(state);
         return .{ .status = 500, .body = "out of memory" };
     };
+    const data = allocator.alloc(u8, 0) catch {
+        allocator.free(headers);
+        allocator.destroy(state);
+        return .{ .status = 500, .body = "out of memory" };
+    };
     headers[0] = .{ .name = "content-type", .value = content_type };
-    state.* = .{ .allocator = allocator, .headers = headers };
+    state.* = .{ .allocator = allocator, .data = data, .headers = headers };
     return .{
         .status = status,
         .extra_headers = headers,
-        .body_stream = .{ .ctx = state, .next_fn = headBodyNext, .deinit_fn = headBodyDeinit },
+        .body_stream = .{ .ctx = state, .next_fn = ownedBodyNext, .deinit_fn = ownedBodyDeinit },
     };
 }
 
@@ -965,6 +954,95 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
     }
 }
 
+/// HTTP/1.1 fallback server so browsers can open the same static content over
+/// TCP while the QUIC listener keeps serving HTTP/3. Mirrors how real H3 sites
+/// expose both listeners and let browsers upgrade via Alt-Svc.
+fn serveHttp11(tcp_server: *std.Io.net.Server) std.Io.Cancelable!void {
+    const io = g_io;
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
+    while (true) {
+        var stream = tcp_server.accept(io) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => {
+                std.debug.print("serve: HTTP/1.1 accept failed: {s}\n", .{@errorName(err)});
+                return;
+            },
+        };
+        group.concurrent(io, handleHttp11Connection, .{stream}) catch |err| {
+            std.debug.print("serve: HTTP/1.1 handler spawn failed: {s}\n", .{@errorName(err)});
+            stream.close(io);
+            continue;
+        };
+    }
+}
+
+fn handleHttp11Connection(stream: std.Io.net.Stream) void {
+    const io = g_io;
+    defer {
+        var copy = stream;
+        copy.close(io);
+    }
+    var send_buffer: [65536]u8 = undefined;
+    var recv_buffer: [65536]u8 = undefined;
+    var connection_reader = stream.reader(io, &recv_buffer);
+    var connection_writer = stream.writer(io, &send_buffer);
+    var http_server: std.http.Server = .init(&connection_reader.interface, &connection_writer.interface);
+
+    while (true) {
+        var request = http_server.receiveHead() catch |err| switch (err) {
+            error.HttpConnectionClosing => return,
+            else => {
+                std.debug.print("serve: HTTP/1.1 receive failed: {s}\n", .{@errorName(err)});
+                return;
+            },
+        };
+        handleHttp11Request(&request) catch |err| switch (err) {
+            else => {
+                std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
+                return;
+            },
+        };
+    }
+}
+
+fn handleHttp11Request(request: *std.http.Server.Request) !void {
+    const target = request.head.target;
+    const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
+    const decoded = quicz.h3_request.DecodedRequest{
+        .method = @tagName(request.head.method),
+        .path = path,
+        .scheme = "http",
+        .authority = null,
+        .body = null,
+    };
+    const h3resp = serveHandler(decoded);
+    defer if (h3resp.body_stream) |bs| bs.deinit();
+
+    var body: []const u8 = "";
+    if (h3resp.body) |b| {
+        body = b;
+    } else if (h3resp.body_stream) |bs| {
+        const state: *OwnedBody = @ptrCast(@alignCast(bs.ctx));
+        body = state.allData();
+    }
+
+    var header_buf: [8]std.http.Header = undefined;
+    var header_count: usize = 0;
+    for (h3resp.extra_headers) |h| {
+        if (header_count >= header_buf.len) break;
+        header_buf[header_count] = .{ .name = h.name, .value = h.value };
+        header_count += 1;
+    }
+
+    const status: std.http.Status = @enumFromInt(@as(u10, @intCast(h3resp.status)));
+    try request.respond(body, .{
+        .status = status,
+        .extra_headers = header_buf[0..header_count],
+        .keep_alive = false,
+    });
+}
+
 fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
     var dir_path: []const u8 = ".";
     var port: u16 = 4433;
@@ -1007,9 +1085,23 @@ fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
     defer server.deinit();
     g_server = &server;
 
+    const ip = bind orelse [_]u8{ 127, 0, 0, 1 };
+    var tcp_address = std.Io.net.IpAddress{ .ip4 = .{ .bytes = ip, .port = port } };
+    var tcp_server = tcp_address.listen(io, .{ .reuse_address = true }) catch |err| {
+        std.debug.print("serve: failed to listen on TCP {d}: {s}\n", .{ port, @errorName(err) });
+        return err;
+    };
+    defer tcp_server.deinit(io);
+    var tcp_serve_task = io.concurrent(serveHttp11, .{&tcp_server}) catch |err| {
+        std.debug.print("serve: failed to start HTTP/1.1 serve loop: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer tcp_serve_task.cancel(io) catch {};
+
     try server.serveH3(.{}, serveHandler);
-    std.debug.print("quicz serve: https://127.0.0.1:{d}/ dir={s}\n", .{ port, dir_path });
+    std.debug.print("quicz serve: http://127.0.0.1:{d}/ (HTTP/1.1) https://127.0.0.1:{d}/ (HTTP/3) dir={s}\n", .{ port, port, dir_path });
     server.drive_group.await(io) catch {};
+    tcp_serve_task.await(io) catch {};
 }
 
 // ---------------------------------------------------------------- echo
