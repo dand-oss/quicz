@@ -1,8 +1,8 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout-ms MS] [--timeout-ms MS]
-//!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
+//!   quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+//!   quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
 //!   quicz bench HOST PORT [--size BYTES]
@@ -51,6 +51,7 @@ var g_server: ?*Server = null;
 var g_io: std.Io = undefined;
 var g_allocator: std.mem.Allocator = undefined;
 var g_root_dir: std.Io.Dir = undefined;
+var g_index_name: []const u8 = "index.html";
 var g_metrics_buf: [512]u8 = undefined;
 
 pub fn main(init: std.process.Init) !void {
@@ -81,8 +82,8 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout-ms MS] [--timeout-ms MS]
-        \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
+        \\  quicz h3 <url> [-k] [-v] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-A UA] [-H NAME:VALUE]... [-d BODY] [--data @FILE] [--resolve HOST:PORT:ADDR] [--ca PEM] [--connect-timeout SECS] [--max-time SECS]
+        \\  quicz serve [--dir DIR] [--index FILE] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz bench HOST PORT [--size BYTES] [--timeout-ms MS]
@@ -653,8 +654,14 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             try resolves.append(allocator, override);
         } else if (std.mem.eql(u8, a, "--connect-timeout-ms")) {
             connect_timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--connect-timeout")) {
+            const secs = try std.fmt.parseInt(u64, try nextArg(args), 10);
+            connect_timeout_ms = try std.math.mul(u64, secs, 1000);
         } else if (std.mem.eql(u8, a, "--timeout-ms")) {
             timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
+        } else if (std.mem.eql(u8, a, "--max-time")) {
+            const secs = try std.fmt.parseInt(u64, try nextArg(args), 10);
+            timeout_ms = try std.math.mul(u64, secs, 1000);
         } else if (std.mem.eql(u8, a, "-H")) {
             const hv = try nextArg(args);
             const colon = std.mem.indexOfScalar(u8, hv, ':') orelse return error.InvalidHeader;
@@ -833,22 +840,29 @@ fn readFileBody(rel: []const u8) ![]u8 {
     return buf[0..n];
 }
 
-fn concatPaths(allocator: std.mem.Allocator, a: []const u8, b: []const u8) ![]u8 {
-    const out = try allocator.alloc(u8, a.len + b.len);
-    @memcpy(out[0..a.len], a);
-    @memcpy(out[a.len..], b);
-    return out;
-}
-
-fn directoryListingResponse() quicz.h3_request.Response {
+fn directoryListingResponse(rel: []const u8) quicz.h3_request.Response {
+    var prefix_buf: [4096]u8 = undefined;
+    const prefix: []const u8 = if (rel.len == 0) "/" else blk: {
+        const trimmed = if (rel[rel.len - 1] == '/') rel[0 .. rel.len - 1] else rel;
+        const written = std.fmt.bufPrint(&prefix_buf, "/{s}/", .{trimmed}) catch return .{ .status = 500, .body = "server error" };
+        break :blk written;
+    };
+    var dir_owned = false;
+    const dir = if (rel.len == 0) g_root_dir else blk: {
+        const d = g_root_dir.openDir(g_io, rel, .{ .iterate = true }) catch return .{ .status = 500, .body = "server error" };
+        dir_owned = true;
+        break :blk d;
+    };
+    defer if (dir_owned) dir.close(g_io);
     var out = std.ArrayList(u8).empty;
     defer out.deinit(g_allocator);
     out.appendSlice(g_allocator, "<!doctype html><html><head><meta charset=\"utf-8\"><title>quicz serve</title></head><body><h1>quicz serve</h1><ul>") catch return .{ .status = 500, .body = "server error" };
-    var it = std.Io.Dir.iterate(g_root_dir);
+    var it = std.Io.Dir.iterate(dir);
     while (true) {
         const maybe_entry = it.next(g_io) catch return .{ .status = 500, .body = "server error" };
         const entry = maybe_entry orelse break;
-        out.appendSlice(g_allocator, "<li><a href=\"/") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, "<li><a href=\"") catch return .{ .status = 500, .body = "server error" };
+        out.appendSlice(g_allocator, prefix) catch return .{ .status = 500, .body = "server error" };
         out.appendSlice(g_allocator, entry.name) catch return .{ .status = 500, .body = "server error" };
         out.appendSlice(g_allocator, "\">") catch return .{ .status = 500, .body = "server error" };
         out.appendSlice(g_allocator, entry.name) catch return .{ .status = 500, .body = "server error" };
@@ -857,6 +871,31 @@ fn directoryListingResponse() quicz.h3_request.Response {
     out.appendSlice(g_allocator, "</ul></body></html>") catch return .{ .status = 500, .body = "server error" };
     const data = out.toOwnedSlice(g_allocator) catch return .{ .status = 500, .body = "server error" };
     return ownedResponse(200, "text/html; charset=utf-8", data);
+}
+
+/// Serve a directory: its `--index` file when present, otherwise a listing.
+fn serveDirectory(rel: []const u8, is_head: bool) ?quicz.h3_request.Response {
+    const dir = g_root_dir.openDir(g_io, rel, .{ .iterate = true }) catch return null;
+    defer dir.close(g_io);
+
+    const file = dir.openFile(g_io, g_index_name, .{}) catch null;
+    if (file) |f| {
+        defer f.close(g_io);
+        const len = f.length(g_io) catch return .{ .status = 500, .body = "server error" };
+        if (len > max_file_size) return .{ .status = 413, .body = "file too large" };
+        const data = g_allocator.alloc(u8, @intCast(len)) catch return .{ .status = 500, .body = "server error" };
+        errdefer g_allocator.free(data);
+        const n = f.readPositionalAll(g_io, data, 0) catch return .{ .status = 500, .body = "server error" };
+        const body = data[0..n];
+        if (is_head) {
+            g_allocator.free(data);
+            return headResponse(200, contentTypeFor(g_index_name));
+        }
+        return ownedResponse(200, contentTypeFor(g_index_name), body);
+    }
+
+    if (is_head) return headResponse(200, "text/html; charset=utf-8");
+    return directoryListingResponse(rel);
 }
 
 /// HTTP/3 request echo: returns the method, path, authority, and body the
@@ -907,7 +946,7 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
     }
 
     const rel = sanitizeRelPath(req.path) catch return .{ .status = 400, .body = "bad request" };
-    const primary = if (rel.len == 0) "index.html" else rel;
+    const primary = if (rel.len == 0) g_index_name else rel;
     if (readFileBody(primary)) |data| {
         if (is_head) {
             g_allocator.free(data);
@@ -919,21 +958,9 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
         else => {
             if (rel.len == 0) {
                 if (is_head) return headResponse(200, "text/html; charset=utf-8");
-                return directoryListingResponse();
+                return directoryListingResponse("");
             }
-            // Maybe rel is a directory: serve its index.html.
-            const combined = concatPaths(g_allocator, rel, "/index.html") catch return .{ .status = 500, .body = "server error" };
-            defer g_allocator.free(combined);
-            if (readFileBody(combined)) |data| {
-                if (is_head) {
-                    g_allocator.free(data);
-                    return headResponse(200, contentTypeFor(combined));
-                }
-                return ownedResponse(200, contentTypeFor(combined), data);
-            } else |e2| switch (e2) {
-                error.FileTooLarge => return .{ .status = 413, .body = "file too large" },
-                else => return .{ .status = 404, .body = "not found" },
-            }
+            return serveDirectory(rel, is_head) orelse .{ .status = 404, .body = "not found" };
         },
     }
 }
@@ -948,6 +975,8 @@ fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--dir")) {
             dir_path = try nextArg(args);
+        } else if (std.mem.eql(u8, a, "--index")) {
+            g_index_name = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--port")) {
             port = try std.fmt.parseInt(u16, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "--bind")) {

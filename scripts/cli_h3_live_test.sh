@@ -65,7 +65,7 @@ fi
 echo "PASS: local serve + h3 round trip HTTP/3 200"
 
 # /echo reflects the method and body; -d implies POST over HTTP/3.
-out=$(./zig-out/bin/quicz h3 "https://127.0.0.1:$port/echo" -k -d 'a=1&b=2' --timeout-ms 10000 2>&1) || true
+out=$(./zig-out/bin/quicz h3 "https://127.0.0.1:$port/echo" -k -d 'a=1&b=2' --max-time 10 2>&1) || true
 if ! echo "$out" | grep -q "method: POST"; then
   echo "FAIL: echo POST method: $out" >&2
   kill "$srv" 2>/dev/null
@@ -81,7 +81,7 @@ fi
 echo "PASS: h3 -d POST echo HTTP/3 200"
 
 # --resolve points a fake hostname at the local server.
-out=$(./zig-out/bin/quicz h3 "https://local.test:$port/echo" -k --resolve "local.test:$port:127.0.0.1" --timeout-ms 10000 2>&1) || true
+out=$(./zig-out/bin/quicz h3 "https://local.test:$port/echo" -k --resolve "local.test:$port:127.0.0.1" --connect-timeout 5 --max-time 10 2>&1) || true
 if ! echo "$out" | grep -q "authority: local.test"; then
   echo "FAIL: resolve override authority: $out" >&2
   kill "$srv" 2>/dev/null
