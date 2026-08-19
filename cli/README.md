@@ -21,12 +21,15 @@ From the repository root, build a Release binary and install it into your
 PATH:
 
 ```bash
-make install                        # installs to /usr/local/bin/quicz
-make install PREFIX="$HOME/.local"  # or any writable prefix
+make install PREFIX="$HOME/.local"  # recommended: user-writable prefix
+make install                        # installs to /usr/local/bin/quicz (may need sudo)
 ```
 
 `make install` builds with `-Doptimize=ReleaseFast` and installs the standalone
-binary to `$(PREFIX)/bin/quicz`. Remove it with `make uninstall`.
+binary to `$(PREFIX)/bin/quicz`. On macOS `/usr/local/bin` is usually not
+writable by the current user, so prefer `$HOME/.local` and add it to your
+`PATH` (e.g. `export PATH="$HOME/.local/bin:$PATH"` in your shell profile).
+Remove the CLI with `make uninstall PREFIX="$HOME/.local"`.
 
 ## Subcommands
 

@@ -19,12 +19,14 @@ zig build test             # CLI 单元测试
 在仓库根目录构建 Release 二进制并安装到 PATH：
 
 ```bash
-make install                        # 安装到 /usr/local/bin/quicz
-make install PREFIX="$HOME/.local"  # 或任意可写前缀
+make install PREFIX="$HOME/.local"  # 推荐：用户可写前缀
+make install                        # 安装到 /usr/local/bin/quicz（可能需 sudo）
 ```
 
 `make install` 使用 `-Doptimize=ReleaseFast` 构建，并把独立二进制安装到
-`$(PREFIX)/bin/quicz`。用 `make uninstall` 卸载。
+`$(PREFIX)/bin/quicz`。macOS 上 `/usr/local/bin` 通常当前用户不可写，建议用
+`$HOME/.local` 并在 shell 配置里加入 `export PATH="$HOME/.local/bin:$PATH"`。
+卸载用 `make uninstall PREFIX="$HOME/.local"`。
 
 ## 子命令
 
