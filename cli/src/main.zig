@@ -996,26 +996,44 @@ fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16, tls_config: tls_
 }
 
 /// Read one HTTP/1.1 request head over the TLS stream and respond, then close
-/// (connection: close). Static servers do not need keep-alive.
+/// when the client asks to. GET/HEAD responses keep the connection alive so a
+/// browser can fetch the page's CSS/JS/images without a fresh TLS handshake.
 fn handleHttp11Tls(tls_stream: *tls_tcp.TlsStream, port: u16) void {
     var req_buf: [16384]u8 = undefined;
     var req_len: usize = 0;
     while (true) {
-        if (req_len >= req_buf.len) return;
-        const n = tls_stream.read(req_buf[req_len..]) catch return;
-        if (n == 0) return;
-        req_len += n;
-        if (std.mem.indexOf(u8, req_buf[0..req_len], "\r\n\r\n")) |head_end| {
-            handleHttp11Request(tls_stream, req_buf[0..head_end], port) catch |err| {
-                if (g_verbose) std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
-                return;
-            };
-            return;
+        var head_end: ?usize = null;
+        while (head_end == null) {
+            if (req_len >= req_buf.len) return;
+            const n = tls_stream.read(req_buf[req_len..]) catch return;
+            if (n == 0) return;
+            req_len += n;
+            head_end = std.mem.indexOf(u8, req_buf[0..req_len], "\r\n\r\n");
         }
+        const keep_alive = handleHttp11Request(tls_stream, req_buf[0..head_end.?], port) catch |err| {
+            if (g_verbose) std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const consumed = head_end.? + 4;
+        std.mem.copyForwards(u8, req_buf[0 .. req_len - consumed], req_buf[consumed..req_len]);
+        req_len -= consumed;
+        if (!keep_alive) return;
     }
 }
 
-fn handleHttp11Request(tls_stream: *tls_tcp.TlsStream, head: []const u8, port: u16) !void {
+fn connectionWantsClose(head: []const u8) bool {
+    var it = std.mem.splitScalar(u8, head, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, "\r");
+        if (std.ascii.startsWithIgnoreCase(line, "connection:")) {
+            const value = std.mem.trim(u8, line["connection:".len..], " \t");
+            return std.ascii.indexOfIgnoreCase(value, "close") != null;
+        }
+    }
+    return false;
+}
+
+fn handleHttp11Request(tls_stream: *tls_tcp.TlsStream, head: []const u8, port: u16) !bool {
     const line_end = std.mem.indexOfScalar(u8, head, '\r') orelse return error.BadRequest;
     const request_line = head[0..line_end];
     var sp1 = std.mem.indexOfScalar(u8, request_line, ' ') orelse return error.BadRequest;
@@ -1024,8 +1042,8 @@ fn handleHttp11Request(tls_stream: *tls_tcp.TlsStream, head: []const u8, port: u
     sp1 = std.mem.indexOfScalar(u8, after_method, ' ') orelse return error.BadRequest;
     const target = after_method[0..sp1];
     if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD")) {
-        try sendHttp11Response(tls_stream, 405, &.{.{ .name = "allow", .value = "GET, HEAD" }}, "method not allowed", port, false);
-        return;
+        try sendHttp11Response(tls_stream, 405, &.{.{ .name = "allow", .value = "GET, HEAD" }}, "method not allowed", port, false, false);
+        return false;
     }
     const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
     const decoded = quicz.h3_request.DecodedRequest{
@@ -1045,7 +1063,10 @@ fn handleHttp11Request(tls_stream: *tls_tcp.TlsStream, head: []const u8, port: u
         const state: *OwnedBody = @ptrCast(@alignCast(bs.ctx));
         body = state.allData();
     }
-    try sendHttp11Response(tls_stream, h3resp.status, h3resp.extra_headers, body, port, std.mem.eql(u8, method, "HEAD"));
+    const head_only = std.mem.eql(u8, method, "HEAD");
+    const keep_alive = !connectionWantsClose(head);
+    try sendHttp11Response(tls_stream, h3resp.status, h3resp.extra_headers, body, port, head_only, keep_alive);
+    return keep_alive;
 }
 
 fn sendHttp11Response(
@@ -1055,6 +1076,7 @@ fn sendHttp11Response(
     body: []const u8,
     port: u16,
     head_only: bool,
+    keep_alive: bool,
 ) !void {
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
@@ -1066,7 +1088,7 @@ fn sendHttp11Response(
     }
     try w.print("content-length: {d}\r\n", .{body.len});
     try w.print("alt-svc: h3=\":{d}\"; ma=86400\r\n", .{port});
-    try w.print("connection: close\r\n\r\n", .{});
+    try w.print("connection: {s}\r\n\r\n", .{if (keep_alive) "keep-alive" else "close"});
     try tls_stream.write(buf[0..w.end]);
     if (!head_only and body.len > 0) try tls_stream.write(body);
 }
