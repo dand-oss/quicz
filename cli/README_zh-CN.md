@@ -14,6 +14,18 @@ zig build run -- --help
 zig build test             # CLI 单元测试
 ```
 
+## 安装
+
+在仓库根目录构建 Release 二进制并安装到 PATH：
+
+```bash
+make install                        # 安装到 /usr/local/bin/quicz
+make install PREFIX="$HOME/.local"  # 或任意可写前缀
+```
+
+`make install` 使用 `-Doptimize=ReleaseFast` 构建，并把独立二进制安装到
+`$(PREFIX)/bin/quicz`。用 `make uninstall` 卸载。
+
 ## 子命令
 
 ```bash

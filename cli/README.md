@@ -15,6 +15,19 @@ zig build run -- --help
 zig build test             # CLI unit tests
 ```
 
+## Install
+
+From the repository root, build a Release binary and install it into your
+PATH:
+
+```bash
+make install                        # installs to /usr/local/bin/quicz
+make install PREFIX="$HOME/.local"  # or any writable prefix
+```
+
+`make install` builds with `-Doptimize=ReleaseFast` and installs the standalone
+binary to `$(PREFIX)/bin/quicz`. Remove it with `make uninstall`.
+
 ## Subcommands
 
 ```bash

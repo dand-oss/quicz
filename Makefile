@@ -13,6 +13,7 @@ INSECURE ?=
 DIR ?= .
 PORT ?= 4433
 FUZZ_LIMIT ?= 20000
+PREFIX ?= /usr/local
 
 help: # Show all targets
 	@egrep -h '\s#\s' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?# "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -21,6 +22,16 @@ help: # Show all targets
 quicz: # Build the quicz CLI
 	cd $(CLI_DIR) && $(ZIG) build
 	@echo "built: $(QUICZ)"
+
+.PHONY: install
+install: # Build (ReleaseFast) and install the quicz CLI to $(PREFIX)/bin (PREFIX=/usr/local)
+	cd $(CLI_DIR) && $(ZIG) build -Doptimize=ReleaseFast --prefix $(PREFIX)
+	@echo "installed: $(PREFIX)/bin/quicz"
+
+.PHONY: uninstall
+uninstall: # Remove the installed quicz CLI from $(PREFIX)/bin
+	rm -f $(PREFIX)/bin/quicz
+	@echo "removed: $(PREFIX)/bin/quicz"
 
 .PHONY: quicz-h3
 quicz-h3: quicz # Fetch a URL over HTTP/3 (URL=..., default cloudflare-quic.com; INSECURE=-k to skip cert verify)
