@@ -7,6 +7,7 @@ const std = @import("std");
 const h3_frame = @import("frame.zig");
 const qpack = @import("qpack.zig");
 const h3_limits = @import("limits.zig");
+const buffer = @import("../quic/buffer.zig");
 
 /// An HTTP request.
 pub const Request = struct {
@@ -392,10 +393,15 @@ pub fn decodeRequest(data: []const u8) !struct { request: DecodedRequest, consum
     var authority: ?[]const u8 = null;
     var body: ?[]const u8 = null;
 
-    // Parse HEADERS frame
-    const headers_result = try h3_frame.decodeFrame(data[pos..]);
-    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
-        return error.ExpectedHeadersFrame;
+    // Skip GREASE / unknown extension frames that may precede the initial
+    // HEADERS frame (RFC 9114 §7.2.8, §9), then require HEADERS.
+    var headers_result = try h3_frame.decodeFrame(data[pos..]);
+    while (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+        if (!h3_frame.isIgnorableHeaderPrefixFrame(headers_result.frame.frame_type)) {
+            return error.ExpectedHeadersFrame;
+        }
+        pos += headers_result.consumed;
+        headers_result = try h3_frame.decodeFrame(data[pos..]);
     }
     pos += headers_result.consumed;
 
@@ -463,10 +469,15 @@ fn decodeResponseImpl(
     var required_insert_count: u64 = 0;
     var header_count: usize = 0;
 
-    // Parse HEADERS frame
-    const headers_result = try h3_frame.decodeFrame(data[pos..]);
-    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
-        return error.ExpectedHeadersFrame;
+    // Skip GREASE / unknown extension frames that may precede the initial
+    // HEADERS frame (RFC 9114 §7.2.8, §9), then require HEADERS.
+    var headers_result = try h3_frame.decodeFrame(data[pos..]);
+    while (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+        if (!h3_frame.isIgnorableHeaderPrefixFrame(headers_result.frame.frame_type)) {
+            return error.ExpectedHeadersFrame;
+        }
+        pos += headers_result.consumed;
+        headers_result = try h3_frame.decodeFrame(data[pos..]);
     }
     pos += headers_result.consumed;
 
@@ -761,10 +772,15 @@ pub fn decodeRequestWithDynamic(
     var authority: ?[]const u8 = null;
     var body: ?[]const u8 = null;
 
-    // Parse HEADERS frame
-    const headers_result = try h3_frame.decodeFrame(data[pos..]);
-    if (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
-        return error.ExpectedHeadersFrame;
+    // Skip GREASE / unknown extension frames that may precede the initial
+    // HEADERS frame (RFC 9114 §7.2.8, §9), then require HEADERS.
+    var headers_result = try h3_frame.decodeFrame(data[pos..]);
+    while (headers_result.frame.frame_type != @intFromEnum(h3_frame.FrameType.headers)) {
+        if (!h3_frame.isIgnorableHeaderPrefixFrame(headers_result.frame.frame_type)) {
+            return error.ExpectedHeadersFrame;
+        }
+        pos += headers_result.consumed;
+        headers_result = try h3_frame.decodeFrame(data[pos..]);
     }
     pos += headers_result.consumed;
 
@@ -947,6 +963,30 @@ test "HTTP/3 response with dynamic table roundtrip" {
     try std.testing.expectEqual(@as(u16, 200), result.response.status);
     try std.testing.expect(result.response.isSuccess());
     try std.testing.expectEqualStrings("{\"result\":\"ok\"}", result.response.body.?);
+}
+
+test "HTTP/3 non-streaming decode skips GREASE before HEADERS" {
+    const response = Response{ .status = 200 };
+    var headers_buf: [512]u8 = undefined;
+    const headers_len = try encodeResponseHeaders(&headers_buf, response);
+    var data_buf: [64]u8 = undefined;
+    const data_len = try encodeDataFrame(&data_buf, "greased");
+
+    // Reserved GREASE frame (RFC 9114 §7.2.8) before the response HEADERS.
+    const grease_type: u64 = 31 * 100_000_000_000_000_000 + 33;
+    var grease_buf: [64]u8 = undefined;
+    var gw = buffer.fixedWriter(&grease_buf);
+    try h3_frame.encodeFrame(gw.writer(), .{ .frame_type = grease_type, .payload = "GREASE is the word" });
+    const grease_len = gw.getWritten().len;
+
+    var wire: [1024]u8 = undefined;
+    @memcpy(wire[0..grease_len], grease_buf[0..grease_len]);
+    @memcpy(wire[grease_len .. grease_len + headers_len], headers_buf[0..headers_len]);
+    @memcpy(wire[grease_len + headers_len .. grease_len + headers_len + data_len], data_buf[0..data_len]);
+
+    const result = try decodeResponse(wire[0 .. grease_len + headers_len + data_len]);
+    try std.testing.expectEqual(@as(u16, 200), result.response.status);
+    try std.testing.expectEqualStrings("greased", result.response.body.?);
 }
 
 test "HTTP/3 dynamic response headers are retained via decodeResponseWithDynamicAndHeaders" {
