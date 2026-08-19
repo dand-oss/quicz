@@ -51,11 +51,11 @@ quicz h3 https://host/api -X POST --data @body.json   # upload a request body fr
 quicz h3 https://host/api -D headers.txt              # dump response headers to a file
 quicz h3 https://host/api -o -                        # write body to stdout explicitly
 
-# Static file server: HTTP/1.1 (browser) + HTTP/3 + /metrics + /echo
+# Static file server: HTTPS over TCP (browser) + HTTP/3 + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
 quicz serve --dir ./dist --index index.htm         # custom index file (default index.html)
-curl http://127.0.0.1:4433/                        # browsers open this URL directly
+curl -k https://127.0.0.1:4433/                    # browsers open this URL (self-signed: trust it)
 quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # HTTP/3 client: /echo reflects method/path/authority/body
 
 # Raw QUIC stream echo: verify quicz interop with external peers
@@ -133,12 +133,10 @@ chooses the index file name served for directory paths.
 ## Limits
 
 - The H3 client and server currently support IPv4 literals and `localhost`; `--ca` requires an absolute PEM path.
-- `serve` listens on both TCP (HTTP/1.1, browser-friendly) and UDP (HTTP/3).
-  Browsers must use plain `http://127.0.0.1:PORT/`; the `https://...` URL is the
-  HTTP/3 (UDP) endpoint for `quicz h3 https://127.0.0.1:PORT/ -k` (or `--ca`),
-  not a browser URL. HTTP/1.1 responses include `Alt-Svc: h3=":PORT"; ma=86400`,
-  but a plain `http://` origin stays on HTTP/1.1 because HTTP/3 requires TLS;
-  serving HTTPS over TCP so a browser can complete the TLS + Alt-Svc upgrade
-  loop is not implemented yet.
+- `serve` listens on TCP (HTTPS over TLS, browser-friendly) and UDP (HTTP/3).
+  Browsers open `https://127.0.0.1:PORT/` (self-signed cert: click through or
+  trust it); HTTP responses include `Alt-Svc: h3=":PORT"; ma=86400` so the
+  browser upgrades to HTTP/3 once it trusts the origin. `quicz h3
+  https://127.0.0.1:PORT/ -k` (or `--ca`) exercises the HTTP/3 endpoint.
 - `bench` connects to `echo --server` in insecure mode; it measures the transport path, not certificate verification.
 - Client subcommands default to a 10s timeout (`--timeout-ms`) so a missing or stalled server fails instead of hanging.

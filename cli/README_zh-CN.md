@@ -48,11 +48,11 @@ quicz h3 https://host/api -X POST --data @body.json   # 从文件读取请求体
 quicz h3 https://host/api -D headers.txt              # 把响应头保存到文件
 quicz h3 https://host/api -o -                        # 显式把正文写到 stdout
 
-# 静态文件服务：HTTP/1.1（浏览器）+ HTTP/3 + /metrics + /echo
+# 静态文件服务：TCP HTTPS（浏览器）+ HTTP/3 + /metrics + /echo
 quicz serve --dir ./dist --port 4433
 quicz serve --dir ./dist --port 4433 --cert cert.pem --key key.pem
 quicz serve --dir ./dist --index index.htm         # 自定义索引文件（默认 index.html）
-curl http://127.0.0.1:4433/                        # 浏览器直接打开这个地址
+curl -k https://127.0.0.1:4433/                    # 浏览器打开这个地址（自签证书需信任）
 quicz h3 https://127.0.0.1:4433/echo -k -d 'ping'    # HTTP/3 客户端：/echo 回显 method/path/authority/body
 
 # 原始 QUIC 流 echo：验证 quicz 与外部对端的互通
@@ -123,11 +123,9 @@ runtime 解析器在扫描 HEADERS 时会跳过保留帧类型与未知帧类型
 ## 边界
 
 - H3 客户端和服务端当前只支持 IPv4 / `localhost`；`--ca` 需要绝对路径 PEM。
-- `serve` 同时监听 TCP（HTTP/1.1，浏览器可直接访问）与 UDP（HTTP/3）。
-  浏览器必须用明文 `http://127.0.0.1:PORT/`；`https://...` 是 HTTP/3（UDP）专用
-  端点，供 `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`）使用，不是浏览器 URL。
-  HTTP/1.1 响应带 `Alt-Svc: h3=":PORT"; ma=86400`，但明文 `http://` 源因 HTTP/3
-  必须走 TLS 会停留在 HTTP/1.1；在 TCP 上提供 HTTPS、让浏览器完成 TLS + Alt-Svc
-  升级闭环，目前尚未实现。
+- `serve` 监听 TCP（HTTPS over TLS，浏览器可直接访问）与 UDP（HTTP/3）。
+  浏览器打开 `https://127.0.0.1:PORT/`（自签证书需点继续/信任）；HTTP 响应带
+  `Alt-Svc: h3=":PORT"; ma=86400`，浏览器信任该源证书后会升级到 HTTP/3。
+  `quicz h3 https://127.0.0.1:PORT/ -k`（或 `--ca`）直接测 HTTP/3 端点。
 - `bench` 以 insecure 方式连接 `echo --server`，测的是传输路径而非证书链路。
 - 客户端子命令默认 10s 超时（`--timeout-ms`），连不上或服务端卡住会直接失败，不挂死。

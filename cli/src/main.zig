@@ -13,6 +13,7 @@
 const std = @import("std");
 const test_certs = @import("test_certs");
 const quicz = @import("quicz");
+const tls_tcp = @import("tls_tcp.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -957,7 +958,7 @@ fn serveHandler(req: quicz.h3_request.DecodedRequest) quicz.h3_request.Response 
 /// HTTP/1.1 fallback server so browsers can open the same static content over
 /// TCP while the QUIC listener keeps serving HTTP/3. Mirrors how real H3 sites
 /// expose both listeners and let browsers upgrade via Alt-Svc.
-fn serveHttp11(tcp_server: *std.Io.net.Server, port: u16) std.Io.Cancelable!void {
+fn serveHttp11(tcp_server: *std.Io.net.Server, port: u16, tls_config: tls_tcp.Config) std.Io.Cancelable!void {
     const io = g_io;
     var group: std.Io.Group = .init;
     defer group.cancel(io);
@@ -969,7 +970,7 @@ fn serveHttp11(tcp_server: *std.Io.net.Server, port: u16) std.Io.Cancelable!void
                 return;
             },
         };
-        group.concurrent(io, handleHttp11Connection, .{ stream, port }) catch |err| {
+        group.concurrent(io, handleHttp11Connection, .{ stream, port, tls_config }) catch |err| {
             std.debug.print("serve: HTTP/1.1 handler spawn failed: {s}\n", .{@errorName(err)});
             stream.close(io);
             continue;
@@ -977,7 +978,7 @@ fn serveHttp11(tcp_server: *std.Io.net.Server, port: u16) std.Io.Cancelable!void
     }
 }
 
-fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16) void {
+fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16, tls_config: tls_tcp.Config) void {
     const io = g_io;
     defer {
         var copy = stream;
@@ -987,34 +988,50 @@ fn handleHttp11Connection(stream: std.Io.net.Stream, port: u16) void {
     var recv_buffer: [65536]u8 = undefined;
     var connection_reader = stream.reader(io, &recv_buffer);
     var connection_writer = stream.writer(io, &send_buffer);
-    var http_server: std.http.Server = .init(&connection_reader.interface, &connection_writer.interface);
+    var tls_stream = tls_tcp.TlsStream.handshake(&connection_reader.interface, &connection_writer.interface, tls_config) catch |err| {
+        std.debug.print("serve: TLS handshake failed: {s}\n", .{@errorName(err)});
+        return;
+    };
+    handleHttp11Tls(&tls_stream, port);
+}
 
+/// Read one HTTP/1.1 request head over the TLS stream and respond, then close
+/// (connection: close). Static servers do not need keep-alive.
+fn handleHttp11Tls(tls_stream: *tls_tcp.TlsStream, port: u16) void {
+    var req_buf: [16384]u8 = undefined;
+    var req_len: usize = 0;
     while (true) {
-        var request = http_server.receiveHead() catch |err| switch (err) {
-            error.HttpConnectionClosing => return,
-            else => {
-                // Non-HTTP probes (e.g. a browser dialing https:// against the
-                // plaintext listener) close silently; verbose shows the detail.
-                if (g_verbose) std.debug.print("serve: HTTP/1.1 receive failed: {s}\n", .{@errorName(err)});
-                return;
-            },
-        };
-        handleHttp11Request(&request, port) catch |err| switch (err) {
-            else => {
+        if (req_len >= req_buf.len) return;
+        const n = tls_stream.read(req_buf[req_len..]) catch return;
+        if (n == 0) return;
+        req_len += n;
+        if (std.mem.indexOf(u8, req_buf[0..req_len], "\r\n\r\n")) |head_end| {
+            handleHttp11Request(tls_stream, req_buf[0..head_end], port) catch |err| {
                 if (g_verbose) std.debug.print("serve: HTTP/1.1 request failed: {s}\n", .{@errorName(err)});
                 return;
-            },
-        };
+            };
+            return;
+        }
     }
 }
 
-fn handleHttp11Request(request: *std.http.Server.Request, port: u16) !void {
-    const target = request.head.target;
+fn handleHttp11Request(tls_stream: *tls_tcp.TlsStream, head: []const u8, port: u16) !void {
+    const line_end = std.mem.indexOfScalar(u8, head, '\r') orelse return error.BadRequest;
+    const request_line = head[0..line_end];
+    var sp1 = std.mem.indexOfScalar(u8, request_line, ' ') orelse return error.BadRequest;
+    const method = request_line[0..sp1];
+    const after_method = request_line[sp1 + 1 ..];
+    sp1 = std.mem.indexOfScalar(u8, after_method, ' ') orelse return error.BadRequest;
+    const target = after_method[0..sp1];
+    if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD")) {
+        try sendHttp11Response(tls_stream, 405, &.{.{ .name = "allow", .value = "GET, HEAD" }}, "method not allowed", port, false);
+        return;
+    }
     const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
     const decoded = quicz.h3_request.DecodedRequest{
-        .method = @tagName(request.head.method),
+        .method = method,
         .path = path,
-        .scheme = "http",
+        .scheme = "https",
         .authority = null,
         .body = null,
     };
@@ -1028,29 +1045,30 @@ fn handleHttp11Request(request: *std.http.Server.Request, port: u16) !void {
         const state: *OwnedBody = @ptrCast(@alignCast(bs.ctx));
         body = state.allData();
     }
+    try sendHttp11Response(tls_stream, h3resp.status, h3resp.extra_headers, body, port, std.mem.eql(u8, method, "HEAD"));
+}
 
-    var header_buf: [8]std.http.Header = undefined;
-    var header_count: usize = 0;
-    for (h3resp.extra_headers) |h| {
-        if (header_count >= header_buf.len) break;
-        header_buf[header_count] = .{ .name = h.name, .value = h.value };
-        header_count += 1;
+fn sendHttp11Response(
+    tls_stream: *tls_tcp.TlsStream,
+    status_code: u16,
+    extra_headers: []const quicz.qpack.HeaderField,
+    body: []const u8,
+    port: u16,
+    head_only: bool,
+) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const status: std.http.Status = @enumFromInt(@as(u10, @intCast(status_code)));
+    const phrase = status.phrase() orelse "Unknown";
+    try w.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, phrase });
+    for (extra_headers) |h| {
+        try w.print("{s}: {s}\r\n", .{ h.name, h.value });
     }
-    var alt_svc_buf: [64]u8 = undefined;
-    const alt_svc = std.fmt.bufPrint(&alt_svc_buf, "h3=\":{d}\"; ma=86400", .{port}) catch null;
-    if (alt_svc) |as| {
-        if (header_count < header_buf.len) {
-            header_buf[header_count] = .{ .name = "alt-svc", .value = as };
-            header_count += 1;
-        }
-    }
-
-    const status: std.http.Status = @enumFromInt(@as(u10, @intCast(h3resp.status)));
-    try request.respond(body, .{
-        .status = status,
-        .extra_headers = header_buf[0..header_count],
-        .keep_alive = false,
-    });
+    try w.print("content-length: {d}\r\n", .{body.len});
+    try w.print("alt-svc: h3=\":{d}\"; ma=86400\r\n", .{port});
+    try w.print("connection: close\r\n\r\n", .{});
+    try tls_stream.write(buf[0..w.end]);
+    if (!head_only and body.len > 0) try tls_stream.write(body);
 }
 
 fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
@@ -1102,14 +1120,19 @@ fn cmdServe(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.It
         return err;
     };
     defer tcp_server.deinit(io);
-    var tcp_serve_task = io.concurrent(serveHttp11, .{ &tcp_server, port }) catch |err| {
+    const tls_config = tls_tcp.Config{
+        .cert_der = identity.cert_der,
+        .private_key = &identity.private_key,
+        .alpn = &.{"http/1.1"},
+    };
+    var tcp_serve_task = io.concurrent(serveHttp11, .{ &tcp_server, port, tls_config }) catch |err| {
         std.debug.print("serve: failed to start HTTP/1.1 serve loop: {s}\n", .{@errorName(err)});
         return err;
     };
     defer tcp_serve_task.cancel(io) catch {};
 
     try server.serveH3(.{}, serveHandler);
-    std.debug.print("quicz serve: browser http://127.0.0.1:{d}/ | HTTP/3 https://127.0.0.1:{d}/ (use 'quicz h3 -k') | dir={s}\n", .{ port, port, dir_path });
+    std.debug.print("quicz serve: https://127.0.0.1:{d}/ (browser) | HTTP/3 https://127.0.0.1:{d}/ (quicz h3 -k) | dir={s}\n", .{ port, port, dir_path });
     server.drive_group.await(io) catch {};
     tcp_serve_task.await(io) catch {};
 }

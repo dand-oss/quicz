@@ -90,22 +90,28 @@ if ! echo "$out" | grep -q "authority: local.test"; then
 fi
 echo "PASS: h3 --resolve override HTTP/3 200"
 
-# HTTP/1.1 over TCP (browser path): the same serve must answer plain curl.
-out=$(curl -sS "http://127.0.0.1:$port/hello.txt") || true
+# HTTPS over TCP (browser path): the same serve must answer TLS curl.
+out=$(curl -skS "https://127.0.0.1:$port/hello.txt") || true
 if ! echo "$out" | grep -q "hello from quicz serve"; then
-  echo "FAIL: HTTP/1.1 static file: $out" >&2
+  echo "FAIL: HTTPS static file: $out" >&2
   kill "$srv" 2>/dev/null
   rm -rf "$dir"
   exit 1
 fi
-status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/hello.txt")
+status=$(curl -skS -o /dev/null -w '%{http_code}' "https://127.0.0.1:$port/hello.txt")
 if [ "$status" != "200" ]; then
-  echo "FAIL: HTTP/1.1 status=$status" >&2
+  echo "FAIL: HTTPS status=$status" >&2
   kill "$srv" 2>/dev/null
   rm -rf "$dir"
   exit 1
 fi
-echo "PASS: HTTP/1.1 browser path HTTP/1.1 200"
+if ! curl -skSI "https://127.0.0.1:$port/hello.txt" | grep -qi '^alt-svc:'; then
+  echo "FAIL: HTTPS response missing Alt-Svc" >&2
+  kill "$srv" 2>/dev/null
+  rm -rf "$dir"
+  exit 1
+fi
+echo "PASS: HTTPS browser path HTTP/1.1 200"
 
 kill "$srv" 2>/dev/null
 wait "$srv" 2>/dev/null || true
