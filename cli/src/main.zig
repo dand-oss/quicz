@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-i] [-L] [-s] [-f] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz h3 <url> [-k] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
 //!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -81,7 +81,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-i] [-L] [-s] [-f] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz h3 <url> [-k] [-i] [-I] [-L] [-s] [-f] [-o FILE] [-D FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -104,6 +104,33 @@ fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
     defer file.close(io);
     const n = try file.readPositionalAll(io, buf, 0);
     return buf[0..n];
+}
+
+/// Read a whole file into an allocator-owned buffer.
+fn readFileAll(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
+    const file = try std.Io.Dir.openFile(.cwd(), io, path, .{});
+    defer file.close(io);
+    const len = try file.length(io);
+    const buf = try allocator.alloc(u8, len);
+    errdefer allocator.free(buf);
+    const n = try file.readPositionalAll(io, buf, 0);
+    return buf[0..n];
+}
+
+/// Write an HTTP/3 status line and non-pseudo headers to a file.
+fn writeHeadersToFile(io: std.Io, path: []const u8, status: u16, headers: []const quicz.qpack.HeaderField) !void {
+    const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
+    defer file.close(io);
+    var buf: [32]u8 = undefined;
+    const status_line = std.fmt.bufPrint(&buf, "HTTP/3 {d}\n", .{status}) catch "HTTP/3 ?\n";
+    try file.writeStreamingAll(io, status_line);
+    for (headers) |h| {
+        if (h.name.len > 0 and h.name[0] == ':') continue;
+        try file.writeStreamingAll(io, h.name);
+        try file.writeStreamingAll(io, ": ");
+        try file.writeStreamingAll(io, h.value);
+        try file.writeStreamingAll(io, "\n");
+    }
 }
 
 /// Candidate system CA bundle paths, checked in order; the first file that
@@ -261,6 +288,7 @@ const H3Job = struct {
     max_redirects: usize,
     silent: bool,
     fail_on_http_error: bool,
+    dump_headers_path: ?[]const u8,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -419,6 +447,10 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             return error.HttpError;
         }
 
+        if (job.dump_headers_path) |dump_path| {
+            try writeHeadersToFile(io, dump_path, response.status, response.headers);
+        }
+
         if (job.include_headers) {
             std.debug.print("HTTP/3 {d}\n", .{response.status});
             for (response.headers) |h| {
@@ -467,11 +499,14 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     }
     var ca_pem: ?[]const u8 = null;
     var output_path: ?[]const u8 = null;
+    var dump_headers_path: ?[]const u8 = null;
     var include_headers = false;
     var follow_redirects = false;
     var max_redirects: usize = 10;
     var silent = false;
     var fail_on_http_error = false;
+    var owned_body: ?[]u8 = null;
+    defer if (owned_body) |b| allocator.free(b);
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
@@ -480,10 +515,15 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
             fail_on_http_error = true;
         } else if (std.mem.eql(u8, a, "-s") or std.mem.eql(u8, a, "--silent")) {
             silent = true;
+        } else if (std.mem.eql(u8, a, "-I") or std.mem.eql(u8, a, "--head")) {
+            method = "HEAD";
+            include_headers = true;
         } else if (std.mem.eql(u8, a, "-i") or std.mem.eql(u8, a, "--include")) {
             include_headers = true;
         } else if (std.mem.eql(u8, a, "-L") or std.mem.eql(u8, a, "--location")) {
             follow_redirects = true;
+        } else if (std.mem.eql(u8, a, "-D") or std.mem.eql(u8, a, "--dump-header")) {
+            dump_headers_path = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--max-redirects")) {
             max_redirects = try std.fmt.parseInt(usize, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-o") or std.mem.eql(u8, a, "--output")) {
@@ -491,7 +531,14 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         } else if (std.mem.eql(u8, a, "-X")) {
             method = try nextArg(args);
         } else if (std.mem.eql(u8, a, "--data")) {
-            body = try nextArg(args);
+            const raw = try nextArg(args);
+            if (raw.len > 0 and raw[0] == '@') {
+                const buf = try readFileAll(allocator, io, raw[1..]);
+                owned_body = buf;
+                body = buf;
+            } else {
+                body = raw;
+            }
         } else if (std.mem.eql(u8, a, "--timeout-ms")) {
             timeout_ms = try std.fmt.parseInt(u64, try nextArg(args), 10);
         } else if (std.mem.eql(u8, a, "-H")) {
@@ -542,6 +589,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .max_redirects = max_redirects,
         .silent = silent,
         .fail_on_http_error = fail_on_http_error,
+        .dump_headers_path = dump_headers_path,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }

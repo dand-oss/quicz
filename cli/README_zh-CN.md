@@ -21,6 +21,9 @@ zig build test             # CLI 单元测试
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
 quicz h3 https://host/api -i -L -s -f -o resp.html # 响应头、重定向、静默、4xx/5xx 失败、保存正文
+quicz h3 https://host/api -I                          # HEAD 请求，只要响应头
+quicz h3 https://host/api -X POST --data @body.json   # 从文件读取请求体上传
+quicz h3 https://host/api -D headers.txt              # 把响应头保存到文件
 
 # H3 静态文件服务：目录 + /metrics
 quicz serve --dir ./dist --port 4433

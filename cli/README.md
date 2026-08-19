@@ -22,6 +22,9 @@ zig build test             # CLI unit tests
 quicz h3 https://127.0.0.1:4433/hello.txt -k
 quicz h3 https://host:4433/api -k -X POST -H 'content-type: application/json' --data '{"ok":true}' --timeout-ms 15000
 quicz h3 https://host/api -i -L -s -f -o resp.html # headers, redirects, silent, fail on 4xx/5xx, save body
+quicz h3 https://host/api -I                          # HEAD request, headers only
+quicz h3 https://host/api -X POST --data @body.json   # upload a request body from a file
+quicz h3 https://host/api -D headers.txt              # dump response headers to a file
 
 # H3 static file server: directory + /metrics
 quicz serve --dir ./dist --port 4433
