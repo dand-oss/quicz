@@ -1,7 +1,7 @@
 //! quicz CLI - daily QUIC / HTTP/3 development tool.
 //!
 //! Subcommands:
-//!   quicz h3 <url> [-k] [-i] [-L] [-s] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
+//!   quicz h3 <url> [-k] [-i] [-L] [-s] [-f] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM]
 //!   quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
 //!   quicz echo --client HOST PORT [--data BODY] [--ca PEM]
@@ -81,7 +81,7 @@ fn printUsage() void {
         \\quicz - QUIC / HTTP/3 development tool
         \\
         \\Usage:
-        \\  quicz h3 <url> [-k] [-i] [-L] [-s] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
+        \\  quicz h3 <url> [-k] [-i] [-L] [-s] [-f] [-o FILE] [--max-redirects N] [-X METHOD] [-H NAME:VALUE]... [--data BODY] [--ca PEM] [--timeout-ms MS]
         \\  quicz serve [--dir DIR] [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --server [--port N] [--bind IP] [--cert PEM] [--key PEM]
         \\  quicz echo --client HOST PORT [--data BODY] [--ca PEM] [--timeout-ms MS]
@@ -260,6 +260,7 @@ const H3Job = struct {
     follow_redirects: bool,
     max_redirects: usize,
     silent: bool,
+    fail_on_http_error: bool,
 };
 
 fn isRedirectStatus(status: u16) bool {
@@ -413,6 +414,11 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
             }
         }
 
+        if (job.fail_on_http_error and response.status >= 400) {
+            std.debug.print("HTTP/3 {d}\n", .{response.status});
+            return error.HttpError;
+        }
+
         if (job.include_headers) {
             std.debug.print("HTTP/3 {d}\n", .{response.status});
             for (response.headers) |h| {
@@ -465,10 +471,13 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
     var follow_redirects = false;
     var max_redirects: usize = 10;
     var silent = false;
+    var fail_on_http_error = false;
 
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "-k")) {
             insecure = true;
+        } else if (std.mem.eql(u8, a, "-f") or std.mem.eql(u8, a, "--fail")) {
+            fail_on_http_error = true;
         } else if (std.mem.eql(u8, a, "-s") or std.mem.eql(u8, a, "--silent")) {
             silent = true;
         } else if (std.mem.eql(u8, a, "-i") or std.mem.eql(u8, a, "--include")) {
@@ -532,6 +541,7 @@ fn cmdH3(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Itera
         .follow_redirects = follow_redirects,
         .max_redirects = max_redirects,
         .silent = silent,
+        .fail_on_http_error = fail_on_http_error,
     };
     try runWithTimeout(io, timeout_ms, h3Job, &job);
 }
