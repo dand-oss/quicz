@@ -4414,30 +4414,31 @@ pub const Connection = struct {
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
     ) Error!?[]u8 {
-        var egress_path: ?endpoint.UdpTuple = null;
+        var meta = ShortEgressMeta{};
         return self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
             now_nanos,
             dcid,
             keys,
             key_phase,
-            &egress_path,
+            &meta,
         );
     }
 
     /// `pollProtectedShortDatagramWithKeyPhase` with the emitted
-    /// datagram's path-validation binding reported through
-    /// `egress_out`: the candidate UDP path when the packet carries a
-    /// bound PATH_CHALLENGE or PATH_RESPONSE, null for every other
-    /// emission (the committed route applies).
+    /// datagram's egress facts reported through `egress_out`: the
+    /// candidate UDP path when the packet carries a bound
+    /// PATH_CHALLENGE or PATH_RESPONSE (null for every other emission
+    /// — the committed route applies), and whether the built packet
+    /// contains a PING frame.
     pub fn pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
         self: *Connection,
         now_nanos: i64,
         dcid: []const u8,
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
-        egress_out: *?endpoint.UdpTuple,
+        egress_out: *ShortEgressMeta,
     ) Error!?[]u8 {
-        egress_out.* = null;
+        egress_out.* = .{};
         self.expireIdleState(now_nanos);
         self.expireCloseState(now_nanos);
         if (self.pending_close != null) {
@@ -4487,7 +4488,7 @@ pub const Connection = struct {
             const srtt: u64 = self.recovery_state.smoothed_rtt_ns;
             self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
-        egress_out.* = built.emitted_path;
+        egress_out.* = .{ .path_override = built.emitted_path, .emitted_ping = built.consume_ping };
         return built.datagram;
     }
 
@@ -4523,12 +4524,21 @@ pub const Connection = struct {
         return self.pollProtectedShortDatagramWithKeyPhaseState(now_nanos, dcid, &state);
     }
 
-    /// One protected 1-RTT datagram together with the egress path
-    /// binding of the path-validation frame it actually carries.
-    /// `path_override == null` means the committed route applies.
+    /// One protected 1-RTT datagram together with the egress facts of
+    /// the packet actually built: the path binding of the
+    /// path-validation frame it carries (`path_override == null` means
+    /// the committed route applies) and whether it contains a PING
+    /// frame (`emitted_ping`).
     pub const ShortEgressDatagram = struct {
         datagram: []u8,
         path_override: ?endpoint.UdpTuple,
+        emitted_ping: bool,
+    };
+
+    /// Egress facts reported alongside a polled short datagram.
+    pub const ShortEgressMeta = struct {
+        path_override: ?endpoint.UdpTuple = null,
+        emitted_ping: bool = false,
     };
 
     /// Atomic egress poll: the datagram AND the UDP path it must be
@@ -4540,17 +4550,18 @@ pub const Connection = struct {
         dcid: []const u8,
     ) Error!?ShortEgressDatagram {
         const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
-        var path_override: ?endpoint.UdpTuple = null;
+        var meta = ShortEgressMeta{};
         const datagram = try self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
             now_nanos,
             dcid,
             state.currentKeys(),
             state.currentKeyPhase(),
-            &path_override,
+            &meta,
         );
         return if (datagram) |bytes| .{
             .datagram = bytes,
-            .path_override = path_override,
+            .path_override = meta.path_override,
+            .emitted_ping = meta.emitted_ping,
         } else null;
     }
 
@@ -10881,9 +10892,19 @@ pub const Connection = struct {
         self.peer_max_streams_uni = @max(self.peer_max_streams_uni, max_streams.maximum_streams);
     }
 
+    fn pathTupleEqual(a: ?endpoint.UdpTuple, b: ?endpoint.UdpTuple) bool {
+        if (a == null and b == null) return true;
+        if (a == null or b == null) return false;
+        return a.?.eql(b.?);
+    }
+
     fn receivePathChallengeFrame(self: *Connection, path_challenge: frame.PathChallengeFrame) Error!void {
+        // Deduplication is over the FULL {data, path} pair: the same
+        // challenge bytes arriving on a second path still deserve a
+        // response on that path.
         for (self.pending_path_responses.items) |response| {
-            if (std.mem.eql(u8, &response.data, &path_challenge.data)) return;
+            if (!std.mem.eql(u8, &response.data, &path_challenge.data)) continue;
+            if (pathTupleEqual(response.path, self.receive_path_hint)) return;
         }
         self.pending_path_responses.append(self.allocator, .{
             .data = path_challenge.data,
