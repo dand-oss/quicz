@@ -539,7 +539,9 @@ pub const Server = struct {
         var addrs: [16]std.Io.net.IpAddress = undefined;
         var msgs: [16]std.Io.net.OutgoingMessage = undefined;
         for (out[0..drained.datagrams_written], 0..) |o, i| {
-            addrs[i] = .{ .ip4 = .{ .bytes = o.path.remote.octets, .port = o.path.remote.port } };
+            // This runtime binds one IPv4 socket and only creates IPv4
+            // paths, so the neutral remote's v4 octets are exact here.
+            addrs[i] = .{ .ip4 = .{ .bytes = o.path.remote.v4, .port = o.path.remote.port } };
             msgs[i] = .{ .address = &addrs[i], .data_ptr = o.datagram.ptr, .data_len = o.datagram.len };
         }
         if (builtin.os.tag == .linux) {
@@ -902,7 +904,7 @@ pub const Server = struct {
             };
             const result = due orelse return;
             for (out[0..result.drain.datagrams_written]) |o| {
-                var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = o.path.remote.octets, .port = o.path.remote.port } };
+                var dest = std.Io.net.IpAddress{ .ip4 = .{ .bytes = o.path.remote.v4, .port = o.path.remote.port } };
                 self.socket.send(io, &dest, o.datagram) catch {};
                 allocator.free(o.datagram);
             }

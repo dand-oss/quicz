@@ -37,7 +37,7 @@ pub fn main() !void {
         .retry,
         0,
         60_000,
-        client_path,
+        client_path.toUdp(),
         token_nonce,
     );
     defer allocator.free(retry_token);

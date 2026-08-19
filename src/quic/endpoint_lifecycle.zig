@@ -400,7 +400,7 @@ pub const EndpointConnectionLifecycle = struct {
             expected_kind,
             expected_originating_version,
             now_nanos,
-            path,
+            path.toUdp(),
             token,
         );
         try connection.validatePeerAddress();
@@ -440,14 +440,14 @@ pub const EndpointConnectionLifecycle = struct {
             .retry,
             expected_originating_version,
             now_nanos,
-            path,
+            path.toUdp(),
             token,
         );
         const validation = try policy.validateTokenForPathForVersion(
             .retry,
             expected_originating_version,
             now_nanos,
-            path,
+            path.toUdp(),
             token,
         );
         try connection.validateRetryToken(token);
@@ -1246,6 +1246,14 @@ pub const EndpointConnectionLifecycle = struct {
         return self.router.currentRoutePath(destination_connection_id);
     }
 
+    /// Address-neutral committed route path.
+    pub fn currentRoutePathAddress(
+        self: *const EndpointConnectionLifecycle,
+        destination_connection_id: []const u8,
+    ) endpoint.RouteError!endpoint.UdpTuple {
+        return self.router.currentRoutePathAddress(destination_connection_id);
+    }
+
     /// Route one received datagram using the owned endpoint routing table.
     /// Unified feed across connections with OrClose and drain.
     /// Unified feed across connections with OrClose and poll.
@@ -1584,7 +1592,7 @@ pub const EndpointConnectionLifecycle = struct {
             .retry,
             initial_accept.version,
             now_nanos,
-            path,
+            initial_accept.path,
             initial_accept.token,
         );
         _ = try self.processRoutedProtectedInitialDatagram(
@@ -1857,7 +1865,7 @@ pub const EndpointConnectionLifecycle = struct {
                             .feed = .{ .routed = route },
                             .updated_route = updated_route,
                             .path_challenge_queued = path_challenge_queued,
-                            .selected_output_path = if (updated_route != null or path_challenge_queued) path else null,
+                            .selected_output_path = if (updated_route != null or path_challenge_queued) path.toUdp() else null,
                         };
                     },
                 }
@@ -1908,9 +1916,9 @@ pub const EndpointConnectionLifecycle = struct {
                 self.routeDatagram(path, datagram) catch null
             else
                 null;
-            const output_path: ?endpoint.Udp4Tuple = if (routed) |route|
+            const output_path: ?endpoint.UdpTuple = if (routed) |route|
                 if (route.connection_id == connection_id)
-                    try self.currentRoutePath(route.destination_connection_id.asSlice())
+                    try self.currentRoutePathAddress(route.destination_connection_id.asSlice())
                 else
                     null
             else
@@ -1933,7 +1941,7 @@ pub const EndpointConnectionLifecycle = struct {
                 .next_deadline = self.nextDeadline(connection_id, connection),
             },
         };
-        const output_path = feed.selected_output_path orelse try self.currentRoutePath(routed.destination_connection_id.asSlice());
+        const output_path = feed.selected_output_path orelse try self.currentRoutePathAddress(routed.destination_connection_id.asSlice());
         const polled = try self.pollDatagram(
             connection_id,
             connection,

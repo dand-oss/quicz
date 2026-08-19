@@ -100,7 +100,7 @@ pub fn main() !void {
         .new_token,
         10,
         60_000,
-        server_path,
+        server_path.toUdp(),
         token_nonce,
     );
     defer allocator.free(address_token);
@@ -152,7 +152,7 @@ pub fn main() !void {
         .remote = quicz.endpoint.Udp4Address.init(client_local.octets, changed_client_port),
     };
     var path_rejected = false;
-    if (token_policy.validateTokenForPath(.new_token, 15, changed_path, stored_token)) |_| {
+    if (token_policy.validateTokenForPath(.new_token, 15, changed_path.toUdp(), stored_token)) |_| {
         return error.UnexpectedState;
     } else |err| switch (err) {
         error.InvalidToken => path_rejected = true,
@@ -196,7 +196,7 @@ pub fn main() !void {
     try require(restored_policy.replayFilterEntryCount() == 1);
 
     var replay_rejected = false;
-    if (restored_policy.validateTokenForPath(.new_token, 19, server_path, stored_token)) |_| {
+    if (restored_policy.validateTokenForPath(.new_token, 19, server_path.toUdp(), stored_token)) |_| {
         return error.UnexpectedState;
     } else |err| switch (err) {
         error.TokenReplay => replay_rejected = true,
@@ -210,19 +210,19 @@ pub fn main() !void {
         .v2,
         20,
         60_000,
-        server_path,
+        server_path.toUdp(),
         v2_token_nonce,
     );
     defer allocator.free(v2_token);
     var version_rejected = false;
-    if (token_policy.validateTokenForPathForVersion(.new_token, .v1, 21, server_path, v2_token)) |_| {
+    if (token_policy.validateTokenForPathForVersion(.new_token, .v1, 21, server_path.toUdp(), v2_token)) |_| {
         return error.UnexpectedState;
     } else |err| switch (err) {
         error.InvalidToken => version_rejected = true,
         else => return err,
     }
     try require(version_rejected);
-    const v2_validation = try token_policy.validateTokenForPathForVersion(.new_token, .v2, 22, server_path, v2_token);
+    const v2_validation = try token_policy.validateTokenForPathForVersion(.new_token, .v2, 22, server_path.toUdp(), v2_token);
     try require(v2_validation.originating_version == .v2);
 
     std.debug.print("[udp-address] client_port={} server_port={} handshake_bytes={} token_bytes={} stored_token_len={} route={} emit_timers={} handshake_confirmed={} path_rejected={} v1_validated={} blocked_before_validation={} unblocked_after_validation={} future_ping_bytes={} previous_secrets={} replay_entries={} replay_rejected={} version_rejected={} v2_validated={}\n", .{

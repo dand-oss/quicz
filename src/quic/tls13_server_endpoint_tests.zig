@@ -368,7 +368,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(stream_datagram.datagram);
     try std.testing.expect(stream_datagram.datagram.len != 0);
-    try std.testing.expect(stream_datagram.path.eql(record_path));
+    try std.testing.expect(stream_datagram.path.eql(record_path.toUdp()));
     const reset_datagram = (try endpoint_owner.resetStreamWithRoutePath(
         record_handle,
         server_unidirectional_stream,
@@ -377,7 +377,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(reset_datagram.datagram);
     try std.testing.expect(reset_datagram.datagram.len != 0);
-    try std.testing.expect(reset_datagram.path.eql(record_path));
+    try std.testing.expect(reset_datagram.path.eql(record_path.toUdp()));
     const stop_datagram = (try endpoint_owner.stopSendingWithRoutePath(
         record_handle,
         server_bidirectional_stream,
@@ -386,7 +386,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(stop_datagram.datagram);
     try std.testing.expect(stop_datagram.datagram.len != 0);
-    try std.testing.expect(stop_datagram.path.eql(record_path));
+    try std.testing.expect(stop_datagram.path.eql(record_path.toUdp()));
     const drain_send_stream = try endpoint_owner.openStream(record_handle);
     const drain_reset_stream = try endpoint_owner.openUniStream(record_handle);
     const drain_stop_stream = try endpoint_owner.openStream(record_handle);
@@ -461,7 +461,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (control_out[0..sent_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(sent_drain.next_deadline != null);
@@ -480,7 +480,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (control_out[0..reset_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(reset_drain.next_deadline != null);
@@ -499,7 +499,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (control_out[0..stop_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(stop_drain.next_deadline != null);
@@ -522,7 +522,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (scratch_send_out[0..scratch_sent_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(scratch_sent_drain.next_deadline != null);
@@ -541,7 +541,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (scratch_reset_out[0..scratch_reset_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(scratch_reset_drain.next_deadline != null);
@@ -560,7 +560,7 @@ test "Tls13ServerEndpoint owns bounded records with lifecycle state" {
     for (scratch_stop_out[0..scratch_stop_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(record_path));
+        try std.testing.expect(drained.path.eql(record_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     try std.testing.expect(scratch_stop_drain.next_deadline != null);
@@ -1320,7 +1320,7 @@ test "Tls13ServerEndpoint pairs stateless endpoint responses with receive path" 
     );
     switch (version_response) {
         .version_negotiation => |response| {
-            try std.testing.expect(response.path.eql(path));
+            try std.testing.expect(response.path.eql(path.toUdp()));
             var parsed = try quic_packet.parseVersionNegotiationPacket(response.datagram, std.testing.allocator);
             defer quic_packet.deinitVersionNegotiationPacket(&parsed, std.testing.allocator);
             try std.testing.expectEqualSlices(u8, &[_]u8{ 0x11, 0x22, 0x33 }, parsed.dcid);
@@ -1350,7 +1350,7 @@ test "Tls13ServerEndpoint pairs stateless endpoint responses with receive path" 
         &process_handshake_out,
     );
     switch (processed_version_response) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
 
@@ -1376,7 +1376,7 @@ test "Tls13ServerEndpoint pairs stateless endpoint responses with receive path" 
     );
     switch (reset_response) {
         .stateless_reset => |response| {
-            try std.testing.expect(response.path.eql(path));
+            try std.testing.expect(response.path.eql(path.toUdp()));
             try std.testing.expectEqual(reset_prefix.len + quic_packet.stateless_reset_token_len, response.datagram.len);
             try std.testing.expect(quic_packet.matchesStatelessReset(response.datagram, reset_token));
         },
@@ -1537,7 +1537,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
     switch (initial_result) {
         .initial => |initial| {
             try std.testing.expectEqual(record.handle, initial.initial.route.connection_id);
-            try std.testing.expect(initial.initial.backend.path.eql(path));
+            try std.testing.expect(initial.initial.backend.path.eql(path.toUdp()));
             try std.testing.expectEqual(@as(usize, 0), initial.initial.backend.backend.drain.datagrams_written);
             try std.testing.expectEqual(@as(?TestEndpoint.CryptoBackendDatagramDrainPathResult, null), initial.handshake);
         },
@@ -1593,7 +1593,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
     switch (handshake_result) {
         .handshake => |handshake| {
             try std.testing.expectEqual(record.handle, handshake.route.connection_id);
-            try std.testing.expect(handshake.backend.path.eql(path));
+            try std.testing.expect(handshake.backend.path.eql(path.toUdp()));
             try std.testing.expectEqual(@as(usize, 0), handshake.backend.backend.drain.datagrams_written);
         },
         else => return error.TestUnexpectedResult,
@@ -1640,7 +1640,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
                 const polled_short = processed_short.datagram orelse return error.TestUnexpectedResult;
                 defer std.testing.allocator.free(polled_short.datagram);
                 try std.testing.expectEqual(record.handle, polled_short.connection_id);
-                try std.testing.expect(polled_short.path.eql(path));
+                try std.testing.expect(polled_short.path.eql(path.toUdp()));
                 try std.testing.expect(polled_short.datagram.len > 0);
                 try std.testing.expectEqual(@as(?endpoint_types.EndpointConnectionDeadline, null), processed_short.next_deadline);
             },
@@ -1684,7 +1684,7 @@ test "Tls13ServerEndpoint dispatches routed long packets with route paths" {
                 try std.testing.expectEqual(@as(usize, 1), processed_short.drain.datagrams_written);
                 defer std.testing.allocator.free(installed_key_out[0].datagram);
                 try std.testing.expectEqual(record.handle, installed_key_out[0].connection_id);
-                try std.testing.expect(installed_key_out[0].path.eql(migrated_path));
+                try std.testing.expect(installed_key_out[0].path.eql(migrated_path.toUdp()));
                 try std.testing.expect(installed_key_out[0].datagram.len > 0);
                 const next_deadline = processed_short.next_deadline orelse return error.TestUnexpectedResult;
                 try std.testing.expectEqual(record.handle, next_deadline.connection_id);
@@ -1879,7 +1879,7 @@ test "Tls13ServerEndpoint dispatches coalesced long datagrams with installed Han
     switch (result) {
         .coalesced_initial_handshake => |coalesced_result| {
             try std.testing.expectEqual(record.handle, coalesced_result.route.connection_id);
-            try std.testing.expect(coalesced_result.backend.path.eql(path));
+            try std.testing.expect(coalesced_result.backend.path.eql(path.toUdp()));
             try std.testing.expectEqual(@as(usize, 0), coalesced_result.backend.backend.drain.datagrams_written);
         },
         else => return error.TestUnexpectedResult,
@@ -2184,7 +2184,7 @@ test "Tls13ServerEndpoint validates Retry Initial and returns route-bound TLS ou
         .max_replay_entries = 4,
     });
     defer policy.deinit();
-    const token = try policy.issueTokenForPath(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
     defer std.testing.allocator.free(token);
 
     var backend = RetryBackend{};
@@ -2245,9 +2245,9 @@ test "Tls13ServerEndpoint validates Retry Initial and returns route-bound TLS ou
 
     try std.testing.expectEqual(record_handle, processed.retry.route.connection_id);
     try std.testing.expectEqual(quic_packet.Version.v1, processed.retry.initial_accept.version);
-    try std.testing.expect(processed.initial.path.eql(path));
+    try std.testing.expect(processed.initial.path.eql(path.toUdp()));
     try std.testing.expect(processed.handshake != null);
-    try std.testing.expect(processed.handshake.?.path.eql(path));
+    try std.testing.expect(processed.handshake.?.path.eql(path.toUdp()));
     try std.testing.expectEqual(@as(usize, 1), processed.initial.backend.backend.inbound_chunks);
     try std.testing.expectEqual(@as(usize, "client after retry".len), processed.initial.backend.backend.inbound_bytes);
     try std.testing.expectEqual(@as(usize, 1), processed.initial.backend.backend.outbound_chunks);
@@ -2357,7 +2357,7 @@ test "Tls13ServerEndpoint validates Retry Initial route before consuming token s
         .max_replay_entries = 4,
     });
     defer policy.deinit();
-    const token = try policy.issueTokenForPath(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .retry, 1_000, 60_000, path, nonce);
     defer std.testing.allocator.free(token);
 
     var backend = RetryBackend{};
@@ -2711,7 +2711,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     if (route_poll.datagram) |polled| {
         defer std.testing.allocator.free(polled.datagram);
         try std.testing.expectEqual(record.handle, polled.connection_id);
-        try std.testing.expect(polled.path.eql(path));
+        try std.testing.expect(polled.path.eql(path.toUdp()));
     }
     try std.testing.expect(route_poll.next_deadline == null);
 
@@ -2752,7 +2752,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     for (route_drain_scratch_out[0..route_drain.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record.handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(path));
+        try std.testing.expect(drained.path.eql(path.toUdp()));
     }
     try std.testing.expectEqual(@as(?root.Error, null), route_drain.drain.first_error);
     try std.testing.expect(route_drain.next_deadline == null);
@@ -2793,7 +2793,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     if (routed_dispatch_short.datagram) |polled| {
         defer std.testing.allocator.free(polled.datagram);
         try std.testing.expectEqual(record.handle, polled.connection_id);
-        try std.testing.expect(polled.path.eql(path));
+        try std.testing.expect(polled.path.eql(path.toUdp()));
     }
     try std.testing.expect(routed_dispatch_short.next_deadline == null);
 
@@ -2832,7 +2832,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     for (process_installed_key_out[0..routed_dispatch_drain_short.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record.handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(path));
+        try std.testing.expect(drained.path.eql(path.toUdp()));
     }
     try std.testing.expectEqual(@as(?root.Error, null), routed_dispatch_drain_short.drain.first_error);
     try std.testing.expect(routed_dispatch_drain_short.next_deadline == null);
@@ -2874,7 +2874,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     if (classified_dispatch_short.datagram) |polled| {
         defer std.testing.allocator.free(polled.datagram);
         try std.testing.expectEqual(record.handle, polled.connection_id);
-        try std.testing.expect(polled.path.eql(path));
+        try std.testing.expect(polled.path.eql(path.toUdp()));
     }
     try std.testing.expect(classified_dispatch_short.next_deadline == null);
 
@@ -2917,7 +2917,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     for (classified_installed_key_out[0..classified_dispatch_drain_short.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record.handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(path));
+        try std.testing.expect(drained.path.eql(path.toUdp()));
     }
     try std.testing.expectEqual(@as(?root.Error, null), classified_dispatch_drain_short.drain.first_error);
     try std.testing.expect(classified_dispatch_drain_short.next_deadline == null);
@@ -2984,7 +2984,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     for (receive_step_installed_out[0..receive_step_short.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record.handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(path));
+        try std.testing.expect(drained.path.eql(path.toUdp()));
     }
     try std.testing.expectEqual(@as(?root.Error, null), receive_step_short.drain.first_error);
     try std.testing.expectEqual(@as(usize, 0), receive_step.pending_work.idle_retired_count);
@@ -3080,7 +3080,7 @@ test "Tls13ServerEndpoint feeds installed-key short datagram without receive-vie
     for (admission_step_installed_out[0..admission_step_short.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record.handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(path));
+        try std.testing.expect(drained.path.eql(path.toUdp()));
     }
     try std.testing.expectEqual(@as(?root.Error, null), admission_step_short.drain.first_error);
     try std.testing.expectEqual(@as(usize, 0), admission_step.pending_work.idle_retired_count);
@@ -3298,7 +3298,7 @@ test "Tls13ServerEndpoint pairs accepted Initial output with committed route pat
     record_owned_by_test = false;
 
     try std.testing.expect(backend.received_initial);
-    try std.testing.expect(admitted.initial.path.eql(path));
+    try std.testing.expect(admitted.initial.path.eql(path.toUdp()));
     try std.testing.expectEqual(@as(usize, 1), admitted.initial.accepted.drain.datagrams_written);
     try std.testing.expectEqual(@as(?root.Error, null), admitted.initial.accepted.drain.first_error);
     defer std.testing.allocator.free(initial_out[0].datagram);
@@ -3368,7 +3368,7 @@ test "Tls13ServerEndpoint pairs accepted Initial output with committed route pat
         .admitted => |step_admitted| {
             step_record_owned_by_test = false;
             try std.testing.expect(step_backend.received_initial);
-            try std.testing.expect(step_admitted.initial.path.eql(path));
+            try std.testing.expect(step_admitted.initial.path.eql(path.toUdp()));
             try std.testing.expectEqual(@as(usize, 1), step_admitted.initial.accepted.drain.datagrams_written);
             try std.testing.expectEqual(@as(?root.Error, null), step_admitted.initial.accepted.drain.first_error);
             defer std.testing.allocator.free(step_initial_out[0].datagram);
@@ -3442,7 +3442,7 @@ test "Tls13ServerEndpoint pairs accepted Initial output with committed route pat
         .admitted => |scratch_step_admitted| {
             scratch_step_record_owned_by_test = false;
             try std.testing.expect(scratch_step_backend.received_initial);
-            try std.testing.expect(scratch_step_admitted.initial.path.eql(path));
+            try std.testing.expect(scratch_step_admitted.initial.path.eql(path.toUdp()));
             try std.testing.expectEqual(@as(usize, 1), scratch_step_admitted.initial.accepted.drain.datagrams_written);
             try std.testing.expectEqual(@as(?root.Error, null), scratch_step_admitted.initial.accepted.drain.first_error);
             defer std.testing.allocator.free(scratch_step_initial_out[0].datagram);
@@ -3745,7 +3745,7 @@ test "Tls13ServerEndpoint pairs due recovery output with committed route path" {
     try std.testing.expectEqual(@as(?root.Error, null), due.drain.first_error);
     defer std.testing.allocator.free(due_out[0].datagram);
     try std.testing.expectEqual(record.handle, due_out[0].connection_id);
-    try std.testing.expect(due_out[0].path.eql(new_path));
+    try std.testing.expect(due_out[0].path.eql(new_path.toUdp()));
     try std.testing.expect(due_out[0].datagram.len != 0);
     const next_deadline = due.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(record.handle, next_deadline.connection_id);
@@ -4058,9 +4058,9 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     defer std.testing.allocator.free(polled.datagram);
     try std.testing.expect(polled.connection_id == first_record.handle or polled.connection_id == second_record.handle);
     if (polled.connection_id == first_record.handle) {
-        try std.testing.expect(polled.path.eql(first_path));
+        try std.testing.expect(polled.path.eql(first_path.toUdp()));
     } else {
-        try std.testing.expect(polled.path.eql(second_path));
+        try std.testing.expect(polled.path.eql(second_path.toUdp()));
     }
     try std.testing.expect(polled.datagram.len != 0);
 
@@ -4073,9 +4073,9 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     try std.testing.expect(next_polled.connection_id == first_record.handle or next_polled.connection_id == second_record.handle);
     try std.testing.expect(next_polled.connection_id != polled.connection_id);
     if (next_polled.connection_id == first_record.handle) {
-        try std.testing.expect(next_polled.path.eql(first_path));
+        try std.testing.expect(next_polled.path.eql(first_path.toUdp()));
     } else {
-        try std.testing.expect(next_polled.path.eql(second_path));
+        try std.testing.expect(next_polled.path.eql(second_path.toUdp()));
     }
     try std.testing.expect(next_polled.datagram.len != 0);
 
@@ -4109,7 +4109,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     try std.testing.expectEqual(@as(?endpoint.RouteError, null), drain.first_route_error);
     defer std.testing.allocator.free(drain_out[0].datagram);
     try std.testing.expectEqual(second_record.handle, drain_out[0].connection_id);
-    try std.testing.expect(drain_out[0].path.eql(second_path));
+    try std.testing.expect(drain_out[0].path.eql(second_path.toUdp()));
     try std.testing.expect(drain_out[0].datagram.len != 0);
 
     const empty_drain = endpoint_owner.drainDatagramsAcrossRecordsWithRoutePath(
@@ -4140,7 +4140,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(preserved_poll.datagram);
     try std.testing.expectEqual(second_record.handle, preserved_poll.connection_id);
-    try std.testing.expect(preserved_poll.path.eql(second_path));
+    try std.testing.expect(preserved_poll.path.eql(second_path.toUdp()));
     try std.testing.expect(preserved_poll.datagram.len != 0);
 
     try second_record.connection.sendPing();
@@ -4167,7 +4167,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     try std.testing.expectEqual(@as(?endpoint.RouteError, null), preserved_drain.first_route_error);
     defer std.testing.allocator.free(preserved_drain_out[0].datagram);
     try std.testing.expectEqual(second_record.handle, preserved_drain_out[0].connection_id);
-    try std.testing.expect(preserved_drain_out[0].path.eql(second_path));
+    try std.testing.expect(preserved_drain_out[0].path.eql(second_path.toUdp()));
     try std.testing.expect(preserved_drain_out[0].datagram.len != 0);
 
     try second_record.connection.sendPing();
@@ -4303,7 +4303,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
         &missing_route_step_pending_out,
     );
     switch (missing_route_step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), missing_route_step.pending_work.idle_retired_count);
@@ -4338,7 +4338,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
         &missing_route_step_pending_out,
     );
     switch (missing_route_step_scratch.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), missing_route_step_scratch.pending_work.recovery_serviced_count);
@@ -4373,7 +4373,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
         &zero_missing_route_step_pending_out,
     );
     switch (zero_missing_route_step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), zero_missing_route_step.pending_work.recovery_serviced_count);
@@ -4434,9 +4434,9 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     defer std.testing.allocator.free(pending_out[0].datagram);
     try std.testing.expectEqual(deadline.connection_id, pending_out[0].connection_id);
     if (pending_out[0].connection_id == first_record.handle) {
-        try std.testing.expect(pending_out[0].path.eql(first_path));
+        try std.testing.expect(pending_out[0].path.eql(first_path.toUdp()));
     } else {
-        try std.testing.expect(pending_out[0].path.eql(second_path));
+        try std.testing.expect(pending_out[0].path.eql(second_path.toUdp()));
     }
     try std.testing.expect(pending_out[0].datagram.len != 0);
     const next_deadline = pending_drain.next_deadline orelse return error.TestUnexpectedResult;
@@ -4481,7 +4481,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
         &zero_step_pending_out,
     );
     switch (zero_step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), zero_step.pending_work.idle_retired_count);
@@ -4518,7 +4518,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
         &step_pending_out,
     );
     switch (step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(first_path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), step.pending_work.idle_retired_count);
@@ -4530,9 +4530,9 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     defer std.testing.allocator.free(step_pending_out[0].datagram);
     try std.testing.expectEqual(step_deadline.connection_id, step_pending_out[0].connection_id);
     if (step_pending_out[0].connection_id == first_record.handle) {
-        try std.testing.expect(step_pending_out[0].path.eql(first_path));
+        try std.testing.expect(step_pending_out[0].path.eql(first_path.toUdp()));
     } else {
-        try std.testing.expect(step_pending_out[0].path.eql(second_path));
+        try std.testing.expect(step_pending_out[0].path.eql(second_path.toUdp()));
     }
     try std.testing.expect(step_pending_out[0].datagram.len != 0);
     const step_next_deadline = step.next_deadline orelse return error.TestUnexpectedResult;
@@ -4574,7 +4574,7 @@ test "Tls13ServerEndpoint polls active record output with committed route path" 
     )) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(terminal_skipped.datagram);
     try std.testing.expectEqual(first_record.handle, terminal_skipped.connection_id);
-    try std.testing.expect(terminal_skipped.path.eql(first_path));
+    try std.testing.expect(terminal_skipped.path.eql(first_path.toUdp()));
     try std.testing.expect(terminal_skipped.datagram.len != 0);
     try std.testing.expect(endpoint_owner.records.get(terminal_record_handle) == null);
     try std.testing.expectEqual(@as(usize, 1), endpoint_owner.lifecycle.routeCount());
@@ -4759,7 +4759,7 @@ test "Tls13ServerEndpoint pairs Initial due recovery output with committed route
     try std.testing.expectEqual(@as(?root.Error, null), due.drain.first_error);
     defer std.testing.allocator.free(due_out[0].datagram);
     try std.testing.expectEqual(record.handle, due_out[0].connection_id);
-    try std.testing.expect(due_out[0].path.eql(new_path));
+    try std.testing.expect(due_out[0].path.eql(new_path.toUdp()));
     const info = try protection.peekProtectedLongPacketInfo(due_out[0].datagram);
     try std.testing.expectEqual(quic_packet.PacketType.initial, info.packet_type);
     const next_deadline = due.next_deadline orelse return error.TestUnexpectedResult;
@@ -5194,7 +5194,7 @@ test "Tls13ServerEndpoint receive step retires idle record while reporting input
         &pending_out,
     );
     switch (step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 1), step.pending_work.idle_retired_count);
@@ -5360,7 +5360,7 @@ test "Tls13ServerEndpoint receive step reports key discard while reporting input
         &pending_out,
     );
     switch (step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), step.pending_work.idle_retired_count);
@@ -5931,7 +5931,7 @@ test "Tls13ServerEndpoint closes with route output and retires record at close d
     );
     const close_datagram = (try endpoint_owner.closeWithRoutePath(record_handle, 0, 0, "server done", 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
-    try std.testing.expect(close_datagram.path.eql(new_path));
+    try std.testing.expect(close_datagram.path.eql(new_path.toUdp()));
     try std.testing.expect(close_datagram.datagram.len != 0);
 
     const close_deadline = (try endpoint_owner.closeDeadline(record_handle)) orelse return error.TestUnexpectedResult;
@@ -6172,12 +6172,12 @@ test "Tls13ServerEndpoint drains close output with route and deadline" {
     for (out[0..closed.drain.datagrams_written]) |drained| {
         defer std.testing.allocator.free(drained.datagram);
         try std.testing.expectEqual(record_handle, drained.connection_id);
-        try std.testing.expect(drained.path.eql(new_path));
+        try std.testing.expect(drained.path.eql(new_path.toUdp()));
         try std.testing.expect(drained.datagram.len != 0);
     }
     const other_datagram = (try endpoint_owner.pollOneRttDatagramWithRoutePath(other_record.handle, 11)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(other_datagram.datagram);
-    try std.testing.expect(other_datagram.path.eql(other_path));
+    try std.testing.expect(other_datagram.path.eql(other_path.toUdp()));
     try std.testing.expect(other_datagram.datagram.len != 0);
     const next_deadline = closed.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.close_timeout, next_deadline.kind);
@@ -6326,7 +6326,7 @@ test "Tls13ServerEndpoint drains application close output with route and deadlin
     try std.testing.expectEqual(@as(?endpoint.RouteError, null), closed.drain.first_route_error);
     defer std.testing.allocator.free(out[0].datagram);
     try std.testing.expectEqual(record_handle, out[0].connection_id);
-    try std.testing.expect(out[0].path.eql(new_path));
+    try std.testing.expect(out[0].path.eql(new_path.toUdp()));
 
     const local_keys = protection.deriveAes128PacketProtectionKeys(secrets.server.secret);
     var opened = try protection.unprotectShortPacketAes128(
@@ -6453,7 +6453,7 @@ test "Tls13ServerEndpoint receive step retires closing record while reporting in
 
     const close_datagram = (try endpoint_owner.closeWithRoutePath(record_handle, 0, 0, "server done", 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_datagram.datagram);
-    try std.testing.expect(close_datagram.path.eql(path));
+    try std.testing.expect(close_datagram.path.eql(path.toUdp()));
     const close_deadline = (try endpoint_owner.nextDeadline(std.testing.allocator)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.close_timeout, close_deadline.kind);
     try std.testing.expectEqual(record_handle, close_deadline.connection_id);
@@ -6503,7 +6503,7 @@ test "Tls13ServerEndpoint receive step retires closing record while reporting in
         &pending_out,
     );
     switch (step.process) {
-        .version_negotiation => |response| try std.testing.expect(response.path.eql(path)),
+        .version_negotiation => |response| try std.testing.expect(response.path.eql(path.toUdp())),
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expectEqual(@as(usize, 0), step.pending_work.idle_retired_count);
@@ -6647,7 +6647,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
         options,
     );
     try std.testing.expect(ping_result.feed.path_challenge_queued);
-    try std.testing.expect((ping_result.output_path orelse return error.TestUnexpectedResult).eql(new_path));
+    try std.testing.expect((ping_result.output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
     const challenge_packet = ping_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(challenge_packet.datagram);
     try std.testing.expectEqual(record.handle, challenge_packet.connection_id);
@@ -6663,7 +6663,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     );
     const updated_route = validation_result.feed.updated_route orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(record.handle, updated_route.connection_id);
-    try std.testing.expect((validation_result.output_path orelse return error.TestUnexpectedResult).eql(new_path));
+    try std.testing.expect((validation_result.output_path orelse return error.TestUnexpectedResult).eql(new_path.toUdp()));
     const ack_packet = validation_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(ack_packet.datagram);
     try std.testing.expectEqual(record.handle, ack_packet.connection_id);
@@ -6672,7 +6672,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     try record.connection.sendPing();
     const committed_output = (try endpoint_owner.pollOneRttDatagramWithRoutePath(record.handle, 6)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(committed_output.datagram);
-    try std.testing.expect(committed_output.path.eql(new_path));
+    try std.testing.expect(committed_output.path.eql(new_path.toUdp()));
     try std.testing.expect(committed_output.datagram.len != 0);
 
     try client.sendPing();
@@ -6688,7 +6688,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     const routed_ack = routed_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(routed_ack.datagram);
     try std.testing.expectEqual(record.handle, routed_ack.connection_id);
-    try std.testing.expect(routed_ack.path.eql(new_path));
+    try std.testing.expect(routed_ack.path.eql(new_path.toUdp()));
     const routed_next_deadline = routed_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(record.handle, routed_next_deadline.connection_id);
     try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.recovery, routed_next_deadline.kind);
@@ -6711,7 +6711,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
 
     const queued_server_ping = (try endpoint_owner.pollOneRttDatagramWithRoutePath(record.handle, 10)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(queued_server_ping.datagram);
-    try std.testing.expect(queued_server_ping.path.eql(new_path));
+    try std.testing.expect(queued_server_ping.path.eql(new_path.toUdp()));
     try std.testing.expect(queued_server_ping.datagram.len != 0);
 
     const invalid_packet_number = record.connection.nextPeerPacketNumber(.application);
@@ -6737,7 +6737,7 @@ test "Tls13ServerEndpoint pairs path-update feed output with selected tuple" {
     const close_output = error_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_output.datagram);
     try std.testing.expectEqual(record.handle, close_output.connection_id);
-    try std.testing.expect(close_output.path.eql(new_path));
+    try std.testing.expect(close_output.path.eql(new_path.toUdp()));
     const close_next_deadline = error_result.next_deadline orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(record.handle, close_next_deadline.connection_id);
     try std.testing.expectEqual(endpoint_types.EndpointConnectionDeadlineKind.close_timeout, close_next_deadline.kind);
@@ -6877,7 +6877,7 @@ test "Tls13ServerEndpoint installed-key close output uses routed CID path when c
     const close_poll = poll_result.datagram orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(close_poll.datagram);
     try std.testing.expectEqual(poll_record.handle, close_poll.connection_id);
-    try std.testing.expect(close_poll.path.eql(first_path));
+    try std.testing.expect(close_poll.path.eql(first_path.toUdp()));
     try std.testing.expectEqual(connection_module.ConnectionState.closing, poll_record.connection.connectionState());
 
     const drain_record = try std.testing.allocator.create(TestRecord);
@@ -6935,7 +6935,7 @@ test "Tls13ServerEndpoint installed-key close output uses routed CID path when c
     try std.testing.expectEqual(@as(usize, 1), installed.drain.datagrams_written);
     defer std.testing.allocator.free(installed_key_out[0].datagram);
     try std.testing.expectEqual(drain_record.handle, installed_key_out[0].connection_id);
-    try std.testing.expect(installed_key_out[0].path.eql(second_path));
+    try std.testing.expect(installed_key_out[0].path.eql(second_path.toUdp()));
     try std.testing.expectEqual(connection_module.ConnectionState.closing, drain_record.connection.connectionState());
 
     const zero_path = endpoint.Udp4Tuple{
@@ -6993,7 +6993,7 @@ test "Tls13ServerEndpoint installed-key close output uses routed CID path when c
     try std.testing.expectEqual(connection_module.ConnectionState.closing, zero_record.connection.connectionState());
     const preserved_close = (try endpoint_owner.pollOneRttDatagramWithRoutePath(zero_record.handle, 4)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(preserved_close.datagram);
-    try std.testing.expect(preserved_close.path.eql(zero_path));
+    try std.testing.expect(preserved_close.path.eql(zero_path.toUdp()));
 
     const receive_step_path = endpoint.Udp4Tuple{
         .local = first_path.local,
@@ -7064,7 +7064,7 @@ test "Tls13ServerEndpoint installed-key close output uses routed CID path when c
 
     const preserved_ack = (try endpoint_owner.pollOneRttDatagramWithRoutePath(receive_step_record.handle, 6)) orelse return error.TestUnexpectedResult;
     defer std.testing.allocator.free(preserved_ack.datagram);
-    try std.testing.expect(preserved_ack.path.eql(receive_step_path));
+    try std.testing.expect(preserved_ack.path.eql(receive_step_path.toUdp()));
 }
 
 test "Tls13ServerEndpoint bounded receive reports active stateless reset and retires record" {
@@ -7620,12 +7620,12 @@ test "Tls13 endpoints complete certificate-verified local handshake through endp
         .dropped_capacity => return error.TestUnexpectedResult,
     };
     record_owned_by_test = false;
-    try std.testing.expect(admitted.initial.path.eql(server_path));
+    try std.testing.expect(admitted.initial.path.eql(server_path.toUdp()));
     try std.testing.expectEqual(@as(usize, 1), admitted.initial.accepted.drain.datagrams_written);
     try std.testing.expectEqual(@as(?root.Error, null), admitted.initial.accepted.drain.first_error);
     try std.testing.expect(admitted.handshake != null);
     const server_handshake = admitted.handshake.?;
-    try std.testing.expect(server_handshake.path.eql(server_path));
+    try std.testing.expect(server_handshake.path.eql(server_path.toUdp()));
     try std.testing.expectEqual(@as(usize, 1), server_handshake.backend.drain.datagrams_written);
     try std.testing.expectEqual(@as(?root.Error, null), server_handshake.backend.drain.first_error);
     try std.testing.expectEqual(@as(usize, 0), server_initial_step.pending_drain.datagrams_written);
@@ -7708,17 +7708,17 @@ test "Tls13 endpoints complete certificate-verified local handshake through endp
                     .initial => |initial| {
                         server_finish_initial_written = initial.initial.backend.backend.drain.datagrams_written;
                         if (initial.handshake) |handshake| {
-                            try std.testing.expect(handshake.path.eql(server_path));
+                            try std.testing.expect(handshake.path.eql(server_path.toUdp()));
                             server_finish_handshake_written = handshake.backend.drain.datagrams_written;
                         }
                     },
                     .handshake => |handshake| {
-                        try std.testing.expect(handshake.backend.path.eql(server_path));
+                        try std.testing.expect(handshake.backend.path.eql(server_path.toUdp()));
                         server_finish_handshake_written = handshake.backend.backend.drain.datagrams_written;
                     },
                 },
                 .coalesced_initial_handshake => |handshake| {
-                    try std.testing.expect(handshake.backend.path.eql(server_path));
+                    try std.testing.expect(handshake.backend.path.eql(server_path.toUdp()));
                     server_finish_handshake_written = handshake.backend.backend.drain.datagrams_written;
                 },
             },
@@ -7747,7 +7747,7 @@ test "Tls13 endpoints complete certificate-verified local handshake through endp
     try std.testing.expectEqual(@as(?endpoint.RouteError, null), server_finish_step.pending_drain.first_route_error);
     for (server_finish_pending_out[0..server_finish_step.pending_drain.datagrams_written]) |outbound| {
         try std.testing.expectEqual(server_handle, outbound.connection_id);
-        try std.testing.expect(outbound.path.eql(server_path));
+        try std.testing.expect(outbound.path.eql(server_path.toUdp()));
     }
 }
 
@@ -8584,7 +8584,7 @@ test "Tls13 endpoints complete protected STREAM echo close and route retirement 
         if (due_result) |due| {
             // PTO/recovery output is route-bound: each datagram carries the committed path.
             for (due_out[0..due.drain.datagrams_written]) |o| {
-                try std.testing.expect(o.path.eql(server_path));
+                try std.testing.expect(o.path.eql(server_path.toUdp()));
                 std.testing.allocator.free(o.datagram);
             }
             // PTO backoff: the next deadline (if any) must not be earlier than

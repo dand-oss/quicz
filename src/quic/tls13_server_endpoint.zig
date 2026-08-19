@@ -51,7 +51,7 @@ pub fn Tls13ServerEndpoint(
         /// Endpoint-owned 1-RTT datagram paired with its committed UDP route.
         pub const OneRttDatagramPathResult = struct {
             datagram: []u8,
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Endpoint-owned protected datagram paired with its committed UDP route.
@@ -61,7 +61,7 @@ pub fn Tls13ServerEndpoint(
             /// Protected datagram emitted by the selected record.
             datagram: []u8,
             /// Current committed UDP tuple for this record's local route CID.
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Endpoint response datagram paired with the UDP tuple it answers.
@@ -69,7 +69,7 @@ pub fn Tls13ServerEndpoint(
             /// Response datagram written into caller-provided scratch storage.
             datagram: []const u8,
             /// UDP tuple that produced the response.
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Route classification with response datagrams paired to their path.
@@ -168,19 +168,19 @@ pub fn Tls13ServerEndpoint(
         /// Accepted Initial output paired with the committed UDP route.
         pub const AcceptedInitialDatagramDrainPathResult = struct {
             accepted: endpoint_types.EndpointAcceptedInitialCryptoBackendDatagramDrainResult,
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Backend-driven installed-key output paired with the committed route.
         pub const CryptoBackendDatagramDrainPathResult = struct {
             backend: endpoint_types.EndpointCryptoBackendDriveDatagramDrainResult,
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Backend-driven long-header output paired with the committed route.
         pub const ProtectedLongBackendDatagramDrainPathResult = struct {
             backend: endpoint_types.EndpointCryptoBackendDriveProtectedLongDatagramDrainResult,
-            path: endpoint.Udp4Tuple,
+            path: endpoint.UdpTuple,
         };
 
         /// Accepted Initial record admission with route-bound output drains.
@@ -366,6 +366,10 @@ pub fn Tls13ServerEndpoint(
             return self.lifecycle.currentRoutePath(source_connection_id_of(record));
         }
 
+        fn currentRecordRoutePathAddress(self: *const Self, record: *const Record) endpoint.RouteError!endpoint.UdpTuple {
+            return self.lifecycle.currentRoutePathAddress(source_connection_id_of(record));
+        }
+
         fn classifyRoutePreflightError(err: anyerror) ?endpoint.RouteError {
             return switch (err) {
                 error.InvalidConnectionIdLength,
@@ -489,11 +493,11 @@ pub fn Tls13ServerEndpoint(
                 .accept_initial => |initial| .{ .accept_initial = initial },
                 .version_negotiation => |response| .{ .version_negotiation = .{
                     .datagram = response,
-                    .path = path,
+                    .path = path.toUdp(),
                 } },
                 .stateless_reset => |reset| .{ .stateless_reset = .{
                     .datagram = reset,
-                    .path = path,
+                    .path = path.toUdp(),
                 } },
                 .dropped => .dropped,
             };
@@ -836,7 +840,7 @@ pub fn Tls13ServerEndpoint(
                     connection,
                     now_nanos,
                     options,
-                    route_path.?,
+                    route_path orelse return error.UnknownConnectionId,
                     out,
                 );
                 return .{
@@ -861,7 +865,7 @@ pub fn Tls13ServerEndpoint(
                     record,
                     connection,
                     now_nanos,
-                    route_path.?,
+                    route_path orelse return error.UnknownConnectionId,
                     out,
                 );
                 return .{
@@ -932,7 +936,7 @@ pub fn Tls13ServerEndpoint(
                     connection,
                     now_nanos,
                     options,
-                    route_path.?,
+                    route_path orelse return error.UnknownConnectionId,
                     out,
                 );
                 return .{
@@ -957,7 +961,7 @@ pub fn Tls13ServerEndpoint(
                     record,
                     connection,
                     now_nanos,
-                    route_path.?,
+                    route_path orelse return error.UnknownConnectionId,
                     out,
                 );
                 return .{
@@ -1020,7 +1024,7 @@ pub fn Tls13ServerEndpoint(
                 out[result.datagrams_written] = .{
                     .connection_id = connection_id,
                     .datagram = bytes,
-                    .path = path,
+                    .path = path.toUdp(),
                 };
                 result.datagrams_written += 1;
             }
@@ -1097,7 +1101,7 @@ pub fn Tls13ServerEndpoint(
                 out[result.datagrams_written] = if (datagram) |bytes| .{
                     .connection_id = connection_id,
                     .datagram = bytes,
-                    .path = path,
+                    .path = path.toUdp(),
                 } else return result;
                 result.datagrams_written += 1;
             }
@@ -1432,7 +1436,7 @@ pub fn Tls13ServerEndpoint(
         ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
-            const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
+            const route_path = try self.lifecycle.currentRoutePathAddress(route.destination_connection_id.asSlice());
             if (datagram.len != 0 and quic_packet.parseHeaderForm(datagram[0]) == .short) {
                 if (connection.processStatelessResetDatagram(now_nanos, datagram)) |sequence_number| {
                     try self.lifecycle.armRecoveryTimerFromConnection(route.connection_id, connection);
@@ -1510,7 +1514,7 @@ pub fn Tls13ServerEndpoint(
         ) endpoint_types.EndpointProtectedDatagramError!InstalledKeyDatagramRoutePollResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
-            const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
+            const route_path = try self.lifecycle.currentRoutePathAddress(route.destination_connection_id.asSlice());
             if (datagram.len != 0 and quic_packet.parseHeaderForm(datagram[0]) == .short) {
                 if (connection.processStatelessResetDatagram(now_nanos, datagram)) |sequence_number| {
                     try self.lifecycle.armRecoveryTimerFromConnection(route.connection_id, connection);
@@ -1640,7 +1644,7 @@ pub fn Tls13ServerEndpoint(
         ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
-            const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
+            const route_path = try self.lifecycle.currentRoutePathAddress(route.destination_connection_id.asSlice());
             if (datagram.len != 0 and quic_packet.parseHeaderForm(datagram[0]) == .short) {
                 if (connection.processStatelessResetDatagram(now_nanos, datagram)) |sequence_number| {
                     try self.lifecycle.armRecoveryTimerFromConnection(route.connection_id, connection);
@@ -1676,7 +1680,7 @@ pub fn Tls13ServerEndpoint(
                                 .space = .application,
                                 .destination_connection_id = destination_connection_id,
                             },
-                            route_path,
+                            route_path.to4() orelse return error.InvalidDatagram,
                             out,
                         );
                     result.next_deadline = try self.nextDeadline(self.records.allocator);
@@ -1706,7 +1710,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id,
                 },
-                output_path,
+                output_path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -1728,7 +1732,7 @@ pub fn Tls13ServerEndpoint(
         ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!InstalledKeyDatagramRouteDrainResult {
             const connection = connection_of(record);
             const destination_connection_id = destination_connection_id_of(record);
-            const route_path = try self.lifecycle.currentRoutePath(route.destination_connection_id.asSlice());
+            const route_path = try self.lifecycle.currentRoutePathAddress(route.destination_connection_id.asSlice());
             if (datagram.len != 0 and quic_packet.parseHeaderForm(datagram[0]) == .short) {
                 if (connection.processStatelessResetDatagram(now_nanos, datagram)) |sequence_number| {
                     try self.lifecycle.armRecoveryTimerFromConnection(route.connection_id, connection);
@@ -1764,7 +1768,7 @@ pub fn Tls13ServerEndpoint(
                                 .space = .application,
                                 .destination_connection_id = destination_connection_id,
                             },
-                            route_path,
+                            route_path.to4() orelse return error.InvalidDatagram,
                             out,
                         );
                     result.next_deadline = try self.nextDeadlineWithScratch();
@@ -1794,7 +1798,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id,
                 },
-                output_path,
+                output_path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -1843,7 +1847,7 @@ pub fn Tls13ServerEndpoint(
             )) orelse return null;
             return .{
                 .datagram = datagram,
-                .path = path,
+                .path = path.toUdp(),
             };
         }
 
@@ -2013,7 +2017,7 @@ pub fn Tls13ServerEndpoint(
                     return .{
                         .connection_id = view.connection_id,
                         .datagram = bytes,
-                        .path = path,
+                        .path = path.toUdp(),
                     };
                 }
             }
@@ -2085,7 +2089,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
         ) (root.Error || endpoint.RouteError)!?OneRttDatagramPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             try connection_of(record).sendOnStream(stream_id, data, fin);
             const datagram = (try self.lifecycle.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
@@ -2113,7 +2117,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             const connection = connection_of(record);
             try connection.sendOnStream(stream_id, data, fin);
@@ -2125,7 +2129,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2152,7 +2156,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const connection = connection_of(record);
@@ -2165,7 +2169,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2197,7 +2201,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
         ) (root.Error || endpoint.RouteError)!?OneRttDatagramPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             try connection_of(record).resetStream(stream_id, application_error_code);
             const datagram = (try self.lifecycle.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
@@ -2224,7 +2228,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             const connection = connection_of(record);
             try connection.resetStream(stream_id, application_error_code);
@@ -2236,7 +2240,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2262,7 +2266,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const connection = connection_of(record);
@@ -2275,7 +2279,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2307,7 +2311,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
         ) (root.Error || endpoint.RouteError)!?OneRttDatagramPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             try connection_of(record).stopSending(stream_id, application_error_code);
             const datagram = (try self.lifecycle.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
@@ -2334,7 +2338,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             const connection = connection_of(record);
             try connection.stopSending(stream_id, application_error_code);
@@ -2346,7 +2350,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2372,7 +2376,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!OneRttControlDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const connection = connection_of(record);
@@ -2385,7 +2389,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2407,7 +2411,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
         ) (root.Error || endpoint.RouteError)!?OneRttDatagramPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             try connection_of(record).closeConnection(error_code, frame_type, reason_phrase);
             const datagram = (try self.lifecycle.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
@@ -2430,7 +2434,7 @@ pub fn Tls13ServerEndpoint(
             now_nanos: i64,
         ) (root.Error || endpoint.RouteError)!?OneRttDatagramPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             try connection_of(record).closeApplication(error_code, reason_phrase);
             const datagram = (try self.lifecycle.pollProtectedShortDatagramWithInstalledKeys(
                 connection_id,
@@ -2456,7 +2460,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!CloseDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             const connection = connection_of(record);
             try connection.closeConnection(error_code, frame_type, reason_phrase);
@@ -2468,7 +2472,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2491,7 +2495,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!CloseDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             const connection = connection_of(record);
             try connection.closeApplication(error_code, reason_phrase);
@@ -2503,7 +2507,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2526,7 +2530,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!CloseDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const connection = connection_of(record);
@@ -2539,7 +2543,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2561,7 +2565,7 @@ pub fn Tls13ServerEndpoint(
             out: []DatagramPathResult,
         ) (root.Error || endpoint.RouteError)!CloseDatagramPathDrainResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             if (out.len == 0) return error.BufferTooSmall;
             _ = self.records.deadline_view_scratch orelse return error.BufferTooSmall;
             const connection = connection_of(record);
@@ -2574,7 +2578,7 @@ pub fn Tls13ServerEndpoint(
                     .space = .application,
                     .destination_connection_id = destination_connection_id_of(record),
                 },
-                path,
+                path.to4() orelse return error.InvalidDatagram,
                 out,
             );
             return .{
@@ -2859,7 +2863,7 @@ pub fn Tls13ServerEndpoint(
             out: []endpoint_types.EndpointPolledDatagramResult,
         ) (root.Error || endpoint.RouteError)!CryptoBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             return .{
                 .backend = try self.driveBackend(connection_id, space, scratch, now_nanos, out),
                 .path = path,
@@ -2912,7 +2916,7 @@ pub fn Tls13ServerEndpoint(
             out: []endpoint_types.EndpointPolledDatagramResult,
         ) (root.Error || endpoint.RouteError)!ProtectedLongBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const path = try self.currentRecordRoutePath(record);
+            const path = try self.currentRecordRoutePathAddress(record);
             return .{
                 .backend = try self.driveInitialBackend(
                     connection_id,
@@ -3047,7 +3051,7 @@ pub fn Tls13ServerEndpoint(
             out: []endpoint_types.EndpointPolledDatagramResult,
         ) (endpoint_types.EndpointProtectedInitialError || root.Error || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const output_path = try self.currentRecordRoutePath(record);
+            const output_path = try self.currentRecordRoutePathAddress(record);
             const processed = try self.processInitialWithHandshakeKeys(
                 connection_id,
                 path,
@@ -3143,7 +3147,7 @@ pub fn Tls13ServerEndpoint(
             handshake_out: []endpoint_types.EndpointPolledDatagramResult,
         ) (endpoint_types.EndpointProtectedDatagramError || root.Error || endpoint.RouteError)!InitialProcessPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const output_path = try self.currentRecordRoutePath(record);
+            const output_path = try self.currentRecordRoutePathAddress(record);
             const processed = try self.processInitial(
                 connection_id,
                 path,
@@ -3205,7 +3209,7 @@ pub fn Tls13ServerEndpoint(
             out: []endpoint_types.EndpointPolledDatagramResult,
         ) (endpoint_types.EndpointProtectedDatagramError || endpoint.RouteError)!RoutedBackendDatagramDrainPathResult {
             const record = self.records.get(connection_id) orelse return error.UnknownConnectionId;
-            const output_path = try self.currentRecordRoutePath(record);
+            const output_path = try self.currentRecordRoutePathAddress(record);
             const processed = try self.processHandshake(
                 connection_id,
                 path,

@@ -55,7 +55,7 @@ fn protectedTokenAndHandshakeDoneExample(allocator: std.mem.Allocator) !void {
         .new_token,
         10,
         60_000,
-        client_path,
+        client_path.toUdp(),
         token_nonce,
     );
     defer allocator.free(address_token);
@@ -148,7 +148,7 @@ fn protectedTokenAndHandshakeDoneExample(allocator: std.mem.Allocator) !void {
     if (replay_restored_policy.replayFilterEntryCount() != 1) return error.AddressValidationExampleFailed;
 
     var replay_rejected = false;
-    if (replay_restored_policy.validateTokenForPath(.new_token, 17, client_path, stored_token)) |_| {
+    if (replay_restored_policy.validateTokenForPath(.new_token, 17, client_path.toUdp(), stored_token)) |_| {
         return error.AddressValidationExampleFailed;
     } else |err| {
         switch (err) {
@@ -166,12 +166,12 @@ fn protectedTokenAndHandshakeDoneExample(allocator: std.mem.Allocator) !void {
         .v2,
         18,
         60_000,
-        client_path,
+        client_path.toUdp(),
         v2_token_nonce,
     );
     defer allocator.free(v2_token);
     var version_rejected = false;
-    if (restored_policy.validateTokenForPathForVersion(.new_token, .v1, 19, client_path, v2_token)) |_| {
+    if (restored_policy.validateTokenForPathForVersion(.new_token, .v1, 19, client_path.toUdp(), v2_token)) |_| {
         return error.AddressValidationExampleFailed;
     } else |err| {
         switch (err) {
@@ -181,7 +181,7 @@ fn protectedTokenAndHandshakeDoneExample(allocator: std.mem.Allocator) !void {
             else => return err,
         }
     }
-    const v2_validation = try restored_policy.validateTokenForPathForVersion(.new_token, .v2, 19, client_path, v2_token);
+    const v2_validation = try restored_policy.validateTokenForPathForVersion(.new_token, .v2, 19, client_path.toUdp(), v2_token);
     if (v2_validation.originating_version != .v2) return error.AddressValidationExampleFailed;
 
     std.debug.print("[address] protected_handshake_done bytes={} new_token_bytes={} stored_token_len={} emit_timers={} server_handshake_discarded={} new_token_validated={} path_bound={} version_bound={} version_rejected={} secret_set_previous={} replay_entries={} replay_rejected={} future_ping_bytes={}\n", .{

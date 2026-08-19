@@ -185,7 +185,7 @@ pub fn main() !void {
         .retry,
         0,
         60_000,
-        first_path,
+        first_path.toUdp(),
         token_nonce,
     );
     defer allocator.free(retry_token);
@@ -257,7 +257,7 @@ pub fn main() !void {
     try require(server.pendingRetryTokenCount() == 0);
 
     var replay_rejected = false;
-    if (token_policy.validateTokenForPath(.retry, 5, retry_initial_path, retry_accept.token)) |_| {
+    if (token_policy.validateTokenForPath(.retry, 5, retry_initial_path.toUdp(), retry_accept.token)) |_| {
         return error.UnexpectedState;
     } else |err| {
         switch (err) {

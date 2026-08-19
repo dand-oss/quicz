@@ -168,9 +168,9 @@ fn serverPath(bind_address: std.Io.net.IpAddress, peer_address: std.Io.net.IpAdd
     };
 }
 
-fn peerAddressForPath(path: endpoint.Udp4Tuple) std.Io.net.IpAddress {
+fn peerAddressForPath(path: endpoint.UdpTuple) std.Io.net.IpAddress {
     return .{ .ip4 = .{
-        .bytes = path.remote.octets,
+        .bytes = path.remote.v4,
         .port = path.remote.port,
     } };
 }
@@ -180,7 +180,7 @@ fn currentPeerAddress(
     managed: *const ManagedProcessConnection,
 ) std.Io.net.IpAddress {
     const route_path = server_endpoint.lifecycle.currentRoutePath(managed.sourceConnectionId()) catch return managed.peer_address;
-    return peerAddressForPath(route_path);
+    return peerAddressForPath(route_path.toUdp());
 }
 
 fn sendToCurrentRoute(
@@ -366,7 +366,7 @@ fn serveConcurrent(
                         initial_info.version,
                         now_nanos,
                         retry_token_lifetime_nanos,
-                        path,
+                        path.toUdp(),
                         try randomRetryTokenNonce(io),
                     );
                     defer allocator.free(token);

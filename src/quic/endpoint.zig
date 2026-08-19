@@ -8,8 +8,9 @@ const protocol_limits = @import("protocol_limits.zig");
 pub const max_connection_id_len = protocol_limits.max_connection_id_len;
 /// QUIC stateless reset token length.
 pub const stateless_reset_token_len: usize = packet.stateless_reset_token_len;
-/// Binary IPv4 peer address binding length used by address-validation tokens.
-pub const address_validation_peer_binding_len: usize = 6;
+/// Neutral peer-address binding length used by address-validation tokens:
+/// family:u8 | address:[16]u8 | port:u16 BE | scope_id:u32 BE.
+pub const address_validation_peer_binding_len: usize = 23;
 
 /// Errors returned by the in-memory endpoint routing table.
 pub const RouteError = error{
@@ -49,17 +50,11 @@ pub const Udp4Address = struct {
         return UdpAddress.init4(self.octets, self.port);
     }
 
-    /// Return the stable binary address binding used for address-validation tokens.
-    ///
-    /// The binding is IPv4 octets followed by the UDP port in network byte
-    /// order. It is intended as the `peer_address` input for
-    /// `quicz.address_validation_token`, avoiding text formatting differences
-    /// in endpoint policy code.
+    /// Return the stable binary address binding used for address-validation
+    /// tokens (the neutral 23-byte form; IPv4 occupies the low four
+    /// address bytes with family 4 and zero scope).
     pub fn addressValidationBinding(self: Udp4Address) [address_validation_peer_binding_len]u8 {
-        var binding: [address_validation_peer_binding_len]u8 = undefined;
-        @memcpy(binding[0..4], &self.octets);
-        std.mem.writeInt(u16, binding[4..6], self.port, .big);
-        return binding;
+        return self.toUdp().addressValidationBinding();
     }
 };
 
@@ -79,7 +74,7 @@ pub const Udp4Tuple = struct {
     /// local socket address remains part of routing policy but is not encoded
     /// into this peer-address token binding.
     pub fn peerAddressValidationBinding(self: Udp4Tuple) [address_validation_peer_binding_len]u8 {
-        return self.remote.addressValidationBinding();
+        return self.toUdp().peerAddressValidationBinding();
     }
 
     /// Widen to the address-neutral tuple. Lossless for IPv4 paths.
@@ -101,6 +96,12 @@ pub const UdpAddress = struct {
     port: u16,
     v4: [4]u8 = .{ 0, 0, 0, 0 },
     v6: [16]u8 = @splat(0),
+    /// IPv6 scope identifier (kernel interface index). Zero for IPv4 and
+    /// for unscoped IPv6. Part of IPv6 equality: the same address on a
+    /// different interface is a different path. Kernel-reported IPv4-
+    /// mapped IPv6 addresses are preserved exactly as reported, never
+    /// normalized to the IPv4 form.
+    scope_id: u32 = 0,
 
     /// Construct an IPv4 address from network-order octets and a port.
     pub fn init4(octets: [4]u8, port: u16) UdpAddress {
@@ -112,19 +113,48 @@ pub const UdpAddress = struct {
         return .{ .family = .ipv6, .port = port, .v6 = octets };
     }
 
-    /// Return whether family, address, and port are all identical.
+    /// Construct a scoped IPv6 address from network-order octets, a port,
+    /// and a kernel scope identifier.
+    pub fn init6Scoped(octets: [16]u8, port: u16, scope_id: u32) UdpAddress {
+        return .{ .family = .ipv6, .port = port, .v6 = octets, .scope_id = scope_id };
+    }
+
+    /// Return whether family, address, port, and (for IPv6) scope are all
+    /// identical.
     pub fn eql(self: UdpAddress, other: UdpAddress) bool {
         if (self.family != other.family or self.port != other.port) return false;
         return switch (self.family) {
             .ipv4 => std.mem.eql(u8, &self.v4, &other.v4),
-            .ipv6 => std.mem.eql(u8, &self.v6, &other.v6),
+            .ipv6 => self.scope_id == other.scope_id and std.mem.eql(u8, &self.v6, &other.v6),
         };
     }
 
-    /// Return the IPv4 view, or null for an IPv6 address.
+    /// Return the IPv4 view, or null for an IPv6 address (including
+    /// IPv4-mapped IPv6, which is preserved rather than normalized).
     pub fn to4(self: UdpAddress) ?Udp4Address {
         if (self.family != .ipv4) return null;
         return Udp4Address{ .octets = self.v4, .port = self.port };
+    }
+
+    /// Return the neutral address-validation binding:
+    /// family:u8 | address:[16]u8 | port:u16 BE | scope_id:u32 BE.
+    /// IPv4 uses family 4 with the address in the low four bytes; IPv6
+    /// uses family 6 with the full sixteen bytes and its scope.
+    pub fn addressValidationBinding(self: UdpAddress) [address_validation_peer_binding_len]u8 {
+        var binding: [address_validation_peer_binding_len]u8 = @splat(0);
+        switch (self.family) {
+            .ipv4 => {
+                binding[0] = 4;
+                binding[13..17].* = self.v4;
+            },
+            .ipv6 => {
+                binding[0] = 6;
+                binding[1..17].* = self.v6;
+                std.mem.writeInt(u32, binding[19..23], self.scope_id, .big);
+            },
+        }
+        std.mem.writeInt(u16, binding[17..19], self.port, .big);
+        return binding;
     }
 };
 
@@ -143,6 +173,12 @@ pub const UdpTuple = struct {
         const local = self.local.to4() orelse return null;
         const remote = self.remote.to4() orelse return null;
         return Udp4Tuple{ .local = local, .remote = remote };
+    }
+
+    /// Return the neutral remote-peer binding for address-validation
+    /// tokens (see UdpAddress.addressValidationBinding).
+    pub fn peerAddressValidationBinding(self: UdpTuple) [address_validation_peer_binding_len]u8 {
+        return self.remote.addressValidationBinding();
     }
 };
 
@@ -204,8 +240,8 @@ pub const ClientInitialRouteOptions = struct {
 /// client's Original Destination Connection ID; the source CID is the peer CID
 /// that a server uses as the destination CID for its first response.
 pub const InitialAcceptResult = struct {
-    /// UDP path that carried the new Initial.
-    path: Udp4Tuple,
+    /// UDP path that carried the new Initial (address-neutral).
+    path: UdpTuple,
     /// QUIC version from the long header.
     version: packet.Version,
     /// Destination Connection ID from the client Initial.
@@ -544,8 +580,22 @@ pub const AddressValidationPolicy = struct {
         self.current_secret = new_secret;
     }
 
-    /// Issue an address-validation token bound to a UDP peer path.
+    /// Issue an address-validation token bound to a UDP peer path
+    /// (address-neutral).
     pub fn issueTokenForPath(
+        self: *const AddressValidationPolicy,
+        allocator: std.mem.Allocator,
+        kind: address_validation_token.Kind,
+        now_nanos: i64,
+        lifetime_nanos: u64,
+        path: UdpTuple,
+        nonce: address_validation_token.Nonce,
+    ) address_validation_token.Error![]u8 {
+        return self.issueTokenForPathForVersion(allocator, kind, .v1, now_nanos, lifetime_nanos, path, nonce);
+    }
+
+    /// IPv4 compatibility wrapper; see the neutral `issueTokenForPath`.
+    pub fn issueTokenForPath4(
         self: *const AddressValidationPolicy,
         allocator: std.mem.Allocator,
         kind: address_validation_token.Kind,
@@ -554,7 +604,7 @@ pub const AddressValidationPolicy = struct {
         path: Udp4Tuple,
         nonce: address_validation_token.Nonce,
     ) address_validation_token.Error![]u8 {
-        return self.issueTokenForPathForVersion(allocator, kind, .v1, now_nanos, lifetime_nanos, path, nonce);
+        return self.issueTokenForPath(allocator, kind, now_nanos, lifetime_nanos, path.toUdp(), nonce);
     }
 
     /// Issue an address-validation token for a specific originating QUIC version.
@@ -565,7 +615,7 @@ pub const AddressValidationPolicy = struct {
         originating_version: packet.Version,
         now_nanos: i64,
         lifetime_nanos: u64,
-        path: Udp4Tuple,
+        path: UdpTuple,
         nonce: address_validation_token.Nonce,
     ) address_validation_token.Error![]u8 {
         const binding = path.peerAddressValidationBinding();
@@ -587,10 +637,21 @@ pub const AddressValidationPolicy = struct {
         self: *AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
         now_nanos: i64,
-        path: Udp4Tuple,
+        path: UdpTuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         return self.validateTokenForPathForVersion(expected_kind, .v1, now_nanos, path, encoded);
+    }
+
+    /// IPv4 compatibility wrapper; see the neutral `validateTokenForPath`.
+    pub fn validateTokenForPath4(
+        self: *AddressValidationPolicy,
+        expected_kind: address_validation_token.Kind,
+        now_nanos: i64,
+        path: Udp4Tuple,
+        encoded: []const u8,
+    ) address_validation_token.Error!address_validation_token.Validation {
+        return self.validateTokenForPath(expected_kind, now_nanos, path.toUdp(), encoded);
     }
 
     /// Validate a version-bound address token and record replay state.
@@ -599,7 +660,7 @@ pub const AddressValidationPolicy = struct {
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
         now_nanos: i64,
-        path: Udp4Tuple,
+        path: UdpTuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         const validation = try self.validateTokenForPathWithoutReplayForVersion(
@@ -613,15 +674,27 @@ pub const AddressValidationPolicy = struct {
         return validation;
     }
 
-    /// Validate an address token against this endpoint path without recording replay state.
+    /// Validate an address token against this endpoint path (neutral)
+    /// without recording replay state.
     pub fn validateTokenForPathWithoutReplay(
+        self: *const AddressValidationPolicy,
+        expected_kind: address_validation_token.Kind,
+        now_nanos: i64,
+        path: UdpTuple,
+        encoded: []const u8,
+    ) address_validation_token.Error!address_validation_token.Validation {
+        return self.validateTokenForPathWithoutReplayForVersion(expected_kind, .v1, now_nanos, path, encoded);
+    }
+
+    /// IPv4 compatibility wrapper; see the neutral variant.
+    pub fn validateTokenForPathWithoutReplay4(
         self: *const AddressValidationPolicy,
         expected_kind: address_validation_token.Kind,
         now_nanos: i64,
         path: Udp4Tuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
-        return self.validateTokenForPathWithoutReplayForVersion(expected_kind, .v1, now_nanos, path, encoded);
+        return self.validateTokenForPathWithoutReplay(expected_kind, now_nanos, path.toUdp(), encoded);
     }
 
     /// Validate a version-bound address token without recording replay state.
@@ -630,7 +703,7 @@ pub const AddressValidationPolicy = struct {
         expected_kind: address_validation_token.Kind,
         expected_originating_version: packet.Version,
         now_nanos: i64,
-        path: Udp4Tuple,
+        path: UdpTuple,
         encoded: []const u8,
     ) address_validation_token.Error!address_validation_token.Validation {
         const binding = path.peerAddressValidationBinding();
@@ -832,20 +905,20 @@ pub const EndpointRouter = struct {
         if (original_cid.len < 8) return error.InvalidConnectionIdLength;
         const server_cid = try ConnectionId.init(server_source_connection_id);
 
-        try self.registerConnectionIdAddress(connection_id, original_cid.asSlice(), initial_accept.path.toUdp(), .{
+        try self.registerConnectionIdAddress(connection_id, original_cid.asSlice(), initial_accept.path, .{
             .active_migration_disabled = options.active_migration_disabled,
         });
-        errdefer _ = self.retireConnectionIdOnPathAddress(original_cid.asSlice(), initial_accept.path.toUdp()) catch false;
+        errdefer _ = self.retireConnectionIdOnPathAddress(original_cid.asSlice(), initial_accept.path) catch false;
 
-        try self.registerConnectionIdAddress(connection_id, server_cid.asSlice(), initial_accept.path.toUdp(), .{
+        try self.registerConnectionIdAddress(connection_id, server_cid.asSlice(), initial_accept.path, .{
             .sequence_number = if (server_cid.len == 0) null else 0,
             .active_migration_disabled = options.active_migration_disabled,
             .stateless_reset_token = options.stateless_reset_token,
         });
 
         return .{
-            .original_destination_route = try self.routeConnectionIdAddress(original_cid.asSlice(), initial_accept.path.toUdp()),
-            .server_source_route = try self.routeConnectionIdAddress(server_cid.asSlice(), initial_accept.path.toUdp()),
+            .original_destination_route = try self.routeConnectionIdAddress(original_cid.asSlice(), initial_accept.path),
+            .server_source_route = try self.routeConnectionIdAddress(server_cid.asSlice(), initial_accept.path),
         };
     }
 
@@ -1610,7 +1683,7 @@ pub fn peekInitialAcceptDatagram(
     if (reader.remainingLen() < encoded_packet_len) return error.InvalidDatagram;
 
     return .{
-        .path = path.to4() orelse return error.InvalidDatagram,
+        .path = path,
         .version = version,
         .original_destination_connection_id = datagram[dcid_start..][0..dcid_len],
         .source_connection_id = datagram[scid_start..][0..scid_len],
@@ -1706,8 +1779,11 @@ test "Udp4Tuple creates remote peer address-validation binding" {
         .remote = Udp4Address.init(.{ 203, 0, 113, 8 }, 50_000),
     };
 
+    // Neutral 23-byte golden binding: family 4, twelve zero bytes, the
+    // four IPv4 octets, port 50_000 (0xC350) big-endian, zero scope.
     const binding = path.peerAddressValidationBinding();
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 203, 0, 113, 7, 0xc3, 0x50 }, &binding);
+    const golden_v4 = [_]u8{4} ++ ([_]u8{0} ** 12) ++ [_]u8{ 203, 0, 113, 7 } ++ [_]u8{ 0xc3, 0x50 } ++ ([_]u8{0} ** 4);
+    try std.testing.expectEqualSlices(u8, &golden_v4, &binding);
     try std.testing.expectEqualSlices(u8, &binding, &same_peer_other_local.peerAddressValidationBinding());
 
     const encoded = try address_validation_token.encode(std.testing.allocator, secret, .{
@@ -1734,6 +1810,72 @@ test "Udp4Tuple creates remote peer address-validation binding" {
     );
 }
 
+test "UdpAddress binding distinguishes family, address, port, and scope" {
+    var v6: [16]u8 = @splat(0);
+    v6[0] = 0x20;
+    v6[15] = 0x02;
+
+    const path = UdpTuple{
+        .local = UdpAddress.init4(.{ 192, 0, 2, 1 }, 4433),
+        .remote = UdpAddress.init6Scoped(v6, 51000, 3),
+    };
+    const golden = path.peerAddressValidationBinding();
+    const expected = [_]u8{6} ++ v6 ++ [_]u8{ 0xc7, 0x38 } ++ [_]u8{ 0, 0, 0, 3 };
+    try std.testing.expectEqualSlices(u8, &expected, &golden);
+
+    // Changed family (same low bytes reinterpreted as IPv4), changed
+    // address, changed port, and changed scope all produce different
+    // bindings, and token validation rejects each.
+    const changed_family = UdpTuple{ .local = path.local, .remote = UdpAddress.init4(v6[12..16].*, 51000) };
+    const changed_port = UdpTuple{ .local = path.local, .remote = UdpAddress.init6Scoped(v6, 51001, 3) };
+    const changed_scope = UdpTuple{ .local = path.local, .remote = UdpAddress.init6Scoped(v6, 51000, 4) };
+    var other_v6 = v6;
+    other_v6[15] = 0x03;
+    const changed_addr = UdpTuple{ .local = path.local, .remote = UdpAddress.init6Scoped(other_v6, 51000, 3) };
+
+    const secret: address_validation_token.Secret = [_]u8{0x7a} ** address_validation_token.secret_len;
+    const nonce: address_validation_token.Nonce = [_]u8{0x51} ** address_validation_token.nonce_len;
+    const encoded = try address_validation_token.encode(std.testing.allocator, secret, .{
+        .kind = .new_token,
+        .issued_nanos = 1_000,
+        .lifetime_nanos = 10_000,
+        .peer_address = &golden,
+        .nonce = nonce,
+    });
+    defer std.testing.allocator.free(encoded);
+
+    _ = try address_validation_token.validate(secret, .new_token, 1_100, &golden, encoded);
+    const family_binding = changed_family.peerAddressValidationBinding();
+    const addr_binding = changed_addr.peerAddressValidationBinding();
+    const port_binding = changed_port.peerAddressValidationBinding();
+    const scope_binding = changed_scope.peerAddressValidationBinding();
+    try std.testing.expectError(error.InvalidToken, address_validation_token.validate(secret, .new_token, 1_100, &family_binding, encoded));
+    try std.testing.expectError(error.InvalidToken, address_validation_token.validate(secret, .new_token, 1_100, &addr_binding, encoded));
+    try std.testing.expectError(error.InvalidToken, address_validation_token.validate(secret, .new_token, 1_100, &port_binding, encoded));
+    try std.testing.expectError(error.InvalidToken, address_validation_token.validate(secret, .new_token, 1_100, &scope_binding, encoded));
+}
+
+test "IPv6 equality includes the scope; mapped addresses are preserved" {
+    var v6: [16]u8 = @splat(0);
+    v6[15] = 0x02;
+    const a = UdpAddress.init6Scoped(v6, 51000, 3);
+    const same = UdpAddress.init6Scoped(v6, 51000, 3);
+    const other_scope = UdpAddress.init6Scoped(v6, 51000, 4);
+    try std.testing.expect(a.eql(same));
+    try std.testing.expect(!a.eql(other_scope));
+
+    // A kernel-reported IPv4-mapped IPv6 address stays IPv6: to4()
+    // returns null instead of normalizing, so routes and bindings keep
+    // the kernel's view.
+    var mapped: [16]u8 = @splat(0);
+    mapped[10] = 0xff;
+    mapped[11] = 0xff;
+    mapped[12..16].* = .{ 127, 0, 0, 1 };
+    const m = UdpAddress.init6(mapped, 40000);
+    try std.testing.expect(m.to4() == null);
+    try std.testing.expectEqual(@as(u8, 6), m.addressValidationBinding()[0]);
+}
+
 test "AddressValidationPolicy validates rotated path-bound tokens and rejects replay" {
     const old_secret: address_validation_token.Secret = [_]u8{0xa1} ** address_validation_token.secret_len;
     const current_secret: address_validation_token.Secret = [_]u8{0xb2} ** address_validation_token.secret_len;
@@ -1746,21 +1888,21 @@ test "AddressValidationPolicy validates rotated path-bound tokens and rejects re
     });
     defer policy.deinit();
 
-    const token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_000, 10_000, path, nonce);
+    const token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_000, 10_000, path, nonce);
     defer std.testing.allocator.free(token);
     try policy.rotateSecret(current_secret);
 
     try std.testing.expectEqual(@as(usize, 1), policy.previousSecretCount());
     try std.testing.expectError(
         error.InvalidToken,
-        policy.validateTokenForPath(.new_token, 1_100, changed_path, token),
+        policy.validateTokenForPath4(.new_token, 1_100, changed_path, token),
     );
 
-    const validation = try policy.validateTokenForPath(.new_token, 1_100, path, token);
+    const validation = try policy.validateTokenForPath4(.new_token, 1_100, path, token);
     try std.testing.expectEqual(address_validation_token.Kind.new_token, validation.kind);
     try std.testing.expectError(
         error.TokenReplay,
-        policy.validateTokenForPath(.new_token, 1_200, path, token),
+        policy.validateTokenForPath4(.new_token, 1_200, path, token),
     );
 }
 
@@ -1774,16 +1916,16 @@ test "AddressValidationPolicy rejects tokens from a different QUIC version" {
     });
     defer policy.deinit();
 
-    const token = try policy.issueTokenForPathForVersion(std.testing.allocator, .new_token, .v2, 1_000, 10_000, path, nonce);
+    const token = try policy.issueTokenForPathForVersion(std.testing.allocator, .new_token, .v2, 1_000, 10_000, path.toUdp(), nonce);
     defer std.testing.allocator.free(token);
 
     try std.testing.expectError(
         error.InvalidToken,
-        policy.validateTokenForPathForVersion(.new_token, .v1, 1_100, path, token),
+        policy.validateTokenForPathForVersion(.new_token, .v1, 1_100, path.toUdp(), token),
     );
     try std.testing.expectEqual(@as(usize, 0), policy.replayFilterEntryCount());
 
-    const validation = try policy.validateTokenForPathForVersion(.new_token, .v2, 1_100, path, token);
+    const validation = try policy.validateTokenForPathForVersion(.new_token, .v2, 1_100, path.toUdp(), token);
     try std.testing.expectEqual(packet.Version.v2, validation.originating_version);
     try std.testing.expectEqual(address_validation_token.Kind.new_token, validation.kind);
     try std.testing.expectEqual(@as(usize, 1), policy.replayFilterEntryCount());
@@ -1802,19 +1944,19 @@ test "AddressValidationPolicy drops oldest retained secret after rotation limit"
     });
     defer policy.deinit();
 
-    const old_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_000, 10_000, path, old_nonce);
+    const old_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_000, 10_000, path, old_nonce);
     defer std.testing.allocator.free(old_token);
     try policy.rotateSecret(middle_secret);
-    const middle_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_100, 10_000, path, middle_nonce);
+    const middle_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_100, 10_000, path, middle_nonce);
     defer std.testing.allocator.free(middle_token);
     try policy.rotateSecret(current_secret);
 
     try std.testing.expectEqual(@as(usize, 1), policy.previousSecretCount());
     try std.testing.expectError(
         error.InvalidToken,
-        policy.validateTokenForPathWithoutReplay(.new_token, 1_200, path, old_token),
+        policy.validateTokenForPathWithoutReplay4(.new_token, 1_200, path, old_token),
     );
-    const validation = try policy.validateTokenForPathWithoutReplay(.new_token, 1_200, path, middle_token);
+    const validation = try policy.validateTokenForPathWithoutReplay4(.new_token, 1_200, path, middle_token);
     try std.testing.expectEqual(address_validation_token.Kind.new_token, validation.kind);
 }
 
@@ -1832,13 +1974,13 @@ test "AddressValidationPolicy exports and restores retained token secrets" {
     });
     defer policy.deinit();
 
-    const old_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_000, 10_000, path, old_nonce);
+    const old_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_000, 10_000, path, old_nonce);
     defer std.testing.allocator.free(old_token);
     try policy.rotateSecret(middle_secret);
-    const middle_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_100, 10_000, path, middle_nonce);
+    const middle_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_100, 10_000, path, middle_nonce);
     defer std.testing.allocator.free(middle_token);
     try policy.rotateSecret(current_secret);
-    const current_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_200, 10_000, path, current_nonce);
+    const current_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_200, 10_000, path, current_nonce);
     defer std.testing.allocator.free(current_token);
 
     var secret_set = try policy.exportSecretSet(std.testing.allocator);
@@ -1850,9 +1992,9 @@ test "AddressValidationPolicy exports and restores retained token secrets" {
         .max_replay_entries = 4,
     });
     defer restored.deinit();
-    _ = try restored.validateTokenForPathWithoutReplay(.new_token, 1_300, path, old_token);
-    _ = try restored.validateTokenForPathWithoutReplay(.new_token, 1_300, path, middle_token);
-    _ = try restored.validateTokenForPathWithoutReplay(.new_token, 1_300, path, current_token);
+    _ = try restored.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, old_token);
+    _ = try restored.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, middle_token);
+    _ = try restored.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, current_token);
 
     var trimmed = try AddressValidationPolicy.initWithSecretSet(std.testing.allocator, secret_set, .{
         .max_previous_secrets = 1,
@@ -1862,9 +2004,9 @@ test "AddressValidationPolicy exports and restores retained token secrets" {
     try std.testing.expectEqual(@as(usize, 1), trimmed.previousSecretCount());
     try std.testing.expectError(
         error.InvalidToken,
-        trimmed.validateTokenForPathWithoutReplay(.new_token, 1_300, path, old_token),
+        trimmed.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, old_token),
     );
-    _ = try trimmed.validateTokenForPathWithoutReplay(.new_token, 1_300, path, middle_token);
+    _ = try trimmed.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, middle_token);
 }
 
 test "AddressValidationPolicy exports and restores replay filter state" {
@@ -1878,12 +2020,12 @@ test "AddressValidationPolicy exports and restores replay filter state" {
     });
     defer policy.deinit();
 
-    const consumed_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_000, 10_000, path, consumed_nonce);
+    const consumed_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_000, 10_000, path, consumed_nonce);
     defer std.testing.allocator.free(consumed_token);
-    const fresh_token = try policy.issueTokenForPath(std.testing.allocator, .new_token, 1_100, 10_000, path, fresh_nonce);
+    const fresh_token = try policy.issueTokenForPath4(std.testing.allocator, .new_token, 1_100, 10_000, path, fresh_nonce);
     defer std.testing.allocator.free(fresh_token);
 
-    _ = try policy.validateTokenForPath(.new_token, 1_200, path, consumed_token);
+    _ = try policy.validateTokenForPath4(.new_token, 1_200, path, consumed_token);
     var secret_set = try policy.exportSecretSet(std.testing.allocator);
     defer secret_set.deinit(std.testing.allocator);
     var replay_snapshot = try policy.exportReplayFilter(std.testing.allocator);
@@ -1898,9 +2040,9 @@ test "AddressValidationPolicy exports and restores replay filter state" {
     try std.testing.expectEqual(@as(usize, 1), restored.replayFilterEntryCount());
     try std.testing.expectError(
         error.TokenReplay,
-        restored.validateTokenForPath(.new_token, 1_300, path, consumed_token),
+        restored.validateTokenForPath4(.new_token, 1_300, path, consumed_token),
     );
-    _ = try restored.validateTokenForPath(.new_token, 1_300, path, fresh_token);
+    _ = try restored.validateTokenForPath4(.new_token, 1_300, path, fresh_token);
 
     var trimmed = try AddressValidationPolicy.initWithSecretSetAndReplayFilter(std.testing.allocator, secret_set, replay_snapshot, .{
         .max_previous_secrets = 1,
@@ -1908,7 +2050,7 @@ test "AddressValidationPolicy exports and restores replay filter state" {
     });
     defer trimmed.deinit();
     try std.testing.expectEqual(@as(usize, 0), trimmed.replayFilterEntryCount());
-    _ = try trimmed.validateTokenForPathWithoutReplay(.new_token, 1_300, path, consumed_token);
+    _ = try trimmed.validateTokenForPathWithoutReplay4(.new_token, 1_300, path, consumed_token);
 }
 
 test "EcnPathPolicy isolates and resets ECN state by connection path" {
@@ -2312,7 +2454,7 @@ test "Endpoint handleDatagram classifies supported unknown Initial for server ac
 
     const accept = (try peekInitialAcceptDatagram(path.toUdp(), &initial, &supported_versions)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(packet.Version.v1, accept.version);
-    try std.testing.expect(accept.path.eql(path));
+    try std.testing.expect(accept.path.eql(path.toUdp()));
     try std.testing.expectEqualSlices(u8, &original_dcid, accept.original_destination_connection_id);
     try std.testing.expectEqualSlices(u8, &client_scid, accept.source_connection_id);
     try std.testing.expectEqualSlices(u8, &token, accept.token);
@@ -2328,7 +2470,7 @@ test "Endpoint handleDatagram classifies supported unknown Initial for server ac
     switch (action) {
         .accept_initial => |result| {
             try std.testing.expectEqual(packet.Version.v1, result.version);
-            try std.testing.expect(result.path.eql(path));
+            try std.testing.expect(result.path.eql(path.toUdp()));
             try std.testing.expectEqualSlices(u8, &original_dcid, result.original_destination_connection_id);
             try std.testing.expectEqualSlices(u8, &client_scid, result.source_connection_id);
             try std.testing.expectEqualSlices(u8, &token, result.token);
@@ -2447,7 +2589,7 @@ test "EndpointRouter rejects accepted Initial route registration without partial
     try std.testing.expectError(error.UnknownConnectionId, router.routeConnectionId(&original_dcid, path));
 
     const invalid_accept = InitialAcceptResult{
-        .path = path,
+        .path = path.toUdp(),
         .version = .v1,
         .original_destination_connection_id = &short_original_dcid,
         .source_connection_id = &[_]u8{ 0x12, 0x34, 0x56, 0x78 },
