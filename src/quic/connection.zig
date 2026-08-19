@@ -1120,6 +1120,67 @@ pub const Connection = struct {
         };
     }
 
+    /// Send-side progress snapshot for one stream, in logical byte offsets.
+    /// Send-side backlog snapshot for one stream, in logical byte offsets.
+    pub const StreamSendProgress = struct {
+        stream_id: u64,
+        /// Bytes accepted from the application (queued, in flight, or
+        /// acked).
+        accepted_offset: u64,
+        /// The minimum STREAM offset still present in the application send
+        /// queue or application sent packets; `accepted_offset` when the
+        /// stream has nothing queued or in flight. Every byte below this
+        /// offset is provably no longer awaiting settlement, so the value
+        /// can only under-report progress, never over-report it.
+        oldest_unsettled_offset: u64,
+
+        /// Accepted bytes not yet settled: queued plus in flight. Derived
+        /// from logical offsets, so retransmitted copies (which reuse
+        /// offsets) never inflate it, and acknowledgment of any copy
+        /// settles the range.
+        pub fn outstandingBytes(self: StreamSendProgress) u64 {
+            return self.accepted_offset -| self.oldest_unsettled_offset;
+        }
+    };
+
+    /// Return one stream's send-side backlog, or null when the stream has
+    /// no send side on this connection. Read-only: never mutates recovery
+    /// queues. After `reset_sent` the payload backlog is zero (a reset
+    /// subsumes all unacked data); RESET acknowledgment remains separate
+    /// stream state.
+    pub fn streamSendProgress(self: *const Connection, stream_id: u64) ?StreamSendProgress {
+        var found: ?*const SendStreamState = null;
+        for (self.send_streams.items) |*stream_state| {
+            if (stream_state.stream_id == stream_id) {
+                found = stream_state;
+                break;
+            }
+        }
+        const stream_state = found orelse return null;
+        if (stream_state.reset_sent) {
+            return .{
+                .stream_id = stream_id,
+                .accepted_offset = stream_state.next_offset,
+                .oldest_unsettled_offset = stream_state.next_offset,
+            };
+        }
+        var oldest: ?u64 = null;
+        for (self.send_queue.items) |pending| {
+            if (pending.stream_id != stream_id) continue;
+            oldest = @min(oldest orelse pending.offset, pending.offset);
+        }
+        for (self.sent_packets.items) |sent| {
+            const pending = sent.stream_frame orelse continue;
+            if (pending.stream_id != stream_id) continue;
+            oldest = @min(oldest orelse pending.offset, pending.offset);
+        }
+        return .{
+            .stream_id = stream_id,
+            .accepted_offset = stream_state.next_offset,
+            .oldest_unsettled_offset = oldest orelse stream_state.next_offset,
+        };
+    }
+
     /// Return the effective max idle timeout in milliseconds, or null when disabled.
     ///
     /// RFC 9000 uses the shorter non-zero timeout advertised by either endpoint.

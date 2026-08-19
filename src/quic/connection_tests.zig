@@ -64705,3 +64705,205 @@ test "0-RTT end-to-end early data STREAM reaches server before handshake" {
     try std.testing.expectEqual(@as(?usize, 10), n);
     try std.testing.expectEqualStrings("early-data", buf[0..n.?]);
 }
+
+const connection_state_mod = @import("connection_state.zig");
+
+/// Deterministic single-connection send/ack driver: queue stream data,
+/// packetize exactly one short datagram per poll, and expose ACK feeding.
+const SendAckDriver = struct {
+    conn: *Connection,
+    dcid: [4]u8 = .{ 0x31, 0x32, 0x33, 0x34 },
+    now: i64 = 100,
+    next_packet: u64 = 0,
+
+    fn init(alloc: std.mem.Allocator) !SendAckDriver {
+        const conn = try alloc.create(Connection);
+        errdefer alloc.destroy(conn);
+        conn.* = try Connection.init(alloc, .client, .{});
+        try conn.applyPeerTransportParameters(.{
+            .initial_max_data = 4096,
+            .initial_max_streams_bidi = 8,
+            .initial_max_streams_uni = 8,
+            .initial_max_stream_data_bidi_local = 4096,
+            .initial_max_stream_data_bidi_remote = 4096,
+            .initial_max_stream_data_uni = 4096,
+        });
+        try conn.installOneRttTrafficSecrets(.{
+            .local = [_]u8{0x11} ** 32,
+            .peer = [_]u8{0x22} ** 32,
+        });
+        return .{ .conn = conn };
+    }
+
+    fn deinit(self: *SendAckDriver, alloc: std.mem.Allocator) void {
+        self.conn.deinit();
+        alloc.destroy(self.conn);
+    }
+
+    /// Queue `bytes` on `stream_id` only (no packetization).
+    fn queue(self: *SendAckDriver, stream_id: u64, bytes: []const u8, fin: bool) !void {
+        _ = try self.conn.sendOnStream(stream_id, bytes, fin);
+    }
+
+    /// Packetize exactly one already-queued send into one datagram,
+    /// returning its packet number (now in sent_packets).
+    fn packetizeOne(self: *SendAckDriver, alloc: std.mem.Allocator) !u64 {
+        self.now += 10;
+        const dg = (try self.conn.pollProtectedShortDatagramWithInstalledKeys(
+            self.now,
+            &self.dcid,
+        )) orelse return error.NoDatagram;
+        defer alloc.free(dg);
+        const pn = self.next_packet;
+        self.next_packet += 1;
+        return pn;
+    }
+
+    fn ack(self: *SendAckDriver, packet_number: u64) !void {
+        self.now += 10;
+        try self.conn.receiveAckInSpace(.application, self.now, .{
+            .largest_acknowledged = packet_number,
+            .ack_delay = 0,
+            .first_ack_range = 0,
+        });
+    }
+
+    fn progress(self: *SendAckDriver, stream_id: u64) ?Connection.StreamSendProgress {
+        return self.conn.streamSendProgress(stream_id);
+    }
+
+    /// One ACK covering packets 11..1 plus a lower range for 0.
+    fn ackMultiRange(self: *SendAckDriver) !void {
+        self.now += 10;
+        const ranges = [_]frame.AckRange{.{ .gap = 0, .ack_range = 0 }};
+        try self.conn.receiveAckInSpace(.application, self.now, .{
+            .largest_acknowledged = 11,
+            .ack_delay = 0,
+            .first_ack_range = 10,
+            .ranges = &ranges,
+        });
+    }
+};
+
+test "streamSendProgress reports queued and in-flight bytes conservatively" {
+    const alloc = std.testing.allocator;
+    var d = try SendAckDriver.init(alloc);
+    defer d.deinit(alloc);
+
+    const sid = try d.conn.openStream();
+    var chunk: [100]u8 = undefined;
+    @memset(&chunk, 'x');
+
+    // Zero backlog on a fresh stream.
+    const fresh = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 0), fresh.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), fresh.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 0), fresh.outstandingBytes());
+    try std.testing.expect(d.conn.streamSendProgress(999_999) == null);
+
+    // Queued but not yet packetized: everything is unsettled.
+    try d.queue(sid, &chunk, false);
+    var p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 100), p.outstandingBytes());
+
+    // In flight: still unsettled until acknowledged.
+    const pn0 = try d.packetizeOne(alloc);
+    p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 100), p.outstandingBytes());
+
+    // Acknowledged: backlog drains to zero.
+    try d.ack(pn0);
+    p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 100), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 100), p.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
+}
+
+test "streamSendProgress: earliest-packet loss keeps the prefix honest" {
+    const alloc = std.testing.allocator;
+    var d = try SendAckDriver.init(alloc);
+    defer d.deinit(alloc);
+
+    const sid = try d.conn.openStream();
+    var one: [1]u8 = undefined;
+    one[0] = 'A';
+
+    // Twelve disjoint single-byte ranges; only the later ones are acked.
+    var packets: [12]u64 = undefined;
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        try d.queue(sid, &one, false);
+        packets[i] = try d.packetizeOne(alloc);
+    }
+
+    // Acknowledge every packet EXCEPT the earliest (packet index 0).
+    i = 1;
+    while (i < 12) : (i += 1) {
+        try d.ack(packets[i]);
+    }
+
+    var p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 12), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 12), p.outstandingBytes());
+
+    // A duplicate acknowledgment of an already-acked range changes
+    // nothing (logical offsets, idempotent removal).
+    try d.ack(packets[11]);
+    p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 12), p.outstandingBytes());
+
+    // The earliest packet is now past the loss threshold: the next ACK
+    // processing declares it lost and requeues its bytes. The backlog
+    // stays honest through the requeue (the send-queue entry keeps the
+    // original offset), a retransmission re-packetizes it under a new
+    // packet number, and acknowledging that settles everything.
+    d.now += 500 * std.time.ns_per_ms;
+    try d.ack(packets[11]);
+    p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 12), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 12), p.outstandingBytes());
+
+    const retransmit_pn = try d.packetizeOne(alloc);
+    try d.ack(retransmit_pn);
+    p = d.progress(sid).?;
+    try std.testing.expectEqual(@as(u64, 12), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 12), p.oldest_unsettled_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
+}
+
+test "streamSendProgress: FIN and reset semantics" {
+    const alloc = std.testing.allocator;
+    var d = try SendAckDriver.init(alloc);
+    defer d.deinit(alloc);
+
+    // FIN: once the carrying packet is acknowledged the backlog drains.
+    const fsid = try d.conn.openStream();
+    var payload: [8]u8 = undefined;
+    @memset(&payload, 'f');
+    try d.queue(fsid, &payload, true);
+    const fpn = try d.packetizeOne(alloc);
+    var p = d.progress(fsid).?;
+    try std.testing.expectEqual(@as(u64, 8), p.outstandingBytes());
+    try d.ack(fpn);
+    p = d.progress(fsid).?;
+    try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
+
+    // Reset: payload backlog is zero immediately after reset_sent,
+    // independent of which bytes were still in flight; RESET
+    // acknowledgment remains separate stream state.
+    const rsid = try d.conn.openStream();
+    try d.queue(rsid, &payload, false);
+    _ = try d.packetizeOne(alloc);
+    p = d.progress(rsid).?;
+    try std.testing.expectEqual(@as(u64, 8), p.outstandingBytes());
+    try d.conn.resetStream(rsid, 4242);
+    p = d.progress(rsid).?;
+    try std.testing.expectEqual(@as(u64, 8), p.accepted_offset);
+    try std.testing.expectEqual(@as(u64, 0), p.outstandingBytes());
+    try std.testing.expect((try d.conn.streamState(rsid)).?.send == .reset_sent);
+}
