@@ -303,6 +303,10 @@ fn resolvedTarget(allocator: std.mem.Allocator, target: H3Target, dir: []const u
     return std.fmt.allocPrint(allocator, "https://{s}:{d}{s}{s}", .{ target.host, target.port, dir, loc });
 }
 
+fn sameOrigin(host_a: []const u8, port_a: u16, host_b: []const u8, port_b: u16) bool {
+    return port_a == port_b and std.mem.eql(u8, host_a, host_b);
+}
+
 fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     const job: *const H3Job = @ptrCast(@alignCast(ctx));
 
@@ -311,12 +315,44 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
     defer if (current_url_owned) job.allocator.free(current_url);
     var redirects_left: usize = job.max_redirects;
 
+    // Connection reused across same-origin redirects to avoid re-handshaking.
+    var client: ?Client = null;
+    var h3cli: ?RuntimeH3Client = null;
+    var connected_host: ?[]const u8 = null;
+    var connected_host_owned = false;
+    var connected_port: u16 = 0;
+    var connect_ms: i64 = 0;
+    defer {
+        if (h3cli) |*h| h.deinit();
+        if (client) |*c| c.deinit();
+        if (connected_host_owned) {
+            if (connected_host) |host| job.allocator.free(host);
+        }
+    }
+
     while (true) {
         const parsed = try parseH3Url(current_url);
-        const ip = try resolveHost(io, parsed.host, parsed.port);
 
-        {
-            var client = try Client.init(job.allocator, io, .{
+        const origin_changed = connected_host == null or
+            !sameOrigin(connected_host.?, connected_port, parsed.host, parsed.port);
+        if (origin_changed) {
+            if (h3cli) |*h| h.deinit();
+            if (client) |*c| c.deinit();
+            if (connected_host_owned) {
+                if (connected_host) |host| job.allocator.free(host);
+            }
+            h3cli = null;
+            client = null;
+            connected_host = null;
+            connected_host_owned = false;
+
+            const new_host = try job.allocator.dupe(u8, parsed.host);
+            errdefer job.allocator.free(new_host);
+
+            const ip = try resolveHost(io, parsed.host, parsed.port);
+            // Initialise directly into the optional payload so the drive task
+            // started by `connect()` keeps pointing at a stable address.
+            client = try Client.init(job.allocator, io, .{
                 .server_host = ip,
                 .server_port = parsed.port,
                 .server_name = parsed.host,
@@ -324,74 +360,89 @@ fn h3Job(io: std.Io, ctx: *anyopaque) anyerror!void {
                 .insecure_skip_verify = job.insecure or job.ca_bundle == null,
                 .ca_bundle = job.ca_bundle,
             });
-            defer client.deinit();
+            errdefer {
+                if (client) |*c| {
+                    c.deinit();
+                    client = null;
+                }
+            }
+            const c0 = std.Io.Timestamp.now(io, .awake);
+            try client.?.connect();
+            const c1 = std.Io.Timestamp.now(io, .awake);
+            connect_ms = std.Io.Duration.toMilliseconds(c0.durationTo(c1));
 
-            const t0 = std.Io.Timestamp.now(io, .awake);
-            try client.connect();
-            const t1 = std.Io.Timestamp.now(io, .awake);
-
-            var h3cli = RuntimeH3Client.init(job.allocator, &client, 4096, 8);
-            defer h3cli.deinit();
-            try h3cli.run();
+            // Initialise directly into the optional payload: `run()` points
+            // the adapter's ctx at the H3 client itself, so it must not move.
+            h3cli = RuntimeH3Client.init(job.allocator, &client.?, 4096, 8);
+            errdefer {
+                if (h3cli) |*h| {
+                    h.deinit();
+                    h3cli = null;
+                }
+            }
+            try h3cli.?.run();
             // A diagnostic client should fetch bodies larger than the library's
             // 1 MiB default response cap.
-            h3cli.h3.max_response_body_size = max_cli_response_body_size;
+            h3cli.?.h3.max_response_body_size = max_cli_response_body_size;
 
-            const request = quicz.h3_request.Request{
-                .method = job.method,
-                .path = parsed.path,
-                .scheme = "https",
-                .authority = parsed.host,
-                .extra_headers = job.headers,
-                .body = job.body,
-            };
-            const sid = try h3cli.sendRequest(request);
-            const response = try h3cli.receiveResponse(sid);
+            connected_host = new_host;
+            connected_host_owned = true;
+            connected_port = parsed.port;
+        }
 
-            if (job.follow_redirects and isRedirectStatus(response.status)) {
-                if (findHeader(response.headers, "location")) |location| {
-                    if (redirects_left == 0) return error.TooManyRedirects;
-                    const next_url = try resolveLocation(job.allocator, current_url, location);
-                    if (current_url_owned) job.allocator.free(current_url);
-                    current_url = next_url;
-                    current_url_owned = true;
-                    redirects_left -= 1;
-                    continue;
-                }
+        const request = quicz.h3_request.Request{
+            .method = job.method,
+            .path = parsed.path,
+            .scheme = "https",
+            .authority = parsed.host,
+            .extra_headers = job.headers,
+            .body = job.body,
+        };
+        const sid = try h3cli.?.sendRequest(request);
+        const response = try h3cli.?.receiveResponse(sid);
+
+        if (job.follow_redirects and isRedirectStatus(response.status)) {
+            if (findHeader(response.headers, "location")) |location| {
+                if (redirects_left == 0) return error.TooManyRedirects;
+                const next_url = try resolveLocation(job.allocator, current_url, location);
+                if (current_url_owned) job.allocator.free(current_url);
+                current_url = next_url;
+                current_url_owned = true;
+                redirects_left -= 1;
+                continue;
             }
+        }
 
-            if (job.include_headers) {
-                std.debug.print("HTTP/3 {d}\n", .{response.status});
-                for (response.headers) |h| {
-                    // Skip QPACK pseudo-headers; the status line already shows them.
-                    if (h.name.len > 0 and h.name[0] == ':') continue;
-                    std.debug.print("{s}: {s}\n", .{ h.name, h.value });
-                }
-            } else {
-                std.debug.print("HTTP/3 {d}\n", .{response.status});
+        if (job.include_headers) {
+            std.debug.print("HTTP/3 {d}\n", .{response.status});
+            for (response.headers) |h| {
+                // Skip QPACK pseudo-headers; the status line already shows them.
+                if (h.name.len > 0 and h.name[0] == ':') continue;
+                std.debug.print("{s}: {s}\n", .{ h.name, h.value });
             }
+        } else {
+            std.debug.print("HTTP/3 {d}\n", .{response.status});
+        }
 
-            if (job.output_path) |path| {
-                const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
-                defer file.close(io);
-                if (response.body) |payload| try file.writeStreamingAll(io, payload);
-            } else if (response.body) |payload| {
-                try std.Io.File.stdout().writeStreamingAll(io, payload);
-                try std.Io.File.stdout().writeStreamingAll(io, "\n");
-            }
+        if (job.output_path) |path| {
+            const file = try std.Io.Dir.createFile(.cwd(), io, path, .{});
+            defer file.close(io);
+            if (response.body) |payload| try file.writeStreamingAll(io, payload);
+        } else if (response.body) |payload| {
+            try std.Io.File.stdout().writeStreamingAll(io, payload);
+            try std.Io.File.stdout().writeStreamingAll(io, "\n");
+        }
 
-            if (!job.silent) {
-                const stats = client.client.transport.connection.connectionStats();
-                const connect_ms = std.Io.Duration.toMilliseconds(t0.durationTo(t1));
-                std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
-                    connect_ms,
-                    stats.smoothed_rtt_us,
-                    stats.packets_lost,
-                    stats.packets_retransmitted,
-                    stats.stream_bytes_sent,
-                    stats.stream_bytes_received,
-                });
-            }
+        if (!job.silent) {
+            const stats = h3cli.?.client.client.transport.connection.connectionStats();
+            std.debug.print("connect={d} ms srtt={d} us loss={d} retrans={d} sent={d} received={d}\n", .{
+                connect_ms,
+                stats.smoothed_rtt_us,
+                stats.packets_lost,
+                stats.packets_retransmitted,
+                stats.stream_bytes_sent,
+                stats.stream_bytes_received,
+            });
         }
         return;
     }
@@ -959,6 +1010,10 @@ test "redirect helpers" {
     try std.testing.expect(isRedirectStatus(301));
     try std.testing.expect(isRedirectStatus(308));
     try std.testing.expect(!isRedirectStatus(200));
+
+    try std.testing.expect(sameOrigin("a.com", 443, "a.com", 443));
+    try std.testing.expect(!sameOrigin("a.com", 8443, "a.com", 443));
+    try std.testing.expect(!sameOrigin("a.com", 443, "b.com", 443));
 
     const headers = [_]quicz.qpack.HeaderField{
         .{ .name = "content-type", .value = "text/plain" },
