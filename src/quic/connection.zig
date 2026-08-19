@@ -307,6 +307,10 @@ const BuiltProtectedShortPacket = struct {
     consume_crypto: bool = false,
     consume_path_response: bool = false,
     consume_path_challenge: bool = false,
+    /// UDP path of the path-validation frame this packet carries
+    /// (PATH_CHALLENGE or PATH_RESPONSE bound to a candidate path).
+    /// Null for every other emission — the committed route applies.
+    emitted_path: ?endpoint.UdpTuple = null,
     consume_retire_connection_id: bool = false,
     new_connection_id_index: ?usize = null,
     consume_new_token: bool = false,
@@ -4410,6 +4414,31 @@ pub const Connection = struct {
         keys: protection.Aes128PacketProtectionKeys,
         key_phase: bool,
     ) Error!?[]u8 {
+        var meta = ShortEgressMeta{};
+        return self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+            now_nanos,
+            dcid,
+            keys,
+            key_phase,
+            &meta,
+        );
+    }
+
+    /// `pollProtectedShortDatagramWithKeyPhase` with the emitted
+    /// datagram's egress facts reported through `egress_out`: the
+    /// candidate UDP path when the packet carries a bound
+    /// PATH_CHALLENGE or PATH_RESPONSE (null for every other emission
+    /// — the committed route applies), and whether the built packet
+    /// contains a PING frame.
+    pub fn pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+        self: *Connection,
+        now_nanos: i64,
+        dcid: []const u8,
+        keys: protection.Aes128PacketProtectionKeys,
+        key_phase: bool,
+        egress_out: *ShortEgressMeta,
+    ) Error!?[]u8 {
+        egress_out.* = .{};
         self.expireIdleState(now_nanos);
         self.expireCloseState(now_nanos);
         if (self.pending_close != null) {
@@ -4459,6 +4488,7 @@ pub const Connection = struct {
             const srtt: u64 = self.recovery_state.smoothed_rtt_ns;
             self.tx_pacer.onPacketSent(now_nanos, built.datagram.len, cwnd, srtt);
         }
+        egress_out.* = .{ .path_override = built.emitted_path, .emitted_ping = built.consume_ping };
         return built.datagram;
     }
 
@@ -4492,6 +4522,47 @@ pub const Connection = struct {
     ) Error!?[]u8 {
         const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
         return self.pollProtectedShortDatagramWithKeyPhaseState(now_nanos, dcid, &state);
+    }
+
+    /// One protected 1-RTT datagram together with the egress facts of
+    /// the packet actually built: the path binding of the
+    /// path-validation frame it carries (`path_override == null` means
+    /// the committed route applies) and whether it contains a PING
+    /// frame (`emitted_ping`).
+    pub const ShortEgressDatagram = struct {
+        datagram: []u8,
+        path_override: ?endpoint.UdpTuple,
+        emitted_ping: bool,
+    };
+
+    /// Egress facts reported alongside a polled short datagram.
+    pub const ShortEgressMeta = struct {
+        path_override: ?endpoint.UdpTuple = null,
+        emitted_ping: bool = false,
+    };
+
+    /// Atomic egress poll: the datagram AND the UDP path it must be
+    /// sent on, selected from the frame the packet actually carries —
+    /// never inferred from the existence of pending path state.
+    pub fn pollProtectedShortDatagramWithInstalledKeysAndEgressPath(
+        self: *Connection,
+        now_nanos: i64,
+        dcid: []const u8,
+    ) Error!?ShortEgressDatagram {
+        const state = self.local_one_rtt_key_phase_state orelse return error.InvalidPacket;
+        var meta = ShortEgressMeta{};
+        const datagram = try self.pollProtectedShortDatagramWithKeyPhaseAndEgressPath(
+            now_nanos,
+            dcid,
+            state.currentKeys(),
+            state.currentKeyPhase(),
+            &meta,
+        );
+        return if (datagram) |bytes| .{
+            .datagram = bytes,
+            .path_override = meta.path_override,
+            .emitted_ping = meta.emitted_ping,
+        } else null;
     }
 
     fn protectedPathValidationPlaintextLen(
@@ -5781,7 +5852,9 @@ pub const Connection = struct {
     ) Error!BuiltProtectedShortPacket {
         if (self.next_packet_number > max_quic_varint) return error.Internal;
 
-        const response_data = self.pending_path_responses.items[0].data;
+        const response = self.pending_path_responses.items[0];
+        const response_data = response.data;
+        const response_path = response.path;
         const response_encoded_len = pathResponseFrameWireLen();
         var encoded_frame_len = response_encoded_len;
         if (ack_to_send) |ack| {
@@ -5837,6 +5910,7 @@ pub const Connection = struct {
             .ack_eliciting = true,
             .clear_ack = ack_to_send != null,
             .consume_path_response = true,
+            .emitted_path = response_path,
         };
     }
 
@@ -6241,6 +6315,7 @@ pub const Connection = struct {
         if (self.next_packet_number > max_quic_varint) return error.Internal;
 
         const pending_challenge = self.pending_path_challenges.items[0];
+        const challenge_path = pending_challenge.path;
         const challenge_encoded_len = pathChallengeFrameWireLen();
         var encoded_frame_len = challenge_encoded_len;
         if (ack_to_send) |ack| {
@@ -6296,6 +6371,7 @@ pub const Connection = struct {
             .ack_eliciting = true,
             .clear_ack = ack_to_send != null,
             .consume_path_challenge = true,
+            .emitted_path = challenge_path,
         };
     }
 

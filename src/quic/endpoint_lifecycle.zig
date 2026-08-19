@@ -11829,6 +11829,37 @@ pub const EndpointConnectionLifecycle = struct {
         return datagram;
     }
 
+    /// One protected short datagram together with the UDP path it must
+    /// be sent on: the candidate path when the packet carries a bound
+    /// PATH_CHALLENGE or PATH_RESPONSE, null for every other emission
+    /// (the committed route applies). The binding comes from the frame
+    /// the packet actually carries — never from the existence of
+    /// pending path state.
+    pub fn pollProtectedShortDatagramWithInstalledKeysAndPath(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        now_nanos: i64,
+        dcid: []const u8,
+    ) Error!?Connection.ShortEgressDatagram {
+        const egress = connection.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(now_nanos, dcid) catch |err| {
+            self.refreshRecoveryTimerAfterConnectionError(connection_id, connection);
+            return err;
+        };
+        errdefer if (egress) |e| connection.allocator.free(e.datagram);
+        try self.armRecoveryTimerFromConnection(connection_id, connection);
+        return egress;
+    }
+
+    /// Options for the address-neutral changed-path short entry.
+    pub const AddressNeutralChangedPathOptions = struct {
+        /// Caller-supplied unpredictable PATH_CHALLENGE bytes. When an
+        /// authenticated packet arrives on a changed, unvalidated path
+        /// and no challenge work exists, exactly one challenge bound
+        /// to that path is queued from these bytes.
+        path_challenge_data: ?[8]u8 = null,
+    };
+
     /// Socket-facing installed-key datagram output entrypoint.
     ///
     /// This is the public endpoint-loop name for polling the next packet after
@@ -12105,6 +12136,31 @@ pub const EndpointConnectionLifecycle = struct {
         now_nanos: i64,
         datagram: []const u8,
     ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
+        return self.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddressWithOptions(
+            connection_id,
+            connection,
+            path,
+            now_nanos,
+            datagram,
+            .{},
+        );
+    }
+
+    /// The address-neutral authenticated changed-path entry with
+    /// caller-supplied challenge data: when an authenticated packet
+    /// arrives on a changed, unvalidated path and no challenge work
+    /// exists, exactly one PATH_CHALLENGE bound to that path is queued
+    /// from `options.path_challenge_data`, and the result reports
+    /// whether these bytes were consumed.
+    pub fn processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddressWithOptions(
+        self: *EndpointConnectionLifecycle,
+        connection_id: u64,
+        connection: *Connection,
+        path: endpoint.UdpTuple,
+        now_nanos: i64,
+        datagram: []const u8,
+        options: AddressNeutralChangedPathOptions,
+    ) EndpointProtectedDatagramError!EndpointPathValidatedShortDatagramResult {
         // One arrival-path hint scope for this processing path
         // (exactly one guard; never nested).
         const arrival_path = ReceivePathHintScope.init(connection, path);
@@ -12131,9 +12187,21 @@ pub const EndpointConnectionLifecycle = struct {
         else
             null;
 
+        var path_challenge_queued = false;
+        if (updated_route == null and route.path_changed and
+            connection.pendingPathChallengeCount() == 0 and
+            connection.outstandingPathChallengeCount() == 0)
+        {
+            if (options.path_challenge_data) |challenge_data| {
+                try connection.sendPathChallengeForPath(challenge_data, path);
+                path_challenge_queued = true;
+            }
+        }
+
         return .{
             .route = route,
             .updated_route = updated_route,
+            .path_challenge_queued = path_challenge_queued,
         };
     }
 

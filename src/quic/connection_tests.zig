@@ -65764,6 +65764,9 @@ test "legacy unbound challenge never authorizes route mutation" {
     try std.testing.expectEqual(@as(u64, 94), route.connection_id);
     try std.testing.expect(!route.path_changed);
 }
+
+// ─── Q2 reproducers: atomic egress path binding (RED before the fix) ──
+
 test "path-bound challenge survives timeout requeue with its candidate path" {
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
     const server_send_secret = [_]u8{0x11} ** 32;
@@ -65803,6 +65806,185 @@ test "path-bound challenge survives timeout requeue with its candidate path" {
     try std.testing.expect(requeued.path != null);
     try std.testing.expect(requeued.path.?.eql(candidate.toUdp()));
 }
+
+test "neutral entry queues exactly one challenge for an authenticated changed-path packet" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+    const client_keys = protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm);
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+
+    var lifecycle = EndpointConnectionLifecycle.init(std.testing.allocator);
+    defer lifecycle.deinit();
+    try lifecycle.registerConnectionId(95, &server_dcid, old_path, .{});
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = server_send_secret,
+        .peer = client_send_secret,
+    });
+
+    // An authenticated PING arriving on the changed path.
+    var fb: [64]u8 = undefined;
+    var fw = buffer.fixedWriter(&fb);
+    try frame.encodeFrame(fw.writer(), .{ .ping = {} });
+    // Pad past the header-protection sample floor.
+    try fw.writer().writeAll(&[_]u8{0} ** 12);
+    const ping_dg = try protection.protectShortPacketAes128(std.testing.allocator, .{
+        .dcid = &server_dcid,
+        .spin_bit = false,
+        .key_phase = false,
+        .packet_number = 1,
+    }, try packet.encodePacketNumberForHeader(1, null), client_keys, fw.getWritten());
+    defer std.testing.allocator.free(ping_dg);
+
+    const challenge_data = [_]u8{ 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
+    const res = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddressWithOptions(
+        95,
+        &server,
+        candidate.toUdp(),
+        2,
+        ping_dg,
+        .{ .path_challenge_data = challenge_data },
+    );
+    try std.testing.expect(res.route.path_changed);
+    try std.testing.expect(res.updated_route == null);
+    // The caller-supplied bytes were consumed: EXACTLY ONE
+    // path-bound challenge queued for the candidate path.
+    try std.testing.expect(res.path_challenge_queued);
+    try std.testing.expectEqual(@as(usize, 1), server.pendingPathChallengeCount());
+    try std.testing.expect(server.pending_path_challenges.items[0].path != null);
+
+    // A second authenticated changed-path packet consumes NO further
+    // challenge while one is already queued.
+    var fb2: [64]u8 = undefined;
+    var fw2 = buffer.fixedWriter(&fb2);
+    try frame.encodeFrame(fw2.writer(), .{ .ping = {} });
+    try fw2.writer().writeAll(&[_]u8{0} ** 12);
+    const ping_dg2 = try protection.protectShortPacketAes128(std.testing.allocator, .{
+        .dcid = &server_dcid,
+        .spin_bit = false,
+        .key_phase = false,
+        .packet_number = 2,
+    }, try packet.encodePacketNumberForHeader(2, null), client_keys, fw2.getWritten());
+    defer std.testing.allocator.free(ping_dg2);
+    const res2 = try lifecycle.processRoutedProtectedShortDatagramWithInstalledKeysAndUpdatePathOrCloseAddressWithOptions(
+        95,
+        &server,
+        candidate.toUdp(),
+        3,
+        ping_dg2,
+        .{ .path_challenge_data = challenge_data },
+    );
+    try std.testing.expect(!res2.path_challenge_queued);
+    try std.testing.expectEqual(@as(usize, 1), server.pendingPathChallengeCount());
+}
+
+// ─── Q2: atomic egress path binding + slot token accessor ────────────
+
+test "atomic egress: retransmitted challenge keeps the candidate path; close uses the committed route" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+
+    const old_path = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 50_000),
+    };
+    const candidate = endpoint.Udp4Tuple{
+        .local = old_path.local,
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_001),
+    };
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = server_send_secret,
+        .peer = client_send_secret,
+    });
+
+    // One challenge bound to the candidate path; first transmission.
+    const data = [_]u8{ 0x21, 0x43, 0x65, 0x87, 0x78, 0x56, 0x34, 0x12 };
+    try server.sendPathChallengeForPath(data, candidate.toUdp());
+    const first = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(first.datagram);
+    try std.testing.expect(first.path_override != null);
+    try std.testing.expect(first.path_override.?.eql(candidate.toUdp()));
+
+    // The challenge is LOST: after the retry window the retransmission
+    // must STILL be tagged with the candidate path.
+    try server.checkPathValidationTimeouts(5 * std.time.ns_per_s);
+    const retransmit = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(5 * std.time.ns_per_s + 1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(retransmit.datagram);
+    try std.testing.expect(retransmit.path_override != null);
+    try std.testing.expect(retransmit.path_override.?.eql(candidate.toUdp()));
+
+    // Concurrent CLOSE output takes frame priority and uses the
+    // COMMITTED route: packet identity — not challenge existence —
+    // selects the destination.
+    try server.sendPathChallengeForPath(data, candidate.toUdp());
+    try server.closeApplication(0, "done");
+    const close_egress = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(6 * std.time.ns_per_s, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(close_egress.datagram);
+    try std.testing.expect(close_egress.path_override == null);
+}
+
+test "atomic egress: delayed PATH_RESPONSE is tagged with its arrival path" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+
+    const arrival = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_009),
+    };
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{
+        .local = server_send_secret,
+        .peer = client_send_secret,
+    });
+
+    // A PATH_CHALLENGE arrives on `arrival`: the response is queued
+    // bound to that path, and its egress is tagged accordingly even
+    // though the connection's committed route lies elsewhere.
+    var cb: [64]u8 = undefined;
+    var cw = buffer.fixedWriter(&cb);
+    try frame.encodeFrame(cw.writer(), .{ .path_challenge = .{ .data = .{ 9, 8, 7, 6, 5, 4, 3, 2 } } });
+    try cw.writer().writeAll(&[_]u8{0} ** 12);
+    const challenge_dg = try protection.protectShortPacketAes128(std.testing.allocator, .{
+        .dcid = &server_dcid,
+        .spin_bit = false,
+        .key_phase = false,
+        .packet_number = 1,
+    }, try packet.encodePacketNumberForHeader(1, null), protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm), cw.getWritten());
+    defer std.testing.allocator.free(challenge_dg);
+
+    server.setReceivePathHint(arrival.toUdp());
+    try server.processProtectedShortDatagram(2, protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm), server_dcid.len, challenge_dg);
+    server.setReceivePathHint(null);
+    try std.testing.expectEqual(@as(usize, 1), server.pending_path_responses.items.len);
+
+    const response_egress = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(3, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(response_egress.datagram);
+    try std.testing.expect(response_egress.path_override != null);
+    try std.testing.expect(response_egress.path_override.?.eql(arrival.toUdp()));
+}
+
+// ─── Q2 correction round: {data, path} response dedup + emitted_ping ──
 
 test "PATH_RESPONSE dedup is path-bound: same data on a second path queues a second response" {
     const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
@@ -65859,4 +66041,71 @@ test "PATH_RESPONSE dedup is path-bound: same data on a second path queues a sec
     try server.processProtectedShortDatagram(4, peer_keys, server_dcid.len, crafted[2]);
     server.setReceivePathHint(null);
     try std.testing.expectEqual(@as(usize, 2), server.pending_path_responses.items.len);
+
+    // Both responses emit, each tagged with its own path.
+    const first = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(5, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(first.datagram);
+    try std.testing.expect(first.path_override != null);
+    try std.testing.expect(first.path_override.?.eql(path_a.toUdp()));
+    const second = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(6, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(second.datagram);
+    try std.testing.expect(second.path_override != null);
+    try std.testing.expect(second.path_override.?.eql(path_b.toUdp()));
+}
+
+test "atomic egress reports emitted_ping from the packet actually built" {
+    const server_dcid = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
+    const server_send_secret = [_]u8{0x11} ** 32;
+    const client_send_secret = [_]u8{0x22} ** 32;
+    const peer_keys = protection.deriveForCipher(client_send_secret, .v1, .aes_128_gcm);
+
+    const arrival = endpoint.Udp4Tuple{
+        .local = endpoint.Udp4Address.init(.{ 127, 0, 0, 1 }, 4433),
+        .remote = endpoint.Udp4Address.init(.{ 127, 0, 0, 2 }, 50_021),
+    };
+
+    var server = try Connection.init(std.testing.allocator, .server, .{});
+    defer server.deinit();
+    try server.validatePeerAddress();
+    try server.installOneRttTrafficSecrets(.{ .local = server_send_secret, .peer = client_send_secret });
+
+    // A queued PING emits in a control packet: emitted_ping is true and
+    // the pending count is consumed.
+    try server.sendPing();
+    try std.testing.expectEqual(@as(usize, 1), server.pending_ping_count);
+    const ping_egress = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(1, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(ping_egress.datagram);
+    try std.testing.expect(ping_egress.emitted_ping);
+    try std.testing.expectEqual(@as(usize, 0), server.pending_ping_count);
+
+    // Higher-priority output precedes the queued PING: a PATH_RESPONSE
+    // packet reports emitted_ping == false and leaves the PING pending.
+    var cb: [64]u8 = undefined;
+    var cw = buffer.fixedWriter(&cb);
+    try frame.encodeFrame(cw.writer(), .{ .path_challenge = .{ .data = .{ 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8 } } });
+    try cw.writer().writeAll(&[_]u8{0} ** 12);
+    const challenge_dg = try protection.protectShortPacketAes128(std.testing.allocator, .{
+        .dcid = &server_dcid,
+        .spin_bit = false,
+        .key_phase = false,
+        .packet_number = 2,
+    }, try packet.encodePacketNumberForHeader(2, null), peer_keys, cw.getWritten());
+    defer std.testing.allocator.free(challenge_dg);
+    server.setReceivePathHint(arrival.toUdp());
+    try server.processProtectedShortDatagram(2, peer_keys, server_dcid.len, challenge_dg);
+    server.setReceivePathHint(null);
+    try server.sendPing();
+
+    const response_egress = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(3, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(response_egress.datagram);
+    try std.testing.expect(!response_egress.emitted_ping);
+    try std.testing.expect(response_egress.path_override != null);
+    try std.testing.expect(response_egress.path_override.?.eql(arrival.toUdp()));
+    try std.testing.expectEqual(@as(usize, 1), server.pending_ping_count);
+
+    // The NEXT emission is the PING itself: emitted_ping true, consumed.
+    const deferred_ping = (try server.pollProtectedShortDatagramWithInstalledKeysAndEgressPath(4, &server_dcid)) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(deferred_ping.datagram);
+    try std.testing.expect(deferred_ping.emitted_ping);
+    try std.testing.expectEqual(@as(usize, 0), server.pending_ping_count);
 }
